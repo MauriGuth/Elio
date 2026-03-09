@@ -30,13 +30,20 @@ async function bootstrap() {
     prefix: '/uploads/',
   });
 
+  const allowedOrigins = process.env.FRONTEND_URL
+    ? process.env.FRONTEND_URL.split(',').map((u) => u.trim())
+    : [];
   app.enableCors({
-    origin: process.env.FRONTEND_URL
-      ? process.env.FRONTEND_URL.split(',').map((u) => u.trim())
-      : (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
-          const allowed = !origin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-          cb(null, allowed);
-        },
+    origin: (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
+      if (!origin) return cb(null, true);
+      if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return cb(null, true);
+      if (/^https?:\/\/(192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?$/.test(origin))
+        return cb(null, true);
+      if (allowedOrigins.some((o) => origin === o || origin.startsWith(o))) return cb(null, true);
+      if (/^https:\/\/[a-z0-9-]+\.vercel\.app$/.test(origin)) return cb(null, true);
+      if (/^https:\/\/[a-z0-9-]+\.vercel\.sh$/.test(origin)) return cb(null, true);
+      cb(null, false);
+    },
     credentials: true,
   });
 
