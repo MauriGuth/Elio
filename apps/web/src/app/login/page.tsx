@@ -57,8 +57,12 @@ export default function LoginPage() {
         finishLogin(role)
       }
     } catch (err: unknown) {
-      const message =
+      const raw =
         err instanceof Error ? err.message : "Error al iniciar sesión"
+      const message =
+        !raw || raw === "Failed to fetch" || /abort|timeout|network/i.test(raw)
+          ? "No se pudo conectar con el servidor. Revisá tu conexión o intentá más tarde."
+          : raw
       setError(message)
       sileo.error({ title: message })
     } finally {

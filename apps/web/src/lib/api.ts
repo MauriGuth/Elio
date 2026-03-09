@@ -105,10 +105,19 @@ class ApiClient {
       (headers as Record<string, string>)['Content-Type'] = 'application/json';
     }
 
+    const signal = options.signal;
+    let controller: AbortController | undefined;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    if (!signal) {
+      controller = new AbortController();
+      timeoutId = setTimeout(() => controller!.abort(), 20000);
+    }
     const response = await fetch(`${API_URL}${endpoint}`, {
       ...options,
       headers,
+      signal: signal ?? controller!.signal,
     });
+    if (timeoutId) clearTimeout(timeoutId);
 
     if (response.status === 401) {
       this.clearToken();
