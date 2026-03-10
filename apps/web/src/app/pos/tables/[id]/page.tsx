@@ -528,7 +528,7 @@ export default function TableOrderPage() {
             productId: match.product.id,
             productName: match.product.name,
             quantity: match.quantity,
-            unitPrice: match.product.salePrice,
+            unitPrice: getEffectivePrice(match.product),
             sector: match.sector,
             notes: match.notes || "",
           },
@@ -607,12 +607,19 @@ export default function TableOrderPage() {
     setLoading(true)
     setError("")
     try {
-      const [tableData, productsData] = await Promise.all([
-        tablesApi.getById(tableId),
-        productsApi.getAll({ isSellable: true }),
-      ])
+      const tableData = await tablesApi.getById(tableId)
       setTable(tableData)
-      setProducts(productsData?.data ?? productsData ?? [])
+      const locationId = tableData?.locationId ?? tableData?.location?.id ?? ""
+      if (!locationId) {
+        setProducts([])
+        setError("Mesa sin local asignado")
+      } else {
+        const productsData = await productsApi.getAll({
+          locationId,
+          limit: 5000,
+        })
+        setProducts(productsData?.data ?? productsData ?? [])
+      }
 
       // load existing order (división de mesa viene del backend para mozo y cajero)
       if (tableData.currentOrderId) {
@@ -676,22 +683,31 @@ export default function TableOrderPage() {
     }
   }, [orderId, order?.status, order?.items, itemPayer])
 
-  /* ── derived: categories ── */
-  const categories = useMemo(() => {
-    const cats = new Map<string, { id: string; name: string; icon: string; color: string }>()
+  /* ── precio efectivo en este local (StockLevel.salePrice o product.salePrice) ── */
+  const currentLocationId = table?.locationId ?? table?.location?.id ?? locationId
+  const getEffectivePrice = useCallback(
+    (p: any) => {
+      const level = p.stockLevels?.find((s: any) => s.locationId === currentLocationId)
+      return level?.salePrice ?? p.salePrice ?? 0
+    },
+    [currentLocationId]
+  )
+
+  /* ── derived: familias solo de productos con precio > 0 ── */
+  const familias = useMemo(() => {
+    const set = new Set<string>()
     products.forEach((p) => {
-      if (p.category && !cats.has(p.category.id)) {
-        cats.set(p.category.id, p.category)
-      }
+      const f = (p.familia ?? "").trim()
+      if (f) set.add(f)
     })
-    return Array.from(cats.values())
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "es", { sensitivity: "base" }))
   }, [products])
 
   /* ── derived: filtered products ── */
   const filteredProducts = useMemo(() => {
-    let list = products
+    let list = [...products]
     if (activeCategory !== "all") {
-      list = list.filter((p) => p.category?.id === activeCategory)
+      list = list.filter((p) => (p.familia ?? "").trim() === activeCategory)
     }
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase()
@@ -767,7 +783,7 @@ export default function TableOrderPage() {
           productId: product.id,
           productName: product.name,
           quantity: 1,
-          unitPrice: product.salePrice,
+          unitPrice: getEffectivePrice(product),
           sector: detectSector(product),
           notes: "",
         },
@@ -1697,7 +1713,7 @@ export default function TableOrderPage() {
                         </span>
                       )}
                       <span className="shrink-0 text-sm font-medium text-gray-600">
-                        {formatCurrency(m.product.salePrice * m.quantity)}
+                        {formatCurrency(getEffectivePrice(m.product) * m.quantity)}
                       </span>
                     </div>
                   )
@@ -1733,8 +1749,11 @@ export default function TableOrderPage() {
           )}
         </div>
 
-        {/* Category tabs: scroll horizontal en móvil con padding final para ver la última categoría */}
-        <div className="flex shrink-0 overflow-x-auto overflow-y-hidden border-b border-gray-200 bg-white scrollbar-thin -mx-1">
+        {/* Familia: filtro por familia en lugar de categoría */}
+        <div className="flex shrink-0 flex-col overflow-x-auto overflow-y-hidden border-b border-gray-200 bg-white scrollbar-thin -mx-1 dark:border-gray-700 dark:bg-gray-800">
+          <p className="px-4 pt-2 text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+            Familia
+          </p>
           <div className="flex gap-2 px-4 py-2.5 pr-6 sm:pr-4 min-w-max">
             <button
               onClick={() => setActiveCategory("all")}
@@ -1747,18 +1766,18 @@ export default function TableOrderPage() {
             >
               Todos
             </button>
-            {categories.map((cat) => (
+            {familias.map((fam) => (
               <button
-                key={cat.id}
-                onClick={() => setActiveCategory(cat.id)}
+                key={fam}
+                onClick={() => setActiveCategory(fam)}
                 className={cn(
                   "shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap",
-                  activeCategory === cat.id
+                  activeCategory === fam
                     ? "bg-amber-500 text-white"
                     : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300"
                 )}
               >
-                {cat.name}
+                {fam}
               </button>
             ))}
           </div>
@@ -1805,10 +1824,10 @@ export default function TableOrderPage() {
                       {product.name}
                     </span>
                     <span className="mt-1 text-xs text-gray-400">
-                      {product.category?.name}
+                      {product.familia ?? "—"}
                     </span>
                     <span className="mt-auto pt-2 text-sm font-bold text-amber-600">
-                      {formatCurrency(product.salePrice)}
+                      {formatCurrency(getEffectivePrice(product))}
                     </span>
                     {qty && (
                       <span className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white ring-2 ring-white">

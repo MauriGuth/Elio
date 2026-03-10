@@ -32,6 +32,7 @@ enum LocationType {
   CAFE
   RESTAURANT
   EXPRESS
+  HOTEL
 }
 
 enum SupplierPaymentMethod {
@@ -167,6 +168,8 @@ model Product {
   name         String
   description  String?
   categoryId   String   @map("category_id")
+  /** Familia del artículo (ej. ADICIONAL, TAPEOS). Usado junto a categoría (tipo). */
+  familia      String?  @map("familia")
   unit         String
   imageUrl     String?  @map("image_url")
   avgCost      Float    @default(0) @map("avg_cost")
@@ -412,6 +415,8 @@ model StockLevel {
   quantity      Float     @default(0)
   minQuantity   Float     @default(0) @map("min_quantity")
   maxQuantity   Float?    @map("max_quantity")
+  /** Precio de venta en este local (si null, usa Product.salePrice) */
+  salePrice     Float?    @map("sale_price")
   lastCountedAt DateTime? @map("last_counted_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 

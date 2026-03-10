@@ -12,6 +12,7 @@ const locationTypeOptions: { value: string; label: string }[] = [
   { value: "CAFE", label: "Café" },
   { value: "RESTAURANT", label: "Restaurante" },
   { value: "EXPRESS", label: "Express" },
+  { value: "HOTEL", label: "Hotel" },
 ]
 
 export default function NewLocationPage() {

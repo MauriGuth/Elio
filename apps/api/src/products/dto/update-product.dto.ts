@@ -35,6 +35,11 @@ export class UpdateProductDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
+  familia?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(20)
   unit?: string;
 

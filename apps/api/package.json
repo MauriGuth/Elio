@@ -14,6 +14,18 @@
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "seed": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed.ts",
+    "prisma:clear-products": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/delete-products-suppliers-recipes.ts",
+    "prisma:load-articulos": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/load-articulos-carta.ts",
+    "prisma:rename-skus": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/rename-skus-to-prod-sequential.ts",
+    "prisma:setup-posada": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/setup-posada-cajas-mesas.ts",
+    "prisma:remove-duplicate-products": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/remove-duplicate-products-keep-prod-sku.ts",
+    "prisma:load-productos-ideas": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/load-productos-ideas.ts",
+    "prisma:load-detalle-insumos": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/load-detalle-insumos.ts",
+    "prisma:load-productos-dorado": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/load-productos-dorado.ts",
+    "prisma:load-recetas-bebidas": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/load-recetas-bebidas.ts",
+    "prisma:load-recetas-cocina": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/load-recetas-cocina.ts",
+    "prisma:load-recetas-gastro": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/load-recetas-gastronomia.ts",
+    "prisma:repair-recetas-gastro": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/repair-recetas-gastronomia.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "prisma": {

@@ -28,6 +28,7 @@ import { PurchaseOrdersModule } from './purchase-orders/purchase-orders.module';
 import { IncidentsModule } from './incidents/incidents.module';
 import { GoogleMapsModule } from './google-maps/google-maps.module';
 import { AuditorChatModule } from './auditor-chat/auditor-chat.module';
+import { ArcaModule } from './arca/arca.module';
 
 @Module({
   controllers: [AppController],
@@ -60,6 +61,7 @@ import { AuditorChatModule } from './auditor-chat/auditor-chat.module';
     PurchaseOrdersModule,
     IncidentsModule,
     AuditorChatModule,
+    ArcaModule,
   ],
 })
 export class AppModule {}

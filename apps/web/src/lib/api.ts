@@ -1,4 +1,13 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+/** En producción (Vercel) usa /api para que el rewrite envíe la petición a Railway (NEXT_PUBLIC_API_URL). */
+function getApiUrl(): string {
+  if (typeof window === 'undefined') {
+    return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+  }
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+  }
+  return `${window.location.origin}/api`;
+}
 
 /** Claves por app: cada link tiene su propia sesión para poder tener varias abiertas a la vez */
 function getStationFromUrl(): string | null {
@@ -102,7 +111,7 @@ class ApiClient {
       (headers as Record<string, string>)['Content-Type'] = 'application/json';
     }
 
-    const response = await fetch(`${API_URL}${endpoint}`, {
+    const response = await fetch(`${getApiUrl()}${endpoint}`, {
       ...options,
       headers,
     });

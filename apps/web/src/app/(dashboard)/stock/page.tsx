@@ -1,7 +1,7 @@
 "use client"
 
-import { useState, useEffect, useMemo, useCallback } from "react"
-import { useRouter } from "next/navigation"
+import { useState, useEffect, useMemo, useCallback, Suspense } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { sileo } from "sileo"
 import { Search, Plus, Package, RefreshCw, X, Loader2, Pencil, Trash2 } from "lucide-react"
 import { authApi } from "@/lib/api/auth"
@@ -37,6 +37,12 @@ const allStatuses: { value: StockStatus | ""; label: string }[] = [
   { value: "excess", label: "Exceso" },
 ]
 
+/** Quita prefijos "Tipo:", "Familia:", "Agrupar:" del nombre de categoría para mostrar solo el valor. */
+function getCategoryDisplayName(name: string | null | undefined): string {
+  if (!name) return ""
+  return name.replace(/^(Tipo|Familia|Agrupar):\s*/i, "").trim() || name
+}
+
 // ---------- API → UI mapping ----------
 
 interface ApiStockLevel {
@@ -55,6 +61,7 @@ interface ApiProduct {
   name: string
   description?: string
   categoryId: string
+  familia?: string | null
   unit: string
   imageUrl?: string | null
   avgCost: number
@@ -79,6 +86,7 @@ interface ProcessedProduct {
   id: string
   sku: string
   name: string
+  familia?: string | null
   unit: string
   imageUrl?: string | null
   avgCost: number
@@ -141,6 +149,7 @@ function processProduct(p: ApiProduct): ProcessedProduct {
     id: p.id,
     sku: p.sku,
     name: p.name,
+    familia: p.familia ?? undefined,
     unit: p.unit,
     imageUrl: p.imageUrl ?? undefined,
     avgCost: p.avgCost,
@@ -211,13 +220,33 @@ const unitOptions = [
 
 // ---------- main page ----------
 
-export default function StockPage() {
+function StockPageContent() {
   const router = useRouter()
-  const [searchQuery, setSearchQuery] = useState("")
-  const [debouncedSearch, setDebouncedSearch] = useState("")
-  const [selectedCategory, setSelectedCategory] = useState("")
-  const [selectedStatus, setSelectedStatus] = useState<StockStatus | "">("")
-  const [selectedLocation, setSelectedLocation] = useState("")
+  const searchParams = useSearchParams()
+
+  // Leer filtros desde la URL
+  const urlSearch = searchParams.get("q") ?? ""
+  const urlCategory = searchParams.get("category") ?? ""
+  const urlFamilia = searchParams.get("familia") ?? ""
+  const urlStatus = (searchParams.get("status") ?? "") as StockStatus | ""
+  const urlLocation = searchParams.get("location") ?? ""
+
+  const [searchQuery, setSearchQuery] = useState(urlSearch)
+  const [debouncedSearch, setDebouncedSearch] = useState(urlSearch)
+  const [selectedCategory, setSelectedCategory] = useState(urlCategory)
+  const [selectedFamilia, setSelectedFamilia] = useState(urlFamilia)
+  const [selectedStatus, setSelectedStatus] = useState<StockStatus | "">(urlStatus)
+  const [selectedLocation, setSelectedLocation] = useState(urlLocation)
+
+  // Sincronizar estados cuando cambia la URL (ej. al volver atrás)
+  useEffect(() => {
+    setSearchQuery(urlSearch)
+    setDebouncedSearch(urlSearch)
+  }, [urlSearch])
+  useEffect(() => { setSelectedCategory(urlCategory) }, [urlCategory])
+  useEffect(() => { setSelectedFamilia(urlFamilia) }, [urlFamilia])
+  useEffect(() => { setSelectedStatus(urlStatus) }, [urlStatus])
+  useEffect(() => { setSelectedLocation(urlLocation) }, [urlLocation])
 
   // Data state
   const [products, setProducts] = useState<ProcessedProduct[]>([])
@@ -253,10 +282,22 @@ export default function StockPage() {
   const [savingCategory, setSavingCategory] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [deletingCategory, setDeletingCategory] = useState(false)
+  // Nueva familia / Gestionar familias (categorías con slug familia-*)
+  const [showFamiliaModal, setShowFamiliaModal] = useState(false)
+  const [newFamiliaName, setNewFamiliaName] = useState("")
+  const [creatingFamilia, setCreatingFamilia] = useState(false)
+  const [familiaError, setFamiliaError] = useState<string | null>(null)
+  const [showManageFamiliasModal, setShowManageFamiliasModal] = useState(false)
+  const [editingFamilia, setEditingFamilia] = useState<{ id: string; name: string } | null>(null)
+  const [editFamiliaName, setEditFamiliaName] = useState("")
+  const [savingFamilia, setSavingFamilia] = useState(false)
+  const [deleteConfirmFamiliaId, setDeleteConfirmFamiliaId] = useState<string | null>(null)
+  const [deletingFamilia, setDeletingFamilia] = useState(false)
   const [newProduct, setNewProduct] = useState({
     sku: "",
     name: "",
     categoryId: "",
+    familia: "" as string,
     unit: "unidad",
     imageUrl: "" as string,
     avgCost: 0,
@@ -275,24 +316,82 @@ export default function StockPage() {
   const isLogisticsRole =
     user?.role === "LOGISTICS" || user?.role === "logistics"
 
+  // Familias = categorías con slug familia-* (para filtro y gestión), ordenadas alfabéticamente
+  const familias = useMemo(
+    () =>
+      categories
+        .filter((c) => c.slug.startsWith("familia-"))
+        .sort((a, b) =>
+          getCategoryDisplayName(a.name).localeCompare(getCategoryDisplayName(b.name), "es", { sensitivity: "base" })
+        ),
+    [categories]
+  )
+
+  // Sincronizar filtros con la URL (persistencia al navegar)
+  useEffect(() => {
+    // Solo actualizar URL si los valores son diferentes a los de la URL actual
+    if (
+      debouncedSearch === urlSearch &&
+      selectedCategory === urlCategory &&
+      selectedFamilia === urlFamilia &&
+      selectedStatus === urlStatus &&
+      selectedLocation === urlLocation
+    ) {
+      return
+    }
+    const params = new URLSearchParams()
+    if (debouncedSearch) params.set("q", debouncedSearch)
+    if (selectedCategory) params.set("category", selectedCategory)
+    if (selectedFamilia) params.set("familia", selectedFamilia)
+    if (selectedStatus) params.set("status", selectedStatus)
+    if (selectedLocation) params.set("location", selectedLocation)
+    const queryString = params.toString()
+    const newUrl = queryString ? `/stock?${queryString}` : "/stock"
+    router.replace(newUrl, { scroll: false })
+  }, [debouncedSearch, selectedCategory, selectedFamilia, selectedStatus, selectedLocation, urlSearch, urlCategory, urlFamilia, urlStatus, urlLocation, router])
+
   // Close modals on Escape
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (deleteConfirmId) setDeleteConfirmId(null)
+        if (deleteConfirmFamiliaId) setDeleteConfirmFamiliaId(null)
+        else if (editingFamilia) setEditingFamilia(null)
+        else if (deleteConfirmId) setDeleteConfirmId(null)
         else if (editingCategory) setEditingCategory(null)
         else {
           setShowCreateModal(false)
           setShowCategoryModal(false)
           setShowManageCategoriesModal(false)
+          setShowFamiliaModal(false)
+          setShowManageFamiliasModal(false)
         }
       }
     }
-    if (showCreateModal || showCategoryModal || showManageCategoriesModal || editingCategory || deleteConfirmId) {
+    const open =
+      showCreateModal ||
+      showCategoryModal ||
+      showManageCategoriesModal ||
+      showFamiliaModal ||
+      showManageFamiliasModal ||
+      editingCategory ||
+      editingFamilia ||
+      deleteConfirmId ||
+      deleteConfirmFamiliaId
+    if (open) {
       document.addEventListener("keydown", handleKeyDown)
       return () => document.removeEventListener("keydown", handleKeyDown)
     }
-  }, [showCreateModal, showCategoryModal, showManageCategoriesModal, editingCategory, deleteConfirmId])
+  }, [
+    showCreateModal,
+    showCategoryModal,
+    showManageCategoriesModal,
+    showFamiliaModal,
+    showManageFamiliasModal,
+    editingCategory,
+    editingFamilia,
+    deleteConfirmId,
+    deleteConfirmFamiliaId,
+  ])
 
   // Debounce search input
   useEffect(() => {
@@ -305,15 +404,17 @@ export default function StockPage() {
       .getAll({ isActive: true })
       .then((res: any) => {
         const data = Array.isArray(res) ? res : res?.data ?? []
-        setCategories(
-          data.map((c: any) => ({
-            id: c.id,
-            name: c.name,
-            slug: c.slug,
-            icon: c.icon ?? "",
-            color: c.color ?? "",
-          }))
+        const mapped = data.map((c: any) => ({
+          id: c.id,
+          name: c.name,
+          slug: c.slug,
+          icon: c.icon ?? "",
+          color: c.color ?? "",
+        }))
+        mapped.sort((a: { name: string }, b: { name: string }) =>
+          getCategoryDisplayName(a.name).localeCompare(getCategoryDisplayName(b.name), "es", { sensitivity: "base" })
         )
+        setCategories(mapped)
       })
       .catch(() => {})
   }, [])
@@ -350,9 +451,10 @@ export default function StockPage() {
     setLoading(true)
     setError(null)
     try {
-      const params: Record<string, string | number | boolean> = { limit: 200 }
+      const params: Record<string, string | number | boolean> = { limit: 15000 }
       if (debouncedSearch) params.search = debouncedSearch
       if (selectedCategory) params.categoryId = selectedCategory
+      if (selectedFamilia) params.familia = selectedFamilia
 
       const response = await productsApi.getAll(params)
       const processed = (response.data || []).map(processProduct)
@@ -364,7 +466,7 @@ export default function StockPage() {
     } finally {
       setLoading(false)
     }
-  }, [debouncedSearch, selectedCategory])
+  }, [debouncedSearch, selectedCategory, selectedFamilia])
 
   useEffect(() => {
     fetchProducts()
@@ -393,7 +495,8 @@ export default function StockPage() {
       !selectedStatus &&
       !selectedLocation &&
       !debouncedSearch &&
-      !selectedCategory
+      !selectedCategory &&
+      !selectedFamilia
     ) {
       return {
         critical: summary.critical,
@@ -422,6 +525,7 @@ export default function StockPage() {
     selectedLocation,
     debouncedSearch,
     selectedCategory,
+    selectedFamilia,
   ])
 
   // Handle create product
@@ -437,12 +541,13 @@ export default function StockPage() {
         imageUrl = (res as any)?.url ?? (res as any)?.data?.url ?? ""
         setNewProductImageUploading(false)
       }
-      await productsApi.create({ ...newProduct, imageUrl: imageUrl || undefined })
+      await productsApi.create({ ...newProduct, imageUrl: imageUrl || undefined, familia: newProduct.familia || undefined })
       setShowCreateModal(false)
       setNewProduct({
         sku: "",
         name: "",
         categoryId: "",
+        familia: "",
         unit: "unidad",
         imageUrl: "",
         avgCost: 0,
@@ -524,6 +629,69 @@ export default function StockPage() {
       sileo.error({ title: msg })
     } finally {
       setDeletingCategory(false)
+    }
+  }
+
+  const handleCreateFamilia = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const value = newFamiliaName.trim()
+    if (!value || value.length < 2) {
+      setFamiliaError("El nombre debe tener al menos 2 caracteres")
+      return
+    }
+    setCreatingFamilia(true)
+    setFamiliaError(null)
+    try {
+      await categoriesApi.create({ name: `Familia: ${value}` })
+      setShowFamiliaModal(false)
+      setNewFamiliaName("")
+      refreshCategories()
+      sileo.success({ title: "Familia creada" })
+    } catch (err: any) {
+      const msg = err.message || "Error al crear la familia"
+      setFamiliaError(msg)
+      sileo.error({ title: msg })
+    } finally {
+      setCreatingFamilia(false)
+    }
+  }
+
+  const handleUpdateFamilia = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingFamilia) return
+    const value = editFamiliaName.trim()
+    if (value.length < 2) return
+    setSavingFamilia(true)
+    setFamiliaError(null)
+    try {
+      await categoriesApi.update(editingFamilia.id, { name: `Familia: ${value}` })
+      setEditingFamilia(null)
+      setEditFamiliaName("")
+      refreshCategories()
+      sileo.success({ title: "Familia actualizada" })
+    } catch (err: any) {
+      const msg = err.message || "Error al actualizar"
+      setFamiliaError(msg)
+      sileo.error({ title: msg })
+    } finally {
+      setSavingFamilia(false)
+    }
+  }
+
+  const handleDeleteFamilia = async (id: string) => {
+    setDeletingFamilia(true)
+    setFamiliaError(null)
+    try {
+      await categoriesApi.delete(id)
+      setDeleteConfirmFamiliaId(null)
+      refreshCategories()
+      sileo.success({ title: "Familia eliminada" })
+    } catch (err: any) {
+      const msg = err.message || "Error al eliminar"
+      setFamiliaError(msg)
+      sileo.error({ title: msg })
+    } finally {
+      setDeletingFamilia(false)
     }
   }
 
@@ -646,7 +814,22 @@ export default function StockPage() {
           <option value="">Todas las categorías</option>
           {categories.map((cat) => (
             <option key={cat.id} value={cat.id}>
-              {cat.name}
+              {getCategoryDisplayName(cat.name)}
+            </option>
+          ))}
+        </select>
+
+        {/* Familia */}
+        <select
+          aria-label="Filtrar por familia"
+          value={selectedFamilia}
+          onChange={(e) => setSelectedFamilia(e.target.value)}
+          className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        >
+          <option value="">Todas las familias</option>
+          {familias.map((cat) => (
+            <option key={cat.id} value={getCategoryDisplayName(cat.name)}>
+              {getCategoryDisplayName(cat.name)}
             </option>
           ))}
         </select>
@@ -668,6 +851,22 @@ export default function StockPage() {
             >
               <Pencil className="h-4 w-4" />
               Gestionar categorías
+            </button>
+            <button
+              type="button"
+              onClick={() => { setFamiliaError(null); setShowFamiliaModal(true) }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm font-medium text-gray-700 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-700"
+            >
+              <Plus className="h-4 w-4" />
+              Nueva familia
+            </button>
+            <button
+              type="button"
+              onClick={() => { setFamiliaError(null); setDeleteConfirmFamiliaId(null); setEditingFamilia(null); setShowManageFamiliasModal(true) }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm font-medium text-gray-700 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-700"
+            >
+              <Pencil className="h-4 w-4" />
+              Gestionar familias
             </button>
           </>
         )}
@@ -731,6 +930,9 @@ export default function StockPage() {
                   <th className="w-32 px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-white">
                     Categoría
                   </th>
+                  <th className="w-32 px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-white">
+                    Familia
+                  </th>
                   <th className="w-20 px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-white">
                     Unidad
                   </th>
@@ -788,7 +990,12 @@ export default function StockPage() {
                           className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
                           style={getCategoryBadgeStyle(product.category.color)}
                         >
-                          {product.category.name}
+                          {getCategoryDisplayName(product.category.name)}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 align-middle">
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+                          {product.familia ?? "—"}
                         </span>
                       </td>
                       <td className="px-3 py-3 align-middle text-sm text-gray-600 dark:text-gray-300">
@@ -823,7 +1030,7 @@ export default function StockPage() {
                 {filteredProducts.length === 0 && (
                   <tr>
                     <td
-                      colSpan={8}
+                      colSpan={9}
                       className="px-4 py-12 text-center text-sm text-gray-400 dark:text-gray-400"
                     >
                       <Package className="mx-auto mb-2 h-8 w-8 text-gray-300 dark:text-gray-500" />
@@ -974,11 +1181,11 @@ export default function StockPage() {
                   )}
                 </div>
 
-                {/* Category + Unit row */}
-                <div className="grid grid-cols-2 gap-4">
+                {/* Category + Familia + Unit row */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
-                      Categoría
+                      Categoría (tipo)
                     </label>
                     <select
                       aria-label="Categoría"
@@ -991,10 +1198,25 @@ export default function StockPage() {
                       <option value="">Seleccionar...</option>
                       {categories.map((cat) => (
                         <option key={cat.id} value={cat.id}>
-                          {cat.name}
+                          {getCategoryDisplayName(cat.name)}
                         </option>
                       ))}
                     </select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
+                      Familia
+                    </label>
+                    <input
+                      type="text"
+                      aria-label="Familia"
+                      value={newProduct.familia}
+                      onChange={(e) =>
+                        setNewProduct({ ...newProduct, familia: e.target.value })
+                      }
+                      placeholder="Ej. ADICIONAL, TAPEOS"
+                      className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
                   </div>
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
@@ -1285,7 +1507,7 @@ export default function StockPage() {
                       className="inline-flex items-center gap-2 text-sm text-gray-900 dark:text-white truncate min-w-0"
                       style={getCategoryBadgeStyle(cat.color)}
                     >
-                      <span className="truncate">{cat.name}</span>
+                      <span className="truncate">{getCategoryDisplayName(cat.name)}</span>
                     </span>
                     <div className="flex items-center gap-1 shrink-0">
                       <button
@@ -1326,6 +1548,204 @@ export default function StockPage() {
           </div>
         </div>
       )}
+
+      {/* -------- Nueva familia Modal -------- */}
+      {showFamiliaModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white dark:bg-gray-800 shadow-2xl border border-gray-200 dark:border-gray-700">
+            <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Nueva familia</h2>
+              <button
+                type="button"
+                aria-label="Cerrar"
+                onClick={() => setShowFamiliaModal(false)}
+                className="rounded-lg p-1 text-gray-400 transition-colors hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form onSubmit={handleCreateFamilia}>
+              <div className="space-y-4 px-6 py-5">
+                {familiaError && (
+                  <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/30 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+                    {familiaError}
+                  </div>
+                )}
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
+                    Nombre <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={newFamiliaName}
+                    onChange={(e) => setNewFamiliaName(e.target.value)}
+                    placeholder="Ej: ADICIONAL, TAPEOS"
+                    className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/80 px-6 py-4">
+                <button
+                  type="button"
+                  onClick={() => setShowFamiliaModal(false)}
+                  disabled={creatingFamilia}
+                  className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 transition-colors hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingFamilia}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {creatingFamilia && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {creatingFamilia ? "Creando..." : "Crear familia"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* -------- Gestionar familias Modal -------- */}
+      {showManageFamiliasModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => { if (!editingFamilia && !deleteConfirmFamiliaId) setShowManageFamiliasModal(false) }}
+        >
+          <div
+            className="w-full max-w-lg rounded-xl bg-white dark:bg-gray-800 shadow-2xl border border-gray-200 dark:border-gray-700 max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4 shrink-0">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Gestionar familias</h2>
+              <button
+                type="button"
+                aria-label="Cerrar"
+                onClick={() => setShowManageFamiliasModal(false)}
+                className="rounded-lg p-1 text-gray-400 transition-colors hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+              {familiaError && (
+                <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/30 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+                  {familiaError}
+                </div>
+              )}
+              {deleteConfirmFamiliaId && (
+                <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/30 px-4 py-3 flex items-center justify-between gap-3">
+                  <span className="text-sm text-amber-800 dark:text-amber-200">
+                    ¿Eliminar la familia &quot;{getCategoryDisplayName(familias.find((c) => c.id === deleteConfirmFamiliaId)?.name) ?? ""}&quot;?
+                  </span>
+                  <div className="flex gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setDeleteConfirmFamiliaId(null)}
+                      disabled={deletingFamilia}
+                      className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteConfirmFamiliaId && handleDeleteFamilia(deleteConfirmFamiliaId)}
+                      disabled={deletingFamilia}
+                      className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50 inline-flex items-center gap-1"
+                    >
+                      {deletingFamilia ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                      Eliminar
+                    </button>
+                  </div>
+                </div>
+              )}
+              {editingFamilia ? (
+                <form onSubmit={handleUpdateFamilia} className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-900/20 p-4 space-y-3">
+                  <p className="text-sm font-medium text-gray-700 dark:text-white">Editar familia</p>
+                  <input
+                    type="text"
+                    value={editFamiliaName}
+                    onChange={(e) => setEditFamiliaName(e.target.value)}
+                    placeholder="Nombre"
+                    className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setEditingFamilia(null); setEditFamiliaName("") }}
+                      disabled={savingFamilia}
+                      className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={savingFamilia || editFamiliaName.trim().length < 2}
+                      className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1"
+                    >
+                      {savingFamilia ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      Guardar
+                    </button>
+                  </div>
+                </form>
+              ) : null}
+              <ul className="space-y-1">
+                {familias.map((cat) => (
+                  <li
+                    key={cat.id}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50/50 dark:bg-gray-700/30 px-3 py-2"
+                  >
+                    <span className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-300 truncate min-w-0">
+                      {getCategoryDisplayName(cat.name)}
+                    </span>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => { setEditingFamilia({ id: cat.id, name: cat.name }); setEditFamiliaName(getCategoryDisplayName(cat.name)); setFamiliaError(null) }}
+                        className="rounded p-1.5 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600 hover:text-blue-600 dark:hover:text-blue-400"
+                        title="Editar"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setDeleteConfirmFamiliaId(cat.id); setFamiliaError(null) }}
+                        className="rounded p-1.5 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600 hover:text-red-600 dark:hover:text-red-400"
+                        title="Eliminar"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              {familias.length === 0 && (
+                <p className="text-sm text-gray-500 dark:text-gray-400 py-4 text-center">
+                  No hay familias. Creá una desde &quot;Nueva familia&quot;.
+                </p>
+              )}
+            </div>
+            <div className="border-t border-gray-200 dark:border-gray-700 px-6 py-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowManageFamiliasModal(false)}
+                className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+  )
+}
+
+export default function StockPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-64"><Loader2 className="h-8 w-8 animate-spin text-blue-600" /></div>}>
+      <StockPageContent />
+    </Suspense>
   )
 }

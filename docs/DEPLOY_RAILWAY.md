@@ -115,8 +115,10 @@ En tu proyecto en **Vercel**:
 2. Definí:
    - **Name:** `NEXT_PUBLIC_API_URL`
    - **Value:** `https://tu-dominio.up.railway.app/api`  
-     (la URL que te dio Railway para la API, con `/api` al final).
-3. Guardá y volvé a desplegar el frontend si hace falta.
+     (la URL que te dio Railway para la API, **con `/api` al final**).
+3. Guardá y **volvé a desplegar** el frontend (Deployments → ⋮ en el último deploy → Redeploy).
+
+**Importante:** Sin esta variable, en producción fallan el login, el Chat Auditor y todas las llamadas a la API (ej. "Cannot GET/POST /api/..."). El front usa un proxy hacia Railway solo cuando `NEXT_PUBLIC_API_URL` está configurado.
 
 ---
 

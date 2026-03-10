@@ -9,6 +9,7 @@ import {
   Coffee,
   UtensilsCrossed,
   Zap,
+  Building2,
   ArrowRight,
   AlertTriangle,
   Package,
@@ -92,6 +93,22 @@ const typeConfig: Record<
     text: "text-cyan-700",
     darkBg: "dark:bg-cyan-900/50",
     darkText: "dark:text-cyan-300",
+  },
+  hotel: {
+    label: "Hotel",
+    icon: <Building2 className="h-3.5 w-3.5" />,
+    bg: "bg-slate-50",
+    text: "text-slate-700",
+    darkBg: "dark:bg-slate-900/50",
+    darkText: "dark:text-slate-300",
+  },
+  HOTEL: {
+    label: "Hotel",
+    icon: <Building2 className="h-3.5 w-3.5" />,
+    bg: "bg-slate-50",
+    text: "text-slate-700",
+    darkBg: "dark:bg-slate-900/50",
+    darkText: "dark:text-slate-300",
   },
 }
 

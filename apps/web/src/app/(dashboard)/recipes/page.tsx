@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { sileo } from "sileo"
 import {
   Search,
@@ -10,12 +10,130 @@ import {
   Edit3,
   Trash2,
   AlertCircle,
+  ChevronDown,
 } from "lucide-react"
 import { recipesApi } from "@/lib/api/recipes"
 import { productsApi } from "@/lib/api/products"
 import { cn } from "@/lib/utils"
 
 type ProductOption = { id: string; name: string; sku: string; unit?: string }
+
+function SearchableProductSelect({
+  value,
+  onChange,
+  options,
+  placeholder = "Buscar producto...",
+  className,
+}: {
+  value: string
+  onChange: (id: string) => void
+  options: ProductOption[]
+  placeholder?: string
+  className?: string
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [search, setSearch] = useState("")
+  const containerRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const selected = options.find((o) => o.id === value)
+  const filtered = search.trim()
+    ? options.filter((o) =>
+        o.name.toLowerCase().includes(search.toLowerCase()) ||
+        o.sku?.toLowerCase().includes(search.toLowerCase())
+      )
+    : options
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false)
+        setSearch("")
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
+
+  const handleSelect = (id: string) => {
+    onChange(id)
+    setIsOpen(false)
+    setSearch("")
+  }
+
+  return (
+    <div ref={containerRef} className={cn("relative", className)}>
+      <button
+        type="button"
+        onClick={() => {
+          setIsOpen(!isOpen)
+          setTimeout(() => inputRef.current?.focus(), 10)
+        }}
+        className="w-full flex items-center justify-between gap-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-left text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+      >
+        <span className={selected ? "" : "text-gray-400"}>
+          {selected ? selected.name : placeholder}
+        </span>
+        <ChevronDown className="h-4 w-4 text-gray-400 shrink-0" />
+      </button>
+
+      {isOpen && (
+        <div className="absolute z-50 mt-1 w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 shadow-lg">
+          <div className="p-2 border-b border-gray-100 dark:border-gray-700">
+            <div className="relative">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                ref={inputRef}
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Escribí para buscar..."
+                className="w-full pl-8 pr-3 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:border-blue-500"
+              />
+            </div>
+          </div>
+          <ul className="max-h-48 overflow-y-auto py-1">
+            <li>
+              <button
+                type="button"
+                onClick={() => handleSelect("")}
+                className={cn(
+                  "w-full px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700",
+                  !value && "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
+                )}
+              >
+                {placeholder}
+              </button>
+            </li>
+            {filtered.length === 0 ? (
+              <li className="px-3 py-2 text-sm text-gray-400">No se encontraron productos</li>
+            ) : (
+              filtered.slice(0, 100).map((opt) => (
+                <li key={opt.id}>
+                  <button
+                    type="button"
+                    onClick={() => handleSelect(opt.id)}
+                    className={cn(
+                      "w-full px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700",
+                      value === opt.id && "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
+                    )}
+                  >
+                    {opt.name} {opt.sku ? <span className="text-gray-400">({opt.sku})</span> : ""}
+                  </button>
+                </li>
+              ))
+            )}
+            {filtered.length > 100 && (
+              <li className="px-3 py-2 text-xs text-gray-400 text-center">
+                Mostrando 100 de {filtered.length} resultados. Escribí para filtrar más.
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
 type IngredientRow = { productId: string; qtyPerYield: number; unit: string }
 type FormState = {
   name: string
@@ -50,9 +168,12 @@ export default function RecipesPage() {
     setLoading(true)
     setError(null)
     try {
-      const res = await recipesApi.getAll({ limit: 200 })
+      const res = await recipesApi.getAll({ limit: 500 })
       const data = (res as any).data ?? []
-      setRecipes(Array.isArray(data) ? data : [])
+      const sorted = Array.isArray(data)
+        ? [...data].sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "", "es", { sensitivity: "base" }))
+        : []
+      setRecipes(sorted)
     } catch (err: any) {
       const msg = err.message || "Error al cargar recetas"
       setError(msg)
@@ -68,18 +189,18 @@ export default function RecipesPage() {
   }, [fetchRecipes])
 
   useEffect(() => {
-    productsApi.getAll({ limit: 500 }).then((r: any) => {
+    productsApi.getAll({ limit: 5000 }).then((r: any) => {
       const d = (r as any).data ?? []
-      setProducts(
-        Array.isArray(d)
-          ? d.map((p: any) => ({
-              id: p.id,
-              name: p.name,
-              sku: p.sku ?? "",
-              unit: p.unit ?? "Und",
-            }))
-          : []
-      )
+      const mapped = Array.isArray(d)
+        ? d.map((p: any) => ({
+            id: p.id,
+            name: p.name,
+            sku: p.sku ?? "",
+            unit: p.unit ?? "Und",
+          }))
+        : []
+      mapped.sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }))
+      setProducts(mapped)
     }).catch(() => {})
   }, [])
 
@@ -361,19 +482,12 @@ export default function RecipesPage() {
 
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-white">Producto de salida</label>
-                <select
+                <SearchableProductSelect
                   value={form.productId}
-                  onChange={(e) => setForm((f) => ({ ...f, productId: e.target.value }))}
-                  aria-label="Producto de salida"
-                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                >
-                  <option value="">Sin producto de salida</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} {p.sku ? `(${p.sku})` : ""}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(id) => setForm((f) => ({ ...f, productId: id }))}
+                  options={products}
+                  placeholder="Sin producto de salida"
+                />
               </div>
 
               <div>
@@ -399,19 +513,13 @@ export default function RecipesPage() {
                         key={index}
                         className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-700/50 p-2"
                       >
-                        <select
+                        <SearchableProductSelect
                           value={row.productId}
-                          onChange={(e) => updateIngredient(index, "productId", e.target.value)}
-                          aria-label={`Ingrediente ${index + 1}, producto`}
-                          className="min-w-[140px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        >
-                          <option value="">Producto...</option>
-                          {products.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                            </option>
-                          ))}
-                        </select>
+                          onChange={(id) => updateIngredient(index, "productId", id)}
+                          options={products}
+                          placeholder="Producto..."
+                          className="min-w-[200px] flex-1"
+                        />
                         <input
                           type="number"
                           min={0}

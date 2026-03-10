@@ -14,6 +14,7 @@ import {
   Coffee,
   UtensilsCrossed,
   Zap,
+  Building2,
   Clock,
   ArrowDownRight,
   ArrowUpRight,
@@ -105,6 +106,22 @@ const typeConfig: Record<
     darkBg: "dark:bg-cyan-900/50",
     darkText: "dark:text-cyan-300",
   },
+  hotel: {
+    label: "Hotel",
+    icon: <Building2 className="h-3.5 w-3.5" />,
+    bg: "bg-slate-50",
+    text: "text-slate-700",
+    darkBg: "dark:bg-slate-900/50",
+    darkText: "dark:text-slate-300",
+  },
+  HOTEL: {
+    label: "Hotel",
+    icon: <Building2 className="h-3.5 w-3.5" />,
+    bg: "bg-slate-50",
+    text: "text-slate-700",
+    darkBg: "dark:bg-slate-900/50",
+    darkText: "dark:text-slate-300",
+  },
 }
 
 const movementTypeLabels: Record<string, string> = {
@@ -123,6 +140,7 @@ const locationTypeOptions: { value: string; label: string }[] = [
   { value: "CAFE", label: "Café" },
   { value: "RESTAURANT", label: "Restaurante" },
   { value: "EXPRESS", label: "Express" },
+  { value: "HOTEL", label: "Hotel" },
 ]
 
 // ---------- main page ----------

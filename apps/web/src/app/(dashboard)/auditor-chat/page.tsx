@@ -241,13 +241,128 @@ export default function AuditorChatPage() {
   const canSend = currentId || input.trim();
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] min-h-[400px] rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden bg-slate-50 dark:bg-slate-900/50">
-      {/* Sidebar: lista de conversaciones (plegable en desktop) */}
-      {sidebarOpen ? (
+    <div className="relative flex h-[calc(100vh-7rem)] min-h-[400px] rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden bg-slate-50 dark:bg-slate-900/50">
+      {/* Sidebar: lista de conversaciones (plegable con animación) */}
+      <aside
+        className={cn(
+          'hidden md:flex flex-col shrink-0 border-r border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 overflow-hidden min-h-0',
+          'transition-[width] duration-300 ease-in-out',
+          sidebarOpen ? 'w-64' : 'w-12',
+          'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-20 max-md:shadow-xl max-md:!w-64',
+          !sidebarOpen && 'max-md:hidden'
+        )}
+      >
+        {/* Vista colapsada: solo iconos */}
+        <div
+          className={cn(
+            'absolute inset-y-0 left-0 w-12 flex flex-col items-center py-2 gap-1 min-h-0 transition-opacity duration-300',
+            sidebarOpen ? 'opacity-0 pointer-events-none' : 'opacity-100'
+          )}
+        >
+          <button
+            type="button"
+            onClick={() => setSidebarOpen(true)}
+            className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 shrink-0"
+            aria-label="Desplegar menú"
+            title="Desplegar menú"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={handleNewConversation}
+            disabled={loadingList}
+            className="p-2.5 rounded-xl bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors shrink-0"
+            aria-label="Nueva conversación"
+            title="Nueva conversación"
+          >
+            <MessageSquarePlus className="w-5 h-5" />
+          </button>
+          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center gap-1 w-full px-1">
+            {conversations.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => handleSelectConversation(c.id)}
+                title={c.title}
+                className={cn(
+                  'w-full p-2 rounded-xl shrink-0 transition-colors',
+                  currentId === c.id
+                    ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'
+                )}
+                aria-label={c.title}
+              >
+                <MessageCircle className="w-4 h-4 mx-auto" />
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Vista expandida: títulos y lista completa */}
+        <div
+          className={cn(
+            'flex flex-col w-64 shrink-0 min-h-0 min-w-64 transition-opacity duration-300 delay-75',
+            sidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          )}
+        >
+          <div className="p-2 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-300 whitespace-nowrap">Conversaciones</span>
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(false)}
+              className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 transition-colors"
+              aria-label="Plegar conversaciones"
+              title="Plegar para ampliar el chat"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={handleNewConversation}
+            disabled={loadingList}
+            className="m-2 flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-500 text-white text-sm font-medium hover:bg-blue-600 disabled:opacity-50 transition-colors"
+          >
+            <MessageSquarePlus className="w-4 h-4 shrink-0" />
+            <span className="whitespace-nowrap">Nueva conversación</span>
+          </button>
+          <div className="flex-1 overflow-y-auto min-h-0">
+            {loadingList ? (
+              <div className="p-4 flex justify-center">
+                <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+              </div>
+            ) : (
+              <ul className="p-2 space-y-0.5">
+                {conversations.map((c) => (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectConversation(c.id)}
+                      className={cn(
+                        'w-full text-left px-3 py-2.5 rounded-xl text-sm truncate flex items-center gap-2 transition-colors',
+                        currentId === c.id
+                          ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200'
+                          : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
+                      )}
+                    >
+                      <MessageCircle className="w-4 h-4 shrink-0 opacity-70" />
+                      <span className="min-w-0 truncate">{c.title}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </aside>
+
+      {/* En móvil: drawer expandido, fixed para quedar pegado al borde izquierdo sin franja */}
+      {sidebarOpen && (
         <aside
           className={cn(
-            'flex flex-col w-64 shrink-0 border-r border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80',
-            'max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:z-20 max-md:shadow-xl'
+            'md:hidden flex flex-col w-64 shrink-0 border-r border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80',
+            'fixed top-14 sm:top-16 left-0 bottom-0 z-20 shadow-xl animate-in slide-in-from-left-3 duration-200'
           )}
         >
           <div className="p-2 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
@@ -256,8 +371,7 @@ export default function AuditorChatPage() {
               type="button"
               onClick={() => setSidebarOpen(false)}
               className="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400"
-              aria-label="Plegar conversaciones"
-              title="Plegar para ampliar el chat"
+              aria-label="Cerrar"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
@@ -297,47 +411,6 @@ export default function AuditorChatPage() {
                 ))}
               </ul>
             )}
-          </div>
-        </aside>
-      ) : (
-        <aside className="hidden md:flex flex-col w-12 shrink-0 border-r border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/80 items-center py-2 gap-1 min-h-0">
-          <button
-            type="button"
-            onClick={() => setSidebarOpen(true)}
-            className="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-500 dark:text-slate-400 shrink-0"
-            aria-label="Desplegar menú"
-            title="Desplegar menú"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-          <button
-            type="button"
-            onClick={handleNewConversation}
-            disabled={loadingList}
-            className="p-2.5 rounded-xl bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors shrink-0"
-            aria-label="Nueva conversación"
-            title="Nueva conversación"
-          >
-            <MessageSquarePlus className="w-5 h-5" />
-          </button>
-          <div className="flex-1 min-h-0 overflow-y-auto flex flex-col items-center gap-1 w-full px-1">
-            {conversations.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => handleSelectConversation(c.id)}
-                title={c.title}
-                className={cn(
-                  'w-full p-2 rounded-xl shrink-0 transition-colors',
-                  currentId === c.id
-                    ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-300'
-                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'
-                )}
-                aria-label={c.title}
-              >
-                <MessageCircle className="w-4 h-4 mx-auto" />
-              </button>
-            ))}
           </div>
         </aside>
       )}

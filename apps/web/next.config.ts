@@ -8,6 +8,8 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [
       { source: "/uploads/:path*", destination: `${apiOrigin}/uploads/:path*` },
+      // Proxy /api/* a la API en Railway cuando NEXT_PUBLIC_API_URL está configurado (Vercel)
+      { source: "/api/:path*", destination: `${apiOrigin}/api/:path*` },
     ];
   },
 };
