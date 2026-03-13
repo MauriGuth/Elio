@@ -4,6 +4,8 @@ import {
   IsBoolean,
   IsEnum,
   IsObject,
+  IsInt,
+  Min,
   MinLength,
   MaxLength,
 } from 'class-validator';
@@ -39,6 +41,12 @@ export class UpdateLocationDto {
   @IsOptional()
   @IsBoolean()
   hasTables?: boolean;
+
+  /** Punto de venta AFIP para este local (opcional; si no se define, se usa el global). */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  arcaPtoVta?: number;
 
   /** Plano del local: paredes, etc. { walls: [{ x1, y1, x2, y2 }] } */
   @IsOptional()

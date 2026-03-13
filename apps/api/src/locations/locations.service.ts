@@ -116,6 +116,7 @@ export class LocationsService {
     if (data.isActive !== undefined) updateData.isActive = data.isActive;
     if (data.isProduction !== undefined) updateData.isProduction = data.isProduction;
     if (data.hasTables !== undefined) updateData.hasTables = data.hasTables;
+    if (data.arcaPtoVta !== undefined) updateData.arcaPtoVta = data.arcaPtoVta;
 
     // mapConfig: asegurar objeto JSON serializable para Prisma (evita 500 por tipos/serialización)
     if (data.mapConfig !== undefined) {

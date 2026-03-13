@@ -66,7 +66,7 @@ export class ArcaFiscalService {
         where: { id: orderId },
         data: {
           fiscalStatus: 'disabled',
-          fiscalLastError: 'ARCA está deshabilitado o falta configuración fiscal.',
+          fiscalLastError: 'ARCA est? deshabilitado o falta configuraci?n fiscal.',
         },
       });
       await this.markOrderPending(orderId, order.invoiceType, false);
@@ -76,6 +76,7 @@ export class ArcaFiscalService {
     const invoiceType = this.resolveInvoiceType(order.invoiceType);
     this.validateCustomerForInvoice(order.customer, invoiceType);
 
+    const ptoVta = this.getPtoVtaForOrder(order);
     const cbteTipo = this.mapVoucherType(invoiceType);
     const voucher = await this.prisma.fiscalVoucher.upsert({
       where: { orderId },
@@ -83,7 +84,7 @@ export class ArcaFiscalService {
         status: 'processing',
         invoiceType,
         cbteTipo,
-        ptoVta: this.pointOfSale,
+        ptoVta,
         attemptCount: { increment: 1 },
         errorCode: null,
         errorMessage: null,
@@ -93,7 +94,7 @@ export class ArcaFiscalService {
         status: 'processing',
         invoiceType,
         cbteTipo,
-        ptoVta: this.pointOfSale,
+        ptoVta,
         attemptCount: 1,
       },
     });
@@ -109,7 +110,7 @@ export class ArcaFiscalService {
 
     try {
       const lastAuthorized = await this.wsfev1Service.getLastAuthorizedReceipt(
-        this.pointOfSale,
+        ptoVta,
         cbteTipo,
       );
       const nextReceiptNumber = lastAuthorized + 1;
@@ -117,6 +118,7 @@ export class ArcaFiscalService {
         order,
         invoiceType,
         cbteTipo,
+        ptoVta,
         nextReceiptNumber,
       );
 
@@ -124,7 +126,7 @@ export class ArcaFiscalService {
       const errorMessage = this.joinArcaMessages(response.errors, response.observations);
       if (!response.cae || !/^A/.test(response.result)) {
         throw new BadRequestException(
-          errorMessage || 'ARCA rechazó la emisión del comprobante.',
+          errorMessage || 'ARCA rechaz? la emisi?n del comprobante.',
         );
       }
 
@@ -134,7 +136,7 @@ export class ArcaFiscalService {
           status: 'issued',
           invoiceType,
           cbteTipo,
-          ptoVta: this.pointOfSale,
+          ptoVta,
           cbteDesde: nextReceiptNumber,
           cbteHasta: nextReceiptNumber,
           cae: response.cae,
@@ -192,7 +194,7 @@ export class ArcaFiscalService {
 
   /**
    * Verifica en AFIP que el comprobante de una orden emitida figure correctamente (FECompConsultar).
-   * Solo aplica a órdenes con comprobante emitido (tienen ptoVta, cbteTipo, cbteDesde).
+   * Solo aplica a ?rdenes con comprobante emitido (tienen ptoVta, cbteTipo, cbteDesde).
    */
   async verifyOrderWithAfip(orderId: string): Promise<{
     verified: boolean;
@@ -210,7 +212,7 @@ export class ArcaFiscalService {
     if (!this.isEnabled()) {
       return {
         verified: false,
-        message: 'ARCA no está habilitado.',
+        message: 'ARCA no est? habilitado.',
         errors: [],
       };
     }
@@ -243,7 +245,7 @@ export class ArcaFiscalService {
           ? (caeMatch === false ? 'Comprobante existe en AFIP pero el CAE no coincide con el guardado.' : 'Comprobante verificado en AFIP correctamente.')
           : consult.errors.length > 0
             ? consult.errors.map((e) => e.message).join(' ')
-            : `AFIP devolvió resultado: ${consult.resultado ?? 'sin datos'}`,
+            : `AFIP devolvi? resultado: ${consult.resultado ?? 'sin datos'}`,
         afip: consult.codAutorizacion
           ? {
               resultado: consult.resultado,
@@ -330,7 +332,7 @@ export class ArcaFiscalService {
         },
         customer: true,
         location: {
-          select: { id: true, name: true, type: true },
+          select: { id: true, name: true, type: true, arcaPtoVta: true },
         },
         table: {
           select: { id: true, name: true, tableType: true },
@@ -346,9 +348,18 @@ export class ArcaFiscalService {
     return order;
   }
 
+  /** Punto de venta a usar para esta orden: el del local si est? definido, sino el global (ARCA_PTO_VTA). */
+  private getPtoVtaForOrder(order: { location?: { arcaPtoVta?: number | null } | null }): number {
+    const pv = order.location?.arcaPtoVta;
+    if (pv != null && Number.isFinite(pv) && pv > 0) {
+      return pv;
+    }
+    return this.pointOfSale;
+  }
+
   private ensureOrderCanBeFiscalized(order: any, force: boolean) {
     if (order.status !== 'closed') {
-      throw new BadRequestException('Solo se pueden fiscalizar órdenes cerradas.');
+      throw new BadRequestException('Solo se pueden fiscalizar ?rdenes cerradas.');
     }
 
     if (order.table?.tableType === 'errors' || order.table?.tableType === 'trash') {
@@ -386,7 +397,7 @@ export class ArcaFiscalService {
       !normalizedTaxCondition.includes('inscripto')
     ) {
       throw new BadRequestException(
-        'Factura A requiere un cliente con condición IVA Responsable Inscripto.',
+        'Factura A requiere un cliente con condici?n IVA Responsable Inscripto.',
       );
     }
   }
@@ -440,6 +451,7 @@ export class ArcaFiscalService {
     order: any,
     invoiceType: ArcaInvoiceType,
     cbteTipo: number,
+    ptoVta: number,
     nextReceiptNumber: number,
   ): ArcaWsfeRequestPayload {
     const total = roundAmount(order.total ?? 0);
@@ -454,7 +466,7 @@ export class ArcaFiscalService {
 
     return {
       cbteTipo,
-      ptoVta: this.pointOfSale,
+      ptoVta,
       cbteDesde: nextReceiptNumber,
       cbteHasta: nextReceiptNumber,
       concepto: 1,
@@ -528,8 +540,8 @@ export class ArcaFiscalService {
   }
 
   /**
-   * Mapea la condición frente al IVA del receptor (RG 5616 – obligatorio desde 09/06/2025).
-   * Los códigos deben coincidir con FEParamGetCondicionIvaReceptor (GET /api/arca/wsfev1/params).
+   * Mapea la condici?n frente al IVA del receptor (RG 5616 ��� obligatorio desde 09/06/2025).
+   * Los c?digos deben coincidir con FEParamGetCondicionIvaReceptor (GET /api/arca/wsfev1/params).
    */
   private mapRecipientVatCondition(customer: any, invoiceType: ArcaInvoiceType): number {
     if (invoiceType === 'factura_a') {

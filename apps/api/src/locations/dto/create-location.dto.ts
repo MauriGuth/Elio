@@ -3,6 +3,8 @@ import {
   IsOptional,
   IsBoolean,
   IsEnum,
+  IsInt,
+  Min,
   MinLength,
   MaxLength,
 } from 'class-validator';
@@ -43,4 +45,10 @@ export class CreateLocationDto {
   @IsOptional()
   @IsBoolean()
   hasTables?: boolean;
+
+  /** Punto de venta AFIP para este local (opcional). */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  arcaPtoVta?: number;
 }

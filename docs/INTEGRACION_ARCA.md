@@ -92,6 +92,7 @@ Para facturar ventas reales (no homologación), seguí estos pasos:
 
 3. **Punto de venta**
    - El `ARCA_PTO_VTA` debe ser un punto de venta **habilitado para factura electrónica en AFIP** (no solo homologación). Verificá con `GET /api/arca/wsfev1/params` que ese punto aparezca en la respuesta una vez en producción.
+   - **Varios locales / varios PV:** si tenés más de un punto de venta en AFIP (ej. uno por local), podés asignar un PV por local en Nova. En el modelo `Location` existe el campo opcional `arcaPtoVta`. Si un local tiene `arcaPtoVta` definido, al emitir facturas de órdenes de ese local se usa ese PV; si no, se usa el `ARCA_PTO_VTA` global. Configurá cada local vía API: `PATCH /api/locations/:id` con `{ "arcaPtoVta": 2 }` (ej. La Posada = 2, The Coffee Store = 7). Los listados y el GET de locations ya devuelven `arcaPtoVta`.
 
 4. **Validar antes de vender**
    - Reiniciá la API para que tome el nuevo `.env`.

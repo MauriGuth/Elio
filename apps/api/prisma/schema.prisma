@@ -108,6 +108,8 @@ model Location {
   isActive     Boolean      @default(true) @map("is_active")
   isProduction Boolean      @default(false) @map("is_production")
   hasTables    Boolean      @default(false) @map("has_tables")
+  /** Punto de venta AFIP para este local (si no se define, se usa ARCA_PTO_VTA global). */
+  arcaPtoVta   Int?         @map("arca_pto_vta")
   mapConfig    Json?        @map("map_config")
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
