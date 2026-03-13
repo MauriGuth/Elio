@@ -20,6 +20,14 @@ export class ArcaService {
     };
   }
 
+  /** Estado mínimo de ARCA sin autenticación (para verificar configuración en Railway, etc.). */
+  getPublicHealth(): { enabled: boolean; pointOfSaleConfigured: boolean } {
+    return {
+      enabled: this.fiscalService.isEnabled(),
+      pointOfSaleConfigured: this.fiscalService.isEnabled(),
+    };
+  }
+
   async testLogin() {
     return this.wsaaService.testLogin();
   }
