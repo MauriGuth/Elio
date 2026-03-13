@@ -9,7 +9,7 @@ export default function NotFound() {
         href="/pos"
         className="mt-6 rounded-lg bg-amber-500 px-6 py-3 font-medium text-white hover:bg-amber-600"
       >
-        Ir a Elio (Elegir estación)
+        Ir a Nova (Elegir estación)
       </Link>
     </div>
   )

@@ -10,7 +10,7 @@ export default function PosStationSelectorPage() {
         <div className="rounded-2xl border border-amber-100 bg-white px-4 py-8 shadow-xl sm:px-8 sm:py-10">
           <div className="mb-6 text-center sm:mb-8">
             <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500 shadow-lg sm:h-16 sm:w-16">
-              <span className="text-2xl font-black text-white sm:text-3xl">E</span>
+              <span className="text-2xl font-black text-white sm:text-3xl">N</span>
             </div>
             <h1 className="text-xl font-bold text-gray-800 sm:text-2xl">Elige tu estación</h1>
             <p className="mt-2 text-sm text-gray-500">Inicia sesión en el link de tu rol</p>

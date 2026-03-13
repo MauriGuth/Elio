@@ -24,6 +24,7 @@ import { authApi } from "@/lib/api/auth"
 import { productsApi } from "@/lib/api/products"
 import { stockApi } from "@/lib/api/stock"
 import { categoriesApi } from "@/lib/api/categories"
+import { locationsApi } from "@/lib/api/locations"
 import {
   cn,
   formatCurrency,
@@ -412,6 +413,7 @@ export default function ProductDetailPage() {
   const [product, setProduct] = useState<ProcessedProduct | null>(null)
   const [movements, setMovements] = useState<ProcessedMovement[]>([])
   const [categories, setCategories] = useState<Array<{ id: string; name: string; slug: string; icon: string; color: string }>>([])
+  const [locations, setLocations] = useState<Array<{ id: string; name: string; type?: string }>>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showEditModal, setShowEditModal] = useState(false)
@@ -424,6 +426,7 @@ export default function ProductDetailPage() {
     name: "",
     categoryId: "",
     familia: "" as string,
+    locationIds: [] as string[],
     unit: "unidad",
     imageUrl: "" as string,
     avgCost: 0,
@@ -479,7 +482,9 @@ export default function ProductDetailPage() {
   }, [fetchData])
 
   useEffect(() => {
-    if (showEditModal && categories.length === 0) {
+    if (!showEditModal) return
+
+    if (categories.length === 0) {
       categoriesApi.getAll({ isActive: true }).then((res: any) => {
         const list = Array.isArray(res) ? res : res?.data ?? []
         const mapped = (list as Array<{ id: string; name: string; slug: string; icon?: string; color?: string }>).map((c) => ({
@@ -495,7 +500,20 @@ export default function ProductDetailPage() {
         setCategories(mapped)
       }).catch(() => {})
     }
-  }, [showEditModal, categories.length])
+
+    if (locations.length === 0) {
+      locationsApi.getAll().then((res: any) => {
+        const list = Array.isArray(res) ? res : res?.data ?? []
+        setLocations(
+          list.map((location: { id: string; name: string; type?: string }) => ({
+            id: location.id,
+            name: location.name,
+            type: location.type,
+          }))
+        )
+      }).catch(() => {})
+    }
+  }, [showEditModal, categories.length, locations.length])
 
   const openEditModal = useCallback(() => {
     if (!product) return
@@ -504,6 +522,7 @@ export default function ProductDetailPage() {
       name: product.name,
       categoryId: product.category.id,
       familia: product.familia ?? "",
+      locationIds: product.stockByLocation.map((stock) => stock.locationId),
       unit: product.unit,
       imageUrl: product.imageUrl ?? "",
       avgCost: product.avgCost,
@@ -522,6 +541,11 @@ export default function ProductDetailPage() {
     setEditing(true)
     setEditError(null)
     try {
+      if (editForm.locationIds.length === 0) {
+        setEditError("Seleccioná al menos una ubicación para el producto")
+        return
+      }
+
       let imageUrl = editForm.imageUrl || undefined
       if (editImageFile) {
         setEditImageUploading(true)
@@ -534,6 +558,7 @@ export default function ProductDetailPage() {
         name: editForm.name,
         categoryId: editForm.categoryId,
         familia: editForm.familia || undefined,
+        locationIds: editForm.locationIds,
         unit: editForm.unit,
         imageUrl,
         avgCost: editForm.avgCost,
@@ -913,6 +938,50 @@ export default function ProductDetailPage() {
                   ))}
                 </select>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-white">
+                  Ubicaciones
+                </label>
+                <div className="mt-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {locations
+                      .slice()
+                      .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }))
+                      .map((location) => {
+                        const checked = editForm.locationIds.includes(location.id)
+                        return (
+                          <label
+                            key={location.id}
+                            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) =>
+                                setEditForm((current) => ({
+                                  ...current,
+                                  locationIds: e.target.checked
+                                    ? [...current.locationIds, location.id]
+                                    : current.locationIds.filter((id) => id !== location.id),
+                                }))
+                              }
+                              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span>
+                              {location.name}
+                              {location.type === "WAREHOUSE" ? " (Depósito)" : ""}
+                            </span>
+                          </label>
+                        )
+                      })}
+                  </div>
+                  {locations.length === 0 && (
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      No hay ubicaciones disponibles.
+                    </p>
+                  )}
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label htmlFor="edit-avgCost" className="block text-sm font-medium text-gray-700 dark:text-white">
@@ -1011,7 +1080,13 @@ export default function ProductDetailPage() {
               <button
                 type="button"
                 onClick={handleSaveEdit}
-                disabled={editing || !editForm.sku.trim() || !editForm.name.trim() || !editForm.categoryId}
+                disabled={
+                  editing ||
+                  !editForm.sku.trim() ||
+                  !editForm.name.trim() ||
+                  !editForm.categoryId ||
+                  editForm.locationIds.length === 0
+                }
                 className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
               >
                 {editing && <Loader2 className="h-4 w-4 animate-spin" />}

@@ -4,18 +4,18 @@
 
 **Versión:** 1.0  
 **Fecha:** 11 de Febrero de 2026  
-**Codename:** Elio  
+**Codename:** Nova  
 **Inspiración visual:** Posberry POS — estética limpia, empresarial, profesional
 
 ---
 
 ## 1. Visión General del Sistema
 
-**Elio** es una plataforma integral de gestión operativa diseñada para redes de cafeterías, restaurantes y depósitos de producción. Centraliza el control de stock, la planificación de producción, la logística entre locales y el punto de venta con inteligencia artificial.
+**Nova** es una plataforma integral de gestión operativa diseñada para redes de cafeterías, restaurantes y depósitos de producción. Centraliza el control de stock, la planificación de producción, la logística entre locales y el punto de venta con inteligencia artificial.
 
 ### 1.1 Problema que resuelve
 
-| Problema actual | Solución Elio |
+| Problema actual | Solución Nova |
 |---|---|
 | Stock descentralizado y sin visibilidad real | Dashboard unificado con semáforo por ubicación |
 | Producción sin control de costos reales | Módulo de recetas versionadas con costeo automático |

@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsNumber, Min, IsArray, ValidateNested } from 'class-validator';
+import { IsString, IsOptional, IsNumber, Min, IsArray, ValidateNested, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 
 /** Un pago por comensal (cuenta dividida). */
@@ -37,6 +37,7 @@ export class CloseOrderDto {
 
   @IsOptional()
   @IsString()
+  @IsIn(['consumidor', 'factura_a', 'factura_b', 'factura_c'])
   invoiceType?: string;
 
   @IsOptional()

@@ -66,7 +66,11 @@ export class CustomersService {
       data: {
         locationId: dto.locationId,
         name: dto.name,
+        legalName: dto.legalName,
         cuit: dto.cuit,
+        taxCondition: dto.taxCondition,
+        documentType: dto.documentType,
+        documentNumber: dto.documentNumber,
         email: dto.email,
         address: dto.address,
         phone: dto.phone,
@@ -80,7 +84,11 @@ export class CustomersService {
       where: { id },
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
+        ...(dto.legalName !== undefined && { legalName: dto.legalName }),
         ...(dto.cuit !== undefined && { cuit: dto.cuit }),
+        ...(dto.taxCondition !== undefined && { taxCondition: dto.taxCondition }),
+        ...(dto.documentType !== undefined && { documentType: dto.documentType }),
+        ...(dto.documentNumber !== undefined && { documentNumber: dto.documentNumber }),
         ...(dto.email !== undefined && { email: dto.email }),
         ...(dto.address !== undefined && { address: dto.address }),
         ...(dto.phone !== undefined && { phone: dto.phone }),

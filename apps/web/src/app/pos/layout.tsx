@@ -167,7 +167,7 @@ function PosLayoutInner({ children }: { children: React.ReactNode }) {
 
           <Link href={"/pos/tables" + posStationSuffix()} className="flex shrink-0 items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500">
-              <span className="text-sm font-black text-white">E</span>
+              <span className="text-sm font-black text-white">N</span>
             </div>
             <span className="hidden text-lg font-bold tracking-wide text-gray-800 sm:inline">POS</span>
           </Link>

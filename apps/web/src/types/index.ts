@@ -1,4 +1,4 @@
-// Types for Elio System
+// Types for Nova System
 
 export type StockStatus = "critical" | "medium" | "normal" | "excess"
 export type OrderStatus = "open" | "in_progress" | "ready" | "served" | "billing" | "closed" | "cancelled"

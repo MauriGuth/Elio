@@ -3,6 +3,7 @@ import {
   IsOptional,
   IsBoolean,
   IsNumber,
+  IsArray,
   MinLength,
   MaxLength,
   Min,
@@ -81,4 +82,9 @@ export class UpdateProductDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  locationIds?: string[];
 }

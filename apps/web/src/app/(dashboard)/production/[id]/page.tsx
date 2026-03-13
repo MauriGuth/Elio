@@ -84,6 +84,15 @@ const statusOrder: Record<string, number> = {
   cancelled: -1,
 }
 
+function hasMissingStock(order: any): boolean {
+  const items = Array.isArray(order?.items) ? order.items : []
+  return items.some((item: any) => {
+    const needed = item.requiredQty ?? item.plannedQty ?? item.quantity ?? 0
+    const available = item.availableQty ?? item.currentStock ?? 0
+    return available < needed
+  })
+}
+
 // ---------- skeleton ----------
 
 function DetailSkeleton() {
@@ -170,6 +179,13 @@ export default function ProductionDetailPage() {
   }, [order])
 
   const handleStart = useCallback(async () => {
+    if (hasMissingStock(order)) {
+      const msg = "No podés poner en curso esta producción porque faltan insumos."
+      setActionError(msg)
+      sileo.error({ title: msg })
+      return
+    }
+
     setActionError(null)
     setActionLoading(true)
     try {
@@ -183,7 +199,7 @@ export default function ProductionDetailPage() {
     } finally {
       setActionLoading(false)
     }
-  }, [orderId, loadOrder])
+  }, [orderId, loadOrder, order])
 
   const handleComplete = useCallback(async () => {
     setActionError(null)
@@ -285,7 +301,7 @@ export default function ProductionDetailPage() {
     for (const item of order.items) {
       ingredients.push({
         name: item.product?.name || item.productName || "—",
-        needed: item.requiredQty ?? item.quantity ?? 0,
+        needed: item.requiredQty ?? item.plannedQty ?? item.quantity ?? 0,
         available: item.availableQty ?? item.currentStock ?? 0,
         unit: item.product?.unit || item.unit || "Und",
       })
@@ -298,7 +314,7 @@ export default function ProductionDetailPage() {
       const scale = plannedQty / (order.recipe.yieldQty || 1)
       ingredients.push({
         name: ing.product?.name || ing.productName || "—",
-        needed: Math.ceil(qtyPerYield * scale),
+        needed: ing.requiredQty ?? qtyPerYield * scale,
         available: ing.availableStock ?? 0,
         unit: ing.product?.unit || ing.unit || "Und",
       })
@@ -308,6 +324,7 @@ export default function ProductionDetailPage() {
   // Unit cost calculation
   const unitCost =
     order.unitCost ?? (plannedQty > 0 ? Math.round(estimatedCost / plannedQty) : 0)
+  const hasMissingIngredients = hasMissingStock(order)
 
   return (
     <div className="space-y-6">
@@ -594,20 +611,16 @@ export default function ProductionDetailPage() {
                           {formatNumber(ing.available)} {ing.unit}
                         </td>
                         <td className="px-4 py-3">
-                          {ing.available > 0 || ing.needed === 0 ? (
-                            isOk ? (
-                              <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600 dark:text-green-300">
-                                <CheckCircle2 className="h-3.5 w-3.5" />
-                                OK
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400">
-                                <AlertCircle className="h-3.5 w-3.5" />
-                                Falta {formatNumber(deficit)} {ing.unit}
-                              </span>
-                            )
+                          {isOk ? (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600 dark:text-green-300">
+                              <CheckCircle2 className="h-3.5 w-3.5" />
+                              OK
+                            </span>
                           ) : (
-                            <span className="text-xs text-gray-400 dark:text-white">—</span>
+                            <span className="inline-flex items-center gap-1 text-xs font-medium text-red-600 dark:text-red-400">
+                              <AlertCircle className="h-3.5 w-3.5" />
+                              FALTANTE
+                            </span>
                           )}
                         </td>
                       </tr>
@@ -683,12 +696,17 @@ export default function ProductionDetailPage() {
       {actionError && (
         <p className="mb-3 text-sm text-red-600 dark:text-red-400">{actionError}</p>
       )}
+      {hasMissingIngredients && (status === "draft" || status === "pending") && (
+        <p className="mb-3 text-sm text-amber-600 dark:text-amber-400">
+          No podés poner esta producción en curso mientras haya insumos con faltante.
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         {(status === "draft" || status === "pending") && (
           <button
             type="button"
             onClick={handleStart}
-            disabled={actionLoading}
+            disabled={actionLoading || hasMissingIngredients}
             className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700 disabled:opacity-50"
           >
             {actionLoading ? (

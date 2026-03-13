@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { ordersApi } from "@/lib/api/orders"
 import { authApi } from "@/lib/api/auth"
-import { api } from "@/lib/api"
+import { api, getLocationKey } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import {
   ChefHat,
@@ -39,6 +39,7 @@ const SECTOR_LABELS: Record<string, string> = {
 /* ── Thresholds ── */
 const URGENT_PENDING_MIN = 10
 const URGENT_PREP_MIN = 30
+const LEGACY_KITCHEN_LOCATION_KEY = "elio_kitchen_location"
 
 /* ── Helpers ── */
 function minutesAgo(dateStr: string): number {
@@ -105,9 +106,14 @@ export default function KitchenDisplayPage() {
       user?.location ||
       (() => {
         try {
-          return JSON.parse(
-            localStorage.getItem("elio_kitchen_location") || "null"
-          )
+          const scopedValue = localStorage.getItem(getLocationKey())
+          if (scopedValue) return JSON.parse(scopedValue)
+
+          const legacyValue = localStorage.getItem(LEGACY_KITCHEN_LOCATION_KEY)
+          if (!legacyValue) return null
+
+          localStorage.setItem(getLocationKey(), legacyValue)
+          return JSON.parse(legacyValue)
         } catch {
           return null
         }

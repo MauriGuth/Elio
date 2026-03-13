@@ -16,6 +16,7 @@ import {
   Loader2,
   QrCode,
   ChevronRight,
+  ChevronDown,
 } from "lucide-react"
 import { productionApi } from "@/lib/api/production"
 import { recipesApi } from "@/lib/api/recipes"
@@ -149,6 +150,9 @@ export default function ProductionPage() {
     plannedDate: "",
     notes: "",
   })
+  // Combobox receta: búsqueda por teclado
+  const [recipeSearch, setRecipeSearch] = useState("")
+  const [recipeDropdownOpen, setRecipeDropdownOpen] = useState(false)
 
   // Close modal on Escape
   useEffect(() => {
@@ -182,8 +186,8 @@ export default function ProductionPage() {
   useEffect(() => {
     async function loadRecipes() {
       try {
-        const res = await recipesApi.getAll()
-        const data = res.data || []
+        const res = await recipesApi.getAll({ limit: 5000 })
+        const data = (res as any).data ?? res.data ?? []
         setRecipesList(data.map((r: any) => ({ id: r.id, name: r.name })))
       } catch {
         // Non-critical
@@ -191,7 +195,8 @@ export default function ProductionPage() {
     }
     async function loadLocations() {
       try {
-        const res = await locationsApi.getAll()
+        // Solo ubicaciones tipo depósito (producción solo en depósito)
+        const res = await locationsApi.getAll({ type: "WAREHOUSE" })
         const locs = Array.isArray(res) ? res : (res as any).data || []
         setLocationsList(locs.map((l: any) => ({ id: l.id, name: l.name })))
       } catch {
@@ -259,12 +264,26 @@ export default function ProductionPage() {
   const handleCreateOrder = async (e: React.FormEvent) => {
     e.preventDefault()
     setCreateError(null)
-    if (newOrder.plannedDate) {
-      const plannedStr = newOrder.plannedDate.slice(0, 10)
-      if (plannedStr < minPlannedDate) {
-        setCreateError("La fecha planificada no puede ser anterior a hoy.")
-        return
-      }
+    if (!newOrder.recipeId) {
+      setCreateError("Seleccioná una receta de la lista.")
+      return
+    }
+    if (!newOrder.locationId) {
+      setCreateError("Seleccioná una ubicación.")
+      return
+    }
+    if (newOrder.plannedQty <= 0) {
+      setCreateError("La cantidad planificada debe ser mayor a 0.")
+      return
+    }
+    if (!newOrder.plannedDate?.trim()) {
+      setCreateError("La fecha planificada es obligatoria.")
+      return
+    }
+    const plannedStr = newOrder.plannedDate.slice(0, 10)
+    if (plannedStr < minPlannedDate) {
+      setCreateError("La fecha planificada no puede ser anterior a hoy.")
+      return
     }
     setCreating(true)
     try {
@@ -272,7 +291,7 @@ export default function ProductionPage() {
         recipeId: newOrder.recipeId,
         locationId: newOrder.locationId,
         plannedQty: newOrder.plannedQty,
-        plannedDate: newOrder.plannedDate || undefined,
+        plannedDate: newOrder.plannedDate,
         notes: newOrder.notes || undefined,
       })
       setShowCreateModal(false)
@@ -283,6 +302,8 @@ export default function ProductionPage() {
         plannedDate: "",
         notes: "",
       })
+      setRecipeSearch("")
+      setRecipeDropdownOpen(false)
       fetchOrders()
       sileo.success({ title: "Orden de producción creada" })
     } catch (err: any) {
@@ -613,27 +634,81 @@ export default function ProductionPage() {
                   </div>
                 )}
 
-                {/* Recipe */}
-                <div>
+                {/* Recipe — combobox con búsqueda por teclado */}
+                <div className="relative">
                   <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
                     Receta <span className="text-red-500">*</span>
                   </label>
-                  <select
-                    required
-                    aria-label="Receta"
-                    value={newOrder.recipeId}
-                    onChange={(e) =>
-                      setNewOrder({ ...newOrder, recipeId: e.target.value })
-                    }
-                    className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    <option value="">Seleccionar receta...</option>
-                    {recipesList.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      aria-label="Receta"
+                      aria-autocomplete="list"
+                      aria-expanded={recipeDropdownOpen}
+                      role="combobox"
+                      value={
+                        newOrder.recipeId
+                          ? recipesList.find((r) => r.id === newOrder.recipeId)
+                              ?.name ?? recipeSearch
+                          : recipeSearch
+                      }
+                      onChange={(e) => {
+                        setRecipeSearch(e.target.value)
+                        setRecipeDropdownOpen(true)
+                        if (newOrder.recipeId) setNewOrder({ ...newOrder, recipeId: "" })
+                      }}
+                      onFocus={() => setRecipeDropdownOpen(true)}
+                      onBlur={() =>
+                        setTimeout(() => setRecipeDropdownOpen(false), 150)
+                      }
+                      placeholder="Escribí para buscar o seleccionar receta..."
+                      className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 pr-9 text-sm text-gray-700 dark:text-white placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <ChevronDown className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 pointer-events-none text-gray-400" />
+                  </div>
+                  {recipeDropdownOpen && (
+                    <ul
+                      className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 py-1 shadow-lg"
+                      role="listbox"
+                    >
+                      {recipesList
+                        .filter((r) =>
+                          r.name
+                            .toLowerCase()
+                            .includes(recipeSearch.trim().toLowerCase())
+                        )
+                        .map((r) => (
+                          <li
+                            key={r.id}
+                            role="option"
+                            aria-selected={newOrder.recipeId === r.id}
+                            className={cn(
+                              "cursor-pointer px-3 py-2 text-sm",
+                              newOrder.recipeId === r.id
+                                ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-200"
+                                : "text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                            )}
+                            onMouseDown={(e) => {
+                              e.preventDefault()
+                              setNewOrder({ ...newOrder, recipeId: r.id })
+                              setRecipeSearch("")
+                              setRecipeDropdownOpen(false)
+                            }}
+                          >
+                            {r.name}
+                          </li>
+                        ))}
+                      {recipesList.filter((r) =>
+                        r.name
+                          .toLowerCase()
+                          .includes(recipeSearch.trim().toLowerCase())
+                      ).length === 0 && (
+                        <li className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
+                          No hay recetas que coincidan
+                        </li>
+                      )}
+                    </ul>
+                  )}
                 </div>
 
                 {/* Location */}
@@ -668,11 +743,12 @@ export default function ProductionPage() {
                     <FormattedNumberInput
                       required
                       aria-label="Cantidad planificada"
+                      placeholder="1"
                       value={newOrder.plannedQty}
                       onChange={(n) =>
                         setNewOrder({
                           ...newOrder,
-                          plannedQty: Math.max(1, n),
+                          plannedQty: n,
                         })
                       }
                       className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -680,10 +756,11 @@ export default function ProductionPage() {
                   </div>
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
-                      Fecha Planificada
+                      Fecha Planificada <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="date"
+                      required
                       aria-label="Fecha planificada"
                       min={minPlannedDate}
                       value={newOrder.plannedDate}

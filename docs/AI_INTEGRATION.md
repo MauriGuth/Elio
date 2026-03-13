@@ -4,7 +4,7 @@
 
 ## 1. Visión General de IA
 
-La IA en Elio opera como un **asistente inteligente** que trabaja en segundo plano analizando datos, detectando patrones y generando acciones proactivas. No reemplaza decisiones humanas: las **sugiere y facilita**.
+La IA en Nova opera como un **asistente inteligente** que trabaja en segundo plano analizando datos, detectando patrones y generando acciones proactivas. No reemplaza decisiones humanas: las **sugiere y facilita**.
 
 ### 1.1 Capacidades de IA
 

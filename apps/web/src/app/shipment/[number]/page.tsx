@@ -457,7 +457,7 @@ export default function ShipmentPublicPage() {
           </div>
         )}
 
-        <p className="mt-8 text-center text-xs text-gray-400">Detalle del envío · Elio</p>
+        <p className="mt-8 text-center text-xs text-gray-400">Detalle del envío · Nova</p>
       </div>
     </div>
   )

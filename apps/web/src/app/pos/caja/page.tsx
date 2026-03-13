@@ -340,6 +340,11 @@ export default function PosCajaPage() {
     }
   }, [registerIdForStorage])
 
+  /** Solo se puede cerrar el turno que está abierto; sincronizar y no permitir elegir otro. */
+  useEffect(() => {
+    if (currentRegister?.shift) setCloseShift(currentRegister.shift)
+  }, [currentRegister?.shift])
+
   const cerrarCajaSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
     if (!registerIdForStorage || typeof localStorage === "undefined") return
@@ -1627,8 +1632,12 @@ export default function PosCajaPage() {
                       onChange={(e) => setCloseShift(e.target.value)}
                       className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-base font-medium !text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                       aria-label="Turno al cerrar"
+                      title={currentRegister?.shift ? "Solo podés cerrar el turno actual (evita confusiones)." : undefined}
                     >
-                      {SHIFT_OPTIONS.map((s) => (
+                      {(currentRegister?.shift
+                        ? SHIFT_OPTIONS.filter((s) => s.value === currentRegister.shift)
+                        : SHIFT_OPTIONS
+                      ).map((s) => (
                         <option key={s.value} value={s.value}>
                           {s.label}
                         </option>

@@ -111,10 +111,10 @@ export default function LoginPage() {
           {/* Brand */}
           <div className="mb-8 text-center">
             <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-emerald-600 shadow-lg shadow-emerald-200">
-              <span className="text-2xl font-black text-white">E</span>
+              <span className="text-2xl font-black text-white">N</span>
             </div>
             <h1 className="text-3xl font-black tracking-wider text-slate-800">
-              EL<span className="text-emerald-600">IO</span>
+              NO<span className="text-emerald-600">VA</span>
             </h1>
             <p className="mt-1.5 text-sm text-slate-500">
               Sistema de Gestión Gastronómica
@@ -214,7 +214,7 @@ export default function LoginPage() {
 
         {/* Footer */}
         <p className="mt-6 text-center text-xs text-slate-400">
-          Elio &copy; {new Date().getFullYear()} — Todos los derechos reservados
+          Nova &copy; {new Date().getFullYear()} — Todos los derechos reservados
         </p>
       </div>
     </div>

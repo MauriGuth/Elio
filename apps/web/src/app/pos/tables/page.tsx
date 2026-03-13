@@ -210,7 +210,7 @@ function TableFormModal({
               onChange={(n) =>
                 setFormData((p: any) => ({
                   ...p,
-                  capacity: Math.max(1, Math.min(20, n)) || 1,
+                  capacity: n === 0 ? 0 : Math.min(20, n),
                 }))
               }
               className="w-full rounded-xl border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-3 text-base text-gray-900 dark:text-white placeholder:text-gray-500 dark:placeholder-gray-400 transition-colors focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
@@ -808,7 +808,7 @@ export default function TablesPage() {
       await tablesApi.update(editingTable.id, {
         name: formData.name,
         zone: formData.zone,
-        capacity: formData.capacity,
+        capacity: Math.max(1, Math.floor(Number(formData.capacity) || 4)),
         shape: formData.shape || "square",
         scale: formData.scale ?? 1.0,
       })
@@ -1252,6 +1252,9 @@ export default function TablesPage() {
                     if (walls.length > 0) await saveWalls(walls)
                     setDrawWallMode(false)
                     setWallStart(null)
+                    // Volver a la vista principal (filtros + Editar Plano + Actualizar)
+                    setEditMode(false)
+                    setEditedPositions({})
                   } catch {
                     // error ya mostrado por savePositions/saveWalls
                   }

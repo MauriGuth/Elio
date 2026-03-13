@@ -234,7 +234,7 @@ export class GoodsReceiptsService {
         items: {
           create: data.items.map((item) => ({
             productId: item.productId,
-            orderedQty: item.orderedQty,
+            orderedQty: item.orderedQty ?? item.receivedQty,
             receivedQty: item.receivedQty,
             unitCost: item.unitCost,
             lotNumber: item.lotNumber,
@@ -297,7 +297,7 @@ export class GoodsReceiptsService {
       data: {
         receiptId,
         productId: data.productId,
-        orderedQty: data.orderedQty,
+        orderedQty: data.orderedQty ?? data.receivedQty,
         receivedQty: data.receivedQty,
         unitCost: data.unitCost,
         lotNumber: data.lotNumber,

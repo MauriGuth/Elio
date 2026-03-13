@@ -79,6 +79,7 @@ const navSectionsAll: NavSection[] = [
     items: [
       { label: 'Reportes', href: '/reports', icon: BarChart3 },
       { label: 'Cierres de caja', href: '/cash-registers', icon: Receipt },
+      { label: 'Fiscalización ARCA', href: '/fiscal', icon: Receipt },
       { label: 'Auditoría de stock', href: '/stock-reconciliations', icon: ClipboardList },
       { label: 'IA & Alertas', href: '/alerts', icon: Brain },
       { label: 'Chat Auditor', href: '/auditor-chat', icon: MessageCircle },
@@ -110,6 +111,7 @@ const roleByPath: Record<string, string[]> = {
   '/pos': ['ADMIN', 'LOCATION_MANAGER', 'CASHIER', 'WAITER', 'KITCHEN', 'CAFETERIA'],
   '/reports': ['ADMIN', 'LOCATION_MANAGER', 'WAREHOUSE_MANAGER', 'CASHIER', 'AUDITOR'],
   '/cash-registers': ['ADMIN', 'LOCATION_MANAGER', 'CASHIER', 'AUDITOR'],
+  '/fiscal': ['ADMIN', 'LOCATION_MANAGER', 'CASHIER', 'AUDITOR'],
   '/stock-reconciliations': ['ADMIN', 'AUDITOR'],
   '/alerts': ['ADMIN', 'LOCATION_MANAGER', 'WAREHOUSE_MANAGER', 'LOGISTICS', 'CASHIER', 'AUDITOR'],
   '/auditor-chat': ['ADMIN', 'LOCATION_MANAGER', 'AUDITOR'],
@@ -182,11 +184,11 @@ export function Sidebar({ collapsed = false, onToggle, mobileOpen = false, onMob
       <div className="flex h-14 shrink-0 items-center justify-between gap-2 px-4 sm:h-16">
         <Link href="/" className="flex items-center gap-2" onClick={onMobileClose}>
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-sm font-bold text-white">
-            E
+            N
           </div>
           {!collapsed && (
             <span className="text-lg font-bold tracking-wide text-gray-900 dark:text-white">
-              EL<span className="text-blue-600 dark:text-blue-400">IO</span>
+              NO<span className="text-blue-600 dark:text-blue-400">VA</span>
             </span>
           )}
         </Link>

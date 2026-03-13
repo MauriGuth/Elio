@@ -10,6 +10,7 @@ import {
   Edit3,
   Trash2,
   AlertCircle,
+  ChevronDown,
 } from "lucide-react"
 import { recipesApi } from "@/lib/api/recipes"
 import { productsApi } from "@/lib/api/products"
@@ -45,6 +46,10 @@ export default function RecipesPage() {
   const [formLoading, setFormLoading] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [deletingRecipeId, setDeletingRecipeId] = useState<string | null>(null)
+  const [productOutputSearch, setProductOutputSearch] = useState("")
+  const [productOutputDropdownOpen, setProductOutputDropdownOpen] = useState(false)
+  const [openIngredientDropdownIndex, setOpenIngredientDropdownIndex] = useState<number | null>(null)
 
   const productLabel = useCallback((product: ProductOption) => {
     return product.sku ? `${product.name} (${product.sku})` : product.name
@@ -118,6 +123,8 @@ export default function RecipesPage() {
     setEditingRecipeId(null)
     setForm(emptyForm)
     setFormError(null)
+    setProductOutputSearch("")
+    setProductOutputDropdownOpen(false)
   }
 
   const openEdit = async (recipe: any) => {
@@ -161,6 +168,9 @@ export default function RecipesPage() {
     setEditingRecipeId(null)
     setForm(emptyForm)
     setFormError(null)
+    setProductOutputSearch("")
+    setProductOutputDropdownOpen(false)
+    setOpenIngredientDropdownIndex(null)
   }
 
   const addIngredient = () => {
@@ -255,6 +265,25 @@ export default function RecipesPage() {
     }
   }
 
+  const handleDeleteRecipe = useCallback(
+    async (recipe: any) => {
+      if (!confirm(`¿Eliminar la receta "${recipe.name}"?`)) return
+
+      setDeletingRecipeId(recipe.id)
+      try {
+        await recipesApi.delete(recipe.id)
+        await fetchRecipes()
+        sileo.success({ title: "Receta eliminada correctamente" })
+      } catch (err: any) {
+        const msg = err.message || "Error al eliminar la receta"
+        sileo.error({ title: msg })
+      } finally {
+        setDeletingRecipeId(null)
+      }
+    },
+    [fetchRecipes]
+  )
+
   const filtered = useMemo(() => {
     const base = searchQuery
       ? recipes.filter(
@@ -314,52 +343,69 @@ export default function RecipesPage() {
         </div>
       ) : (
         <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
-                <th className="px-4 py-3 text-left font-medium text-gray-600 dark:text-white">Receta</th>
-                <th className="px-4 py-3 text-left font-medium text-gray-600 dark:text-white">Producto de salida</th>
-                <th className="px-4 py-3 text-center font-medium text-gray-600 dark:text-white">Ingredientes</th>
-                <th className="px-4 py-3 text-right font-medium text-gray-600 dark:text-white">Acción</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-4 py-12 text-center text-gray-500 dark:text-gray-400">
-                    No hay recetas
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="min-w-[720px] w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+                  <th className="px-4 py-3 text-left font-medium text-gray-600 dark:text-white">Receta</th>
+                  <th className="px-4 py-3 text-left font-medium text-gray-600 dark:text-white">Producto de salida</th>
+                  <th className="px-4 py-3 text-center font-medium text-gray-600 dark:text-white">Ingredientes</th>
+                  <th className="px-4 py-3 text-right font-medium text-gray-600 dark:text-white">Acción</th>
                 </tr>
-              ) : (
-                filtered.map((recipe) => {
-                  const hasOutput = !!(recipe.productId || recipe.product?.id)
-                  const ingCount = recipe._count?.ingredients ?? recipe.ingredients?.length ?? 0
-                  return (
-                    <tr key={recipe.id} className="border-b border-gray-100 dark:border-gray-700 transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                      <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">{recipe.name}</td>
-                      <td className="px-4 py-3">
-                        <span className={cn(hasOutput ? "text-gray-900 dark:text-white" : "text-gray-400 dark:text-gray-400")}>
-                          {hasOutput ? recipe.product?.name ?? "—" : "—"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-center text-gray-600 dark:text-gray-300">{ingCount}</td>
-                      <td className="px-4 py-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => openEdit(recipe)}
-                          disabled={detailLoading}
-                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-blue-600 hover:bg-blue-50 disabled:opacity-50"
-                        >
-                          <Edit3 className="h-4 w-4" />
-                          Editar
-                        </button>
-                      </td>
-                    </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filtered.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="px-4 py-12 text-center text-gray-500 dark:text-gray-400">
+                      No hay recetas
+                    </td>
+                  </tr>
+                ) : (
+                  filtered.map((recipe) => {
+                    const hasOutput = !!(recipe.productId || recipe.product?.id)
+                    const ingCount = recipe._count?.ingredients ?? recipe.ingredients?.length ?? 0
+                    return (
+                      <tr key={recipe.id} className="border-b border-gray-100 dark:border-gray-700 transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                        <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">{recipe.name}</td>
+                        <td className="px-4 py-3">
+                          <span className={cn(hasOutput ? "text-gray-900 dark:text-white" : "text-gray-400 dark:text-gray-400")}>
+                            {hasOutput ? recipe.product?.name ?? "—" : "—"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-center text-gray-600 dark:text-gray-300">{ingCount}</td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="inline-flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openEdit(recipe)}
+                              disabled={detailLoading || deletingRecipeId === recipe.id}
+                              className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-blue-600 hover:bg-blue-50 disabled:opacity-50"
+                            >
+                              <Edit3 className="h-4 w-4" />
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteRecipe(recipe)}
+                              disabled={detailLoading || deletingRecipeId === recipe.id}
+                              className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-red-600 hover:bg-red-50 disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-900/30"
+                            >
+                              {deletingRecipeId === recipe.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-4 w-4" />
+                              )}
+                              Eliminar
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -408,8 +454,9 @@ export default function RecipesPage() {
                     type="number"
                     min={0.01}
                     step={0.1}
-                    value={form.yieldQty}
+                    value={form.yieldQty || ""}
                     onChange={(e) => setForm((f) => ({ ...f, yieldQty: Number(e.target.value) || 0 }))}
+                    placeholder="1"
                     aria-label="Cantidad de rendimiento"
                     className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
@@ -426,21 +473,103 @@ export default function RecipesPage() {
                 </div>
               </div>
 
-              <div>
+              <div className="relative">
                 <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-white">Producto de salida</label>
-                <select
-                  value={form.productId}
-                  onChange={(e) => setForm((f) => ({ ...f, productId: e.target.value }))}
-                  aria-label="Producto de salida"
-                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                >
-                  <option value="">Sin producto de salida</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} {p.sku ? `(${p.sku})` : ""}
-                    </option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <input
+                    type="text"
+                    aria-label="Producto de salida"
+                    aria-autocomplete="list"
+                    aria-expanded={productOutputDropdownOpen}
+                    role="combobox"
+                    value={
+                      form.productId
+                        ? productLabel(productsById.get(form.productId) ?? { id: form.productId, name: "", sku: "" })
+                        : productOutputSearch
+                    }
+                    onChange={(e) => {
+                      setProductOutputSearch(e.target.value)
+                      setProductOutputDropdownOpen(true)
+                      if (form.productId) setForm((f) => ({ ...f, productId: "" }))
+                    }}
+                    onFocus={() => setProductOutputDropdownOpen(true)}
+                    onBlur={() =>
+                      setTimeout(() => setProductOutputDropdownOpen(false), 150)
+                    }
+                    placeholder="Escribí para buscar o Sin producto de salida..."
+                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 pr-9 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  <ChevronDown className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 pointer-events-none text-gray-400" />
+                </div>
+                {productOutputDropdownOpen && (
+                  <ul
+                    className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 py-1 shadow-lg"
+                    role="listbox"
+                  >
+                    <li
+                      role="option"
+                      aria-selected={!form.productId && !productOutputSearch}
+                      className={cn(
+                        "cursor-pointer px-3 py-2 text-sm",
+                        !form.productId && !productOutputSearch
+                          ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-200"
+                          : "text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                      )}
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        setForm((f) => ({ ...f, productId: "" }))
+                        setProductOutputSearch("")
+                        setProductOutputDropdownOpen(false)
+                      }}
+                    >
+                      ✓ Sin producto de salida
+                    </li>
+                    {products
+                      .filter(
+                        (p) =>
+                          !productOutputSearch.trim() ||
+                          productLabel(p)
+                            .toLowerCase()
+                            .includes(productOutputSearch.trim().toLowerCase()) ||
+                          p.name.toLowerCase().includes(productOutputSearch.trim().toLowerCase()) ||
+                          (p.sku && p.sku.toLowerCase().includes(productOutputSearch.trim().toLowerCase()))
+                      )
+                      .map((p) => (
+                        <li
+                          key={p.id}
+                          role="option"
+                          aria-selected={form.productId === p.id}
+                          className={cn(
+                            "cursor-pointer px-3 py-2 text-sm",
+                            form.productId === p.id
+                              ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-200"
+                              : "text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                          )}
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            setForm((f) => ({ ...f, productId: p.id }))
+                            setProductOutputSearch("")
+                            setProductOutputDropdownOpen(false)
+                          }}
+                        >
+                          {productLabel(p)}
+                        </li>
+                      ))}
+                    {productOutputSearch.trim() &&
+                      products.filter(
+                        (p) =>
+                          productLabel(p)
+                            .toLowerCase()
+                            .includes(productOutputSearch.trim().toLowerCase()) ||
+                          p.name.toLowerCase().includes(productOutputSearch.trim().toLowerCase()) ||
+                          (p.sku && p.sku.toLowerCase().includes(productOutputSearch.trim().toLowerCase()))
+                      ).length === 0 && (
+                        <li className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
+                          No hay productos que coincidan
+                        </li>
+                      )}
+                  </ul>
+                )}
               </div>
 
               <div>
@@ -461,49 +590,100 @@ export default function RecipesPage() {
                       Sin ingredientes. Clic en &quot;Agregar&quot; para cargar cantidades.
                     </p>
                   ) : (
-                    form.ingredients.map((row, index) => (
-                      <div
-                        key={index}
-                        className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-700/50 p-2"
-                      >
-                        <input
-                          list={`recipe-product-options-${index}`}
-                          value={row.productQuery}
-                          onChange={(e) => updateIngredientQuery(index, e.target.value)}
-                          aria-label={`Ingrediente ${index + 1}, producto`}
-                          placeholder="Producto..."
-                          className="min-w-[220px] rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                        <datalist id={`recipe-product-options-${index}`}>
-                          {products.map((p) => (
-                            <option key={p.id} value={productLabel(p)} />
-                          ))}
-                        </datalist>
-                        <input
-                          type="number"
-                          min={0}
-                          step={0.001}
-                          value={row.qtyPerYield || ""}
-                          onChange={(e) =>
-                            updateIngredient(index, "qtyPerYield", parseFloat(e.target.value) || 0)
-                          }
-                          placeholder="Cant."
-                          aria-label={`Cantidad por rendimiento ingrediente ${index + 1}`}
-                          className="w-20 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                        <span className="text-sm text-gray-500 dark:text-gray-400">
-                          {row.productId ? productsById.get(row.productId)?.unit ?? row.unit : row.unit}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => removeIngredient(index)}
-                          className="rounded p-1 text-gray-400 hover:bg-red-50 dark:hover:bg-red-900/40 hover:text-red-600 dark:hover:text-red-400"
-                          aria-label="Quitar ingrediente"
+                    form.ingredients.map((row, index) => {
+                      const filteredProducts = products.filter(
+                        (p) =>
+                          !row.productQuery.trim() ||
+                          productLabel(p)
+                            .toLowerCase()
+                            .includes(row.productQuery.trim().toLowerCase()) ||
+                          p.name.toLowerCase().includes(row.productQuery.trim().toLowerCase()) ||
+                          (p.sku && p.sku.toLowerCase().includes(row.productQuery.trim().toLowerCase()))
+                      )
+                      return (
+                        <div
+                          key={index}
+                          className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-700/50 p-2"
                         >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))
+                          <div className="relative min-w-[220px]">
+                            <input
+                              type="text"
+                              value={row.productQuery}
+                              onChange={(e) => {
+                                updateIngredientQuery(index, e.target.value)
+                                setOpenIngredientDropdownIndex(index)
+                              }}
+                              onFocus={() => setOpenIngredientDropdownIndex(index)}
+                              onBlur={() =>
+                                setTimeout(() => setOpenIngredientDropdownIndex(null), 150)
+                              }
+                              aria-label={`Ingrediente ${index + 1}, producto`}
+                              aria-autocomplete="list"
+                              aria-expanded={openIngredientDropdownIndex === index}
+                              role="combobox"
+                              placeholder="Escribí para buscar producto..."
+                              className="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 pr-8 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                            <ChevronDown className="absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 pointer-events-none text-gray-400" />
+                            {openIngredientDropdownIndex === index && (
+                              <ul
+                                className="absolute z-20 mt-1 max-h-48 w-full min-w-[280px] overflow-auto rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 py-1 shadow-lg"
+                                role="listbox"
+                              >
+                                {filteredProducts.map((p) => (
+                                  <li
+                                    key={p.id}
+                                    role="option"
+                                    aria-selected={row.productId === p.id}
+                                    className={cn(
+                                      "cursor-pointer px-3 py-2 text-sm",
+                                      row.productId === p.id
+                                        ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-200"
+                                        : "text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                                    )}
+                                    onMouseDown={(e) => {
+                                      e.preventDefault()
+                                      updateIngredient(index, "productId", p.id)
+                                      setOpenIngredientDropdownIndex(null)
+                                    }}
+                                  >
+                                    {productLabel(p)}
+                                  </li>
+                                ))}
+                                {row.productQuery.trim() && filteredProducts.length === 0 && (
+                                  <li className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
+                                    No hay productos que coincidan
+                                  </li>
+                                )}
+                              </ul>
+                            )}
+                          </div>
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.001}
+                            value={row.qtyPerYield || ""}
+                            onChange={(e) =>
+                              updateIngredient(index, "qtyPerYield", parseFloat(e.target.value) || 0)
+                            }
+                            placeholder="Cant."
+                            aria-label={`Cantidad por rendimiento ingrediente ${index + 1}`}
+                            className="w-20 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                          <span className="text-sm text-gray-500 dark:text-gray-400">
+                            {row.unit || (row.productId ? productsById.get(row.productId)?.unit : null) || 'Und'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => removeIngredient(index)}
+                            className="rounded p-1 text-gray-400 hover:bg-red-50 dark:hover:bg-red-900/40 hover:text-red-600 dark:hover:text-red-400"
+                            aria-label="Quitar ingrediente"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      )
+                    })
                   )}
                 </div>
               </div>

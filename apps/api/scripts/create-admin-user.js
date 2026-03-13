@@ -7,7 +7,7 @@ const id = 'c' + crypto.randomBytes(12).toString('hex');
 const email = 'admin@elio.com';
 const password = 'admin123';
 const firstName = 'Admin';
-const lastName = 'Elio';
+const lastName = 'Nova';
 const role = 'ADMIN';
 
 async function main() {

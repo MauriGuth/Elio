@@ -6,7 +6,7 @@ import { sileo } from "sileo"
 import { ArrowLeft, Eye, EyeOff, Loader2, Warehouse, MapPin, ChevronRight } from "lucide-react"
 import { authApi } from "@/lib/api/auth"
 import { locationsApi } from "@/lib/api/locations"
-import { api } from "@/lib/api"
+import { api, getLocationKey } from "@/lib/api"
 import { NeedPhotoStep } from "@/components/auth/need-photo-step"
 import { VerifyIdentityStep } from "@/components/auth/verify-identity-step"
 
@@ -25,7 +25,7 @@ const DEPOSITO_ROLES = [
   "AUDITOR",
 ]
 
-const DEPOSITO_LOCATION_KEY = "elio_deposito_location"
+const LEGACY_DEPOSITO_LOCATION_KEY = "elio_deposito_location"
 
 export default function DepositoLoginPage() {
   const router = useRouter()
@@ -38,8 +38,26 @@ export default function DepositoLoginPage() {
   const [locations, setLocations] = useState<any[]>([])
   const [loadingLocations, setLoadingLocations] = useState(false)
   const [user, setUser] = useState<any>(null)
+  const isAdminUser = user?.role === "admin" || user?.role === "ADMIN"
   const [userTypedEmail, setUserTypedEmail] = useState(false)
   const [userTypedPassword, setUserTypedPassword] = useState(false)
+
+  const readStoredLocation = () => {
+    try {
+      const scopedKey = getLocationKey()
+      const scopedValue = localStorage.getItem(scopedKey)
+      if (scopedValue) return JSON.parse(scopedValue)
+
+      const legacyValue = localStorage.getItem(LEGACY_DEPOSITO_LOCATION_KEY)
+      if (!legacyValue) return null
+
+      const parsed = JSON.parse(legacyValue)
+      localStorage.setItem(scopedKey, legacyValue)
+      return parsed
+    } catch {
+      return null
+    }
+  }
 
   useEffect(() => {
     const storedUser = authApi.getStoredUser()
@@ -101,33 +119,35 @@ export default function DepositoLoginPage() {
   }
 
   const selectLocation = (location: any) => {
+    const serialized = JSON.stringify({ id: location.id, name: location.name, type: location.type })
     localStorage.setItem(
-      DEPOSITO_LOCATION_KEY,
-      JSON.stringify({ id: location.id, name: location.name, type: location.type })
+      getLocationKey(),
+      serialized
     )
+    localStorage.setItem(LEGACY_DEPOSITO_LOCATION_KEY, serialized)
     router.push("/pos/tables?station=deposito")
   }
 
   const proceedAfterVerify = () => {
+    if (isAdminUser) {
+      setStep("select-location")
+      fetchLocations()
+      return
+    }
+
     const loc =
       user?.location ||
-      (() => {
-        try {
-          return JSON.parse(localStorage.getItem(DEPOSITO_LOCATION_KEY) || "null")
-        } catch {
-          return null
-        }
-      })()
+      readStoredLocation()
     if (loc && (loc.type === "WAREHOUSE" || loc.type === "warehouse")) {
       if (!user?.location) {
-        localStorage.setItem(DEPOSITO_LOCATION_KEY, JSON.stringify(loc))
+        const serialized = JSON.stringify(loc)
+        localStorage.setItem(getLocationKey(), serialized)
+        localStorage.setItem(LEGACY_DEPOSITO_LOCATION_KEY, serialized)
       }
       router.push("/pos/tables?station=deposito")
       return
     }
     if (
-      user?.role === "admin" ||
-      user?.role === "ADMIN" ||
       user?.role === "LOCATION_MANAGER" ||
       user?.role === "location_manager" ||
       user?.role === "WAREHOUSE_MANAGER" ||

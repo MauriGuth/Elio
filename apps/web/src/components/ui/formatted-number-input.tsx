@@ -25,8 +25,7 @@ export function FormattedNumberInput({
   const inputRef = useRef<HTMLInputElement>(null)
   const cursorRef = useRef<number | null>(null)
 
-  const displayValue =
-    value === 0 && rest.placeholder ? "" : formatNumberInputDisplay(value)
+  const displayValue = formatNumberInputDisplay(value)
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {

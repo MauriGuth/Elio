@@ -2,7 +2,7 @@
 
 ## ¿PostgreSQL aguanta?
 
-**Sí.** PostgreSQL está preparado para millones de filas. En Elio:
+**Sí.** PostgreSQL está preparado para millones de filas. En Nova:
 
 - **Productos**: ~10.000 filas es un volumen bajo para Postgres.
 - **Recetas**: idem; 10.000 recetas es manejable.
@@ -74,7 +74,7 @@ Así no violás FKs y el orden de carga es claro.
 ### 5. Opcional: desactivar triggers/checks durante la carga
 
 - Si en el futuro agregás triggers pesados o checks costosos, podés valorar desactivarlos durante la importación masiva y volver a activarlos después.
-- Con el schema actual de Elio no es necesario.
+- Con el schema actual de Nova no es necesario.
 
 ---
 
@@ -90,4 +90,4 @@ Si más adelante el catálogo crece mucho (por ejemplo 100.000+ productos), se p
 - Búsqueda full-text en nombre/descripción.
 - Cache (Redis) para listados muy consultados.
 
-Para 10.000 productos y recetas, con los índices actuales y carga en batch, PostgreSQL y Elio están en buen estado.
+Para 10.000 productos y recetas, con los índices actuales y carga en batch, PostgreSQL y Nova están en buen estado.

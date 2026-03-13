@@ -187,7 +187,7 @@ export default function RemitoPage() {
         )}
 
         <div className="mt-10 flex justify-between border-t border-gray-200 pt-6 text-xs text-gray-400">
-          <span>Generado desde Elio · Remito digital</span>
+          <span>Generado desde Nova · Remito digital</span>
           <span>{shipment.shipmentNumber}</span>
         </div>
       </div>

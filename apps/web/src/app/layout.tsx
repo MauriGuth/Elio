@@ -9,7 +9,7 @@ const inter = Inter({
 })
 
 export const metadata: Metadata = {
-  title: 'Elio - Sistema de Gestión',
+  title: 'Nova - Sistema de Gestión',
   description: 'Sistema de gestión integral para operaciones, inventario y punto de venta',
 }
 

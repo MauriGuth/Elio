@@ -34,10 +34,10 @@ De Posberry se toma:
 
 | Nombre | Hex | Uso |
 |---|---|---|
-| **Elio Blue** | `#2563EB` | Acciones primarias, links, sidebar activo |
-| **Elio Blue Dark** | `#1D4ED8` | Hover de acciones primarias |
-| **Elio Blue Light** | `#DBEAFE` | Backgrounds de selección, badges info |
-| **Elio Navy** | `#1E293B` | Textos principales, sidebar background |
+| **Nova Blue** | `#2563EB` | Acciones primarias, links, sidebar activo |
+| **Nova Blue Dark** | `#1D4ED8` | Hover de acciones primarias |
+| **Nova Blue Light** | `#DBEAFE` | Backgrounds de selección, badges info |
+| **Nova Navy** | `#1E293B` | Textos principales, sidebar background |
 
 ### 2.2 Colores de Estado (Semáforo)
 
@@ -575,7 +575,7 @@ Dark Mode mappings:
 ```
 ELIO
 - Tipografía: Plus Jakarta Sans, Extra Bold
-- Color principal: Elio Blue (#2563EB)
+- Color principal: Nova Blue (#2563EB)
 - Subtítulo: "Gestión Integral Gastronómica"
 
 Usos:

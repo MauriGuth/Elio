@@ -10,10 +10,14 @@ import { UpdateItemStatusDto } from './dto/update-item-status.dto';
 import { UpdateOrderItemDto } from './dto/update-order-item.dto';
 import { CloseOrderDto } from './dto/close-order.dto';
 import { UpdateOrderSplitDto } from './dto/update-order-split.dto';
+import { ArcaFiscalService } from '../arca/arca.fiscal.service';
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly arcaFiscalService: ArcaFiscalService,
+  ) {}
 
   async findAll(filters: {
     locationId?: string;
@@ -391,7 +395,11 @@ export class OrdersService {
   async closeOrder(id: string, data: CloseOrderDto, userId: string) {
     const order = await this.prisma.order.findUnique({
       where: { id },
-      include: { items: true, table: { select: { tableType: true } } },
+      include: {
+        items: true,
+        table: { select: { tableType: true } },
+        customer: true,
+      },
     });
 
     if (!order) {
@@ -409,11 +417,36 @@ export class OrdersService {
     const finalTotal =
       Math.round((order.subtotal - discountAmount) * 100) / 100;
 
-    const isErrorsTable = order.table?.tableType === 'errors';
+    const isSpecialTable =
+      order.table?.tableType === 'errors' || order.table?.tableType === 'trash';
 
-    return this.prisma.$transaction(async (tx) => {
+    const effectiveCustomerId = data.customerId ?? order.customerId ?? undefined;
+
+    if (data.invoiceType === 'factura_a' && !effectiveCustomerId && !isSpecialTable) {
+      throw new BadRequestException(
+        'Para Factura A debés seleccionar un cliente con CUIT.',
+      );
+    }
+
+    if (effectiveCustomerId && !isSpecialTable) {
+      const customer = await this.prisma.customer.findUnique({
+        where: { id: effectiveCustomerId },
+      });
+      if (!customer || !customer.isActive || customer.locationId !== order.locationId) {
+        throw new BadRequestException(
+          'El cliente seleccionado no existe o no pertenece al local de la venta.',
+        );
+      }
+    }
+
+    const invoiceType =
+      !isSpecialTable && data.invoiceType
+        ? this.arcaFiscalService.resolveInvoiceType(data.invoiceType)
+        : undefined;
+
+    const closedOrder = await this.prisma.$transaction(async (tx) => {
       // Crear movimientos de stock (venta) solo si NO es la mesa de errores de comandas
-      if (!isErrorsTable) {
+      if (!isSpecialTable) {
         for (const item of order.items) {
           const stockLevel = await tx.stockLevel.findUnique({
             where: {
@@ -476,8 +509,16 @@ export class OrdersService {
           cashierId: userId,
           closedAt: new Date(),
           notes: data.notes ?? order.notes,
-          invoiceType: data.invoiceType ?? undefined,
-          customerId: data.customerId ?? undefined,
+          invoiceType: invoiceType ?? 'consumidor',
+          customerId: effectiveCustomerId,
+          fiscalStatus: isSpecialTable
+            ? 'skipped'
+            : this.arcaFiscalService.isEnabled()
+              ? 'pending'
+              : 'disabled',
+          fiscalLastError: null,
+          fiscalAttemptedAt: null,
+          fiscalIssuedAt: null,
         },
         include: {
           items: {
@@ -494,8 +535,36 @@ export class OrdersService {
           cashier: {
             select: { id: true, firstName: true, lastName: true },
           },
+          customer: {
+            select: {
+              id: true,
+              name: true,
+              legalName: true,
+              cuit: true,
+              taxCondition: true,
+              documentType: true,
+              documentNumber: true,
+            },
+          },
         },
       });
+
+      if (!isSpecialTable) {
+        await tx.fiscalVoucher.upsert({
+          where: { orderId: order.id },
+          update: {
+            status: this.arcaFiscalService.isEnabled() ? 'pending' : 'disabled',
+            invoiceType: invoiceType ?? 'consumidor',
+            errorCode: null,
+            errorMessage: null,
+          },
+          create: {
+            orderId: order.id,
+            status: this.arcaFiscalService.isEnabled() ? 'pending' : 'disabled',
+            invoiceType: invoiceType ?? 'consumidor',
+          },
+        });
+      }
 
       // If table exists, set table status to 'available'
       if (order.tableId) {
@@ -510,6 +579,12 @@ export class OrdersService {
 
       return closedOrder;
     });
+
+    if (!isSpecialTable && this.arcaFiscalService.isEnabled()) {
+      void this.arcaFiscalService.emitForOrder(closedOrder.id).catch(() => undefined);
+    }
+
+    return closedOrder;
   }
 
   async cancelOrder(id: string) {

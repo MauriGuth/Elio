@@ -35,6 +35,22 @@
 
 ## Verificar
 
-- **API**: abrir http://localhost:4010/api → debe devolver `{"ok":true,"message":"Elio API",...}`.
+- **API**: abrir http://localhost:4010/api → debe devolver `{"ok":true,"message":"Nova API",...}`.
 - **Frontend**: abrir http://localhost:3001 (o 3000) → dashboard; el login y los datos usan la API en 4010.
 - **Prisma**: `cd apps/api && npx prisma validate` → el schema es válido. Si la DB está arriba, la API podrá conectarse al arrancar.
+
+## Si /login no funciona
+
+1. **La página no carga (ERR_CONNECTION_REFUSED en localhost:3000)**  
+   El frontend no está corriendo. En otra terminal:  
+   `cd apps/web && npm run dev`  
+   Luego abre de nuevo http://localhost:3000/login (o el puerto que indique Next.js, ej. 3001).
+
+2. **La página carga pero el login falla con error de red / CORS**  
+   La API debe estar en 4010. Comprueba:  
+   `curl -s http://localhost:4010/api`  
+   Si no responde, levanta la API:  
+   `cd apps/api && npm run start:dev`
+
+3. **"Correo o contraseña incorrectos"**  
+   Es validación de la API: usuario/contraseña no existen o no coinciden. No es un problema de conexión.

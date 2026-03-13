@@ -14,6 +14,7 @@ export { tablesApi } from './tables';
 export { customersApi } from './customers';
 export { cashMovementsApi } from './cash-movements';
 export { cashRegistersApi } from './cash-registers';
+export { arcaApi } from './arca';
 export { alertsApi } from './alerts';
 export { aiEventsApi } from './ai-events';
 export { usersApi } from './users';

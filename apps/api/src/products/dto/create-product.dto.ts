@@ -3,6 +3,7 @@ import {
   IsOptional,
   IsBoolean,
   IsNumber,
+  IsArray,
   MinLength,
   MaxLength,
   Min,
@@ -77,4 +78,9 @@ export class CreateProductDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  locationIds?: string[];
 }

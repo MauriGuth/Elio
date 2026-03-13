@@ -20,6 +20,7 @@ const pageTitles: Record<string, string> = {
   '/pos': 'Comandas & Mesas',
   '/reports': 'Reportes',
   '/alerts': 'Alertas',
+  '/fiscal': 'Fiscalización ARCA',
   '/users': 'Usuarios',
   '/settings': 'Configuración',
   '/suppliers': 'Proveedores',
@@ -140,7 +141,7 @@ export function Topbar({ className, onMenuClick }: TopbarProps) {
         if (prefs.pushNotifications) {
           const n = newCount - prev
           try {
-            new Notification('Elio', {
+            new Notification('Nova', {
               body: n === 1 ? 'Tienes 1 alerta nueva' : `Tienes ${n} alertas nuevas`,
             })
           } catch {

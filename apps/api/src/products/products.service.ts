@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -110,24 +115,51 @@ export class ProductsService {
   }
 
   async create(data: CreateProductDto) {
+    const { locationIds = [], ...productData } = data;
+
     const existing = await this.prisma.product.findUnique({
-      where: { sku: data.sku },
+      where: { sku: productData.sku },
     });
 
     if (existing) {
-      throw new ConflictException(`Product with SKU "${data.sku}" already exists`);
+      throw new ConflictException(`Product with SKU "${productData.sku}" already exists`);
     }
 
     const category = await this.prisma.category.findUnique({
-      where: { id: data.categoryId },
+      where: { id: productData.categoryId },
     });
 
     if (!category) {
-      throw new NotFoundException(`Category with ID "${data.categoryId}" not found`);
+      throw new NotFoundException(`Category with ID "${productData.categoryId}" not found`);
+    }
+
+    const uniqueLocationIds = [...new Set(locationIds.filter(Boolean))];
+    if (uniqueLocationIds.length > 0) {
+      const locations = await this.prisma.location.findMany({
+        where: { id: { in: uniqueLocationIds } },
+        select: { id: true },
+      });
+
+      if (locations.length !== uniqueLocationIds.length) {
+        throw new NotFoundException('One or more selected locations were not found');
+      }
     }
 
     return this.prisma.product.create({
-      data,
+      data: {
+        ...productData,
+        stockLevels:
+          uniqueLocationIds.length > 0
+            ? {
+                create: uniqueLocationIds.map((locationId) => ({
+                  locationId,
+                  quantity: 0,
+                  minQuantity: 0,
+                  salePrice: productData.salePrice ?? null,
+                })),
+              }
+            : undefined,
+      },
       include: {
         category: true,
         stockLevels: {
@@ -140,6 +172,7 @@ export class ProductsService {
   }
 
   async update(id: string, data: UpdateProductDto) {
+    const { locationIds, ...productData } = data;
     const product = await this.prisma.product.findUnique({
       where: { id },
     });
@@ -148,27 +181,82 @@ export class ProductsService {
       throw new NotFoundException(`Product with ID "${id}" not found`);
     }
 
-    if (data.sku && data.sku !== product.sku) {
+    if (productData.sku && productData.sku !== product.sku) {
       const existing = await this.prisma.product.findFirst({
-        where: { sku: data.sku, id: { not: id } },
+        where: { sku: productData.sku, id: { not: id } },
       });
       if (existing) {
-        throw new ConflictException(`Product with SKU "${data.sku}" already exists`);
+        throw new ConflictException(`Product with SKU "${productData.sku}" already exists`);
       }
     }
 
-    if (data.categoryId) {
+    if (productData.categoryId) {
       const category = await this.prisma.category.findUnique({
-        where: { id: data.categoryId },
+        where: { id: productData.categoryId },
       });
       if (!category) {
-        throw new NotFoundException(`Category with ID "${data.categoryId}" not found`);
+        throw new NotFoundException(`Category with ID "${productData.categoryId}" not found`);
       }
     }
 
-    return this.prisma.product.update({
+    const uniqueLocationIds =
+      locationIds !== undefined ? [...new Set(locationIds.filter(Boolean))] : undefined;
+
+    if (uniqueLocationIds) {
+      const locations = await this.prisma.location.findMany({
+        where: { id: { in: uniqueLocationIds } },
+        select: { id: true },
+      });
+      if (locations.length !== uniqueLocationIds.length) {
+        throw new NotFoundException('One or more selected locations were not found');
+      }
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.product.update({
+        where: { id },
+        data: productData,
+      });
+
+      if (uniqueLocationIds !== undefined) {
+        const existingLevels = await tx.stockLevel.findMany({
+          where: { productId: id },
+          select: { id: true, locationId: true },
+        });
+        const existingLocationIds = existingLevels.map((level) => level.locationId);
+        const locationIdsToDelete = existingLocationIds.filter(
+          (locationId) => !uniqueLocationIds.includes(locationId),
+        );
+        const locationIdsToCreate = uniqueLocationIds.filter(
+          (locationId) => !existingLocationIds.includes(locationId),
+        );
+
+        if (locationIdsToDelete.length > 0) {
+          await tx.stockLevel.deleteMany({
+            where: {
+              productId: id,
+              locationId: { in: locationIdsToDelete },
+            },
+          });
+        }
+
+        if (locationIdsToCreate.length > 0) {
+          await tx.stockLevel.createMany({
+            data: locationIdsToCreate.map((locationId) => ({
+              productId: id,
+              locationId,
+              quantity: 0,
+              minQuantity: 0,
+              salePrice:
+                productData.salePrice !== undefined ? productData.salePrice : product.salePrice,
+            })),
+          });
+        }
+      }
+    });
+
+    return this.prisma.product.findUniqueOrThrow({
       where: { id },
-      data,
       include: {
         category: true,
         stockLevels: {
@@ -189,10 +277,36 @@ export class ProductsService {
       throw new NotFoundException(`Product with ID "${id}" not found`);
     }
 
-    return this.prisma.product.update({
-      where: { id },
-      data: { isActive: false },
-    });
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.productSupplier.deleteMany({ where: { productId: id } });
+        await tx.stockLevel.deleteMany({ where: { productId: id } });
+        await tx.stockMovement.deleteMany({ where: { productId: id } });
+        await tx.stockReconciliationItem.deleteMany({ where: { productId: id } });
+        await tx.wasteRecord.deleteMany({ where: { productId: id } });
+        await tx.goodsReceiptItem.deleteMany({ where: { productId: id } });
+        await tx.purchaseOrderItem.deleteMany({ where: { productId: id } });
+        await tx.shipmentItem.deleteMany({ where: { productId: id } });
+        await tx.orderItem.deleteMany({ where: { productId: id } });
+        await tx.recipeIngredient.deleteMany({ where: { productId: id } });
+        await tx.productionOrderItem.deleteMany({ where: { productId: id } });
+        await tx.productionBatch.deleteMany({ where: { productId: id } });
+        await tx.recipe.updateMany({
+          where: { productId: id },
+          data: { productId: null },
+        });
+        await tx.product.delete({ where: { id } });
+      });
+    } catch (error: any) {
+      if (error?.code === 'P2003') {
+        throw new BadRequestException(
+          'No se pudo eliminar el producto porque sigue vinculado a registros del sistema.',
+        );
+      }
+      throw error;
+    }
+
+    return { success: true, id };
   }
 
   async getStockByLocation(productId: string) {

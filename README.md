@@ -6,7 +6,7 @@
 
 ## Descripción
 
-Elio es una plataforma integral diseñada para redes de cafeterías, restaurantes y depósitos de producción. Centraliza el control de stock, la planificación de producción, la logística entre locales, el punto de venta y la inteligencia artificial en un solo sistema.
+Nova es una plataforma integral diseñada para redes de cafeterías, restaurantes y depósitos de producción. Centraliza el control de stock, la planificación de producción, la logística entre locales, el punto de venta y la inteligencia artificial en un solo sistema.
 
 ## Documentación del Sistema
 

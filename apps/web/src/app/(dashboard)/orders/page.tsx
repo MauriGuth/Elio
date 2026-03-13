@@ -5,7 +5,6 @@ import Link from "next/link"
 import {
   Users,
   Clock,
-  Plus,
   MapPin,
   Coffee,
   ChevronDown,
@@ -516,6 +515,7 @@ export default function OrdersPage() {
               {isDepot ? " (Depósito)" : ""}
             </span>
           </div>
+
         </>
       )}
     </div>

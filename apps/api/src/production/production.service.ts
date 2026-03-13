@@ -167,6 +167,20 @@ export class ProductionService {
             yieldQty: true,
             yieldUnit: true,
             productId: true,
+            ingredients: {
+              include: {
+                product: {
+                  select: {
+                    id: true,
+                    name: true,
+                    sku: true,
+                    unit: true,
+                    avgCost: true,
+                  },
+                },
+              },
+              orderBy: { sortOrder: 'asc' },
+            },
           },
         },
         location: {
@@ -194,7 +208,50 @@ export class ProductionService {
       throw new NotFoundException(`Production order with ID "${id}" not found`);
     }
 
-    return order;
+    const ingredientProductIds = new Set<string>();
+    for (const item of order.items) {
+      ingredientProductIds.add(item.productId);
+    }
+    for (const ingredient of order.recipe.ingredients) {
+      ingredientProductIds.add(ingredient.productId);
+    }
+
+    const stockLevels = ingredientProductIds.size
+      ? await this.prisma.stockLevel.findMany({
+          where: {
+            locationId: order.locationId,
+            productId: { in: Array.from(ingredientProductIds) },
+          },
+          select: {
+            productId: true,
+            quantity: true,
+          },
+        })
+      : [];
+
+    const stockByProductId = new Map(
+      stockLevels.map((level) => [level.productId, level.quantity]),
+    );
+
+    return {
+      ...order,
+      items: order.items.map((item) => ({
+        ...item,
+        requiredQty: item.plannedQty,
+        availableQty: stockByProductId.get(item.productId) ?? 0,
+        currentStock: stockByProductId.get(item.productId) ?? 0,
+      })),
+      recipe: {
+        ...order.recipe,
+        ingredients: order.recipe.ingredients.map((ingredient) => ({
+          ...ingredient,
+          requiredQty:
+            ((ingredient.qtyPerYield ?? 0) * (order.plannedQty ?? 0)) /
+            (order.recipe.yieldQty || 1),
+          availableStock: stockByProductId.get(ingredient.productId) ?? 0,
+        })),
+      },
+    };
   }
 
   async create(data: CreateProductionDto, userId: string) {
@@ -311,6 +368,35 @@ export class ProductionService {
     }
 
     return this.prisma.$transaction(async (tx) => {
+      const stockLevels = await tx.stockLevel.findMany({
+        where: {
+          locationId: order.locationId,
+          productId: { in: order.items.map((item) => item.productId) },
+        },
+        select: {
+          productId: true,
+          quantity: true,
+        },
+      });
+
+      const stockMap = new Map(
+        stockLevels.map((stockLevel) => [stockLevel.productId, stockLevel.quantity]),
+      );
+
+      const missingItems = order.items.filter((item) => {
+        const availableQty = stockMap.get(item.productId) ?? 0;
+        return availableQty < item.plannedQty;
+      });
+
+      if (missingItems.length > 0) {
+        const missingNames = missingItems
+          .map((item) => item.product?.name || item.productId)
+          .join(', ');
+        throw new BadRequestException(
+          `No hay stock suficiente para iniciar la producción. Faltante en: ${missingNames}`,
+        );
+      }
+
       // Create stock movements (production_out) for each ingredient
       for (const item of order.items) {
         // Decrease stock level

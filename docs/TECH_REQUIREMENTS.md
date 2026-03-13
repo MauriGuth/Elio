@@ -300,8 +300,8 @@ elio/
 ```env
 # ═══ App ═══
 NODE_ENV=production
-APP_NAME=Elio
-APP_URL=https://app.elio.ar
+APP_NAME=Nova
+APP_URL=https://app.nova.ar
 
 # ═══ Database ═══
 DATABASE_URL=postgresql://user:pass@host:5432/elio?schema=public

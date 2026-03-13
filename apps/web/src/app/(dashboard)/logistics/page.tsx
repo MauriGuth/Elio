@@ -933,9 +933,9 @@ export default function LogisticsPage() {
                         <FormattedNumberInput
                           value={item.sentQty}
                           onChange={(n) =>
-                            updateItem(index, "sentQty", Math.max(1, n))
+                            updateItem(index, "sentQty", n)
                           }
-                          placeholder="Cant."
+                          placeholder="1"
                           className="w-24 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         />
                         <button

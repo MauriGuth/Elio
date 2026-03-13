@@ -1,5 +1,5 @@
 // ──────────────────────────────────────────────────────────────
-// Elio – Gastronomy Management System
+// Nova – Gastronomy Management System
 // Database Seed File
 // ──────────────────────────────────────────────────────────────
 
@@ -55,7 +55,7 @@ async function cleanDatabase() {
 // Main Seed Function
 // ══════════════════════════════════════════════════════════════
 async function main() {
-  console.log('🌱 Iniciando seed de la base de datos Elio...\n');
+  console.log('🌱 Iniciando seed de la base de datos Nova...\n');
   await cleanDatabase();
 
   // ════════════════════════════════════════════════════════════

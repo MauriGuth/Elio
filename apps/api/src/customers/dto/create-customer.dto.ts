@@ -8,9 +8,29 @@ export class CreateCustomerDto {
   @MaxLength(200)
   name: string;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  legalName?: string;
+
   @IsString()
   @MaxLength(20)
   cuit: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  taxCondition?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  documentType?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  documentNumber?: string;
 
   @IsOptional()
   @IsString()

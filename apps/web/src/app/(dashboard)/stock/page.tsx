@@ -119,6 +119,7 @@ type NewProductForm = {
   name: string
   categoryId: string
   familia: string
+  locationIds: string[]
   unit: string
   imageUrl: string
   avgCost: number
@@ -266,7 +267,7 @@ export default function StockPage() {
     Array<{ id: string; name: string; slug: string; icon: string; color: string }>
   >([])
   const [locations, setLocations] = useState<
-    Array<{ id: string; name: string }>
+    Array<{ id: string; name: string; type?: string }>
   >([])
   const [summary, setSummary] = useState<{
     critical: number
@@ -311,6 +312,7 @@ export default function StockPage() {
       name: "",
       categoryId: "",
       familia: "",
+      locationIds: [],
       unit: "unidad",
       imageUrl: "",
       avgCost: 0,
@@ -541,6 +543,7 @@ export default function StockPage() {
             data.map((l: Record<string, string>) => ({
               id: l.id,
               name: l.name,
+              type: l.type,
             }))
           )
         }
@@ -651,6 +654,12 @@ export default function StockPage() {
     setCreating(true)
     setCreateError(null)
     try {
+      if (newProduct.locationIds.length === 0) {
+        setCreateError("Seleccioná al menos una ubicación para el producto")
+        setCreating(false)
+        return
+      }
+
       let imageUrl = newProduct.imageUrl || undefined
       if (newProductImageFile) {
         setNewProductImageUploading(true)
@@ -658,7 +667,11 @@ export default function StockPage() {
         imageUrl = (res as any)?.url ?? (res as any)?.data?.url ?? ""
         setNewProductImageUploading(false)
       }
-      await productsApi.create({ ...newProduct, imageUrl: imageUrl || undefined, familia: newProduct.familia || undefined })
+      await productsApi.create({
+        ...newProduct,
+        imageUrl: imageUrl || undefined,
+        familia: newProduct.familia || undefined,
+      })
       closeCreateProductModal()
       fetchProducts()
       sileo.success({ title: "Producto creado correctamente" })
@@ -1367,6 +1380,52 @@ export default function StockPage() {
                         </option>
                       ))}
                     </select>
+                  </div>
+                </div>
+
+                {/* Locations */}
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
+                    Ubicaciones <span className="text-red-500">*</span>
+                  </label>
+                  <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {locations
+                        .slice()
+                        .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }))
+                        .map((location) => {
+                          const checked = newProduct.locationIds.includes(location.id)
+                          return (
+                            <label
+                              key={location.id}
+                              className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(e) =>
+                                  setNewProduct((current) => ({
+                                    ...current,
+                                    locationIds: e.target.checked
+                                      ? [...current.locationIds, location.id]
+                                      : current.locationIds.filter((id) => id !== location.id),
+                                  }))
+                                }
+                                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                              />
+                              <span>
+                                {location.name}
+                                {location.type === "WAREHOUSE" ? " (Depósito)" : ""}
+                              </span>
+                            </label>
+                          )
+                        })}
+                    </div>
+                    {locations.length === 0 && (
+                      <p className="text-sm text-gray-500 dark:text-gray-400">
+                        No hay ubicaciones disponibles.
+                      </p>
+                    )}
                   </div>
                 </div>
 

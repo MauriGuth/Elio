@@ -1,6 +1,6 @@
-# Desplegar la API de Elio en Railway
+# Desplegar la API de Nova en Railway
 
-Pasos para tener tu URL de API en producción (ej. `https://elio-api.up.railway.app`).
+Pasos para tener tu URL de API en producción (ej. `https://nova-api.up.railway.app`).
 
 ---
 
@@ -96,7 +96,7 @@ La API tiene prefijo global `/api`, así que las rutas quedan:
 
 Las tablas se crean con un **pre-deploy step** en el servicio de la API (no desde tu máquina, porque la base suele no ser accesible por red pública).
 
-1. Servicio **Elio** (API) → **Settings** → **Deploy**.
+1. Servicio **Nova** (API) → **Settings** → **Deploy**.
 2. **+ Add pre-deploy step** (o editar el que ya tengas).
 3. Comando (una sola línea):
    ```bash

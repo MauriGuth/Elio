@@ -831,6 +831,10 @@ model Order {
   paymentBreakdown Json?   @map("payment_breakdown")
   invoiceType    String?   @map("invoice_type")
   customerId     String?   @map("customer_id")
+  fiscalStatus   String    @default("not_requested") @map("fiscal_status")
+  fiscalLastError String?  @map("fiscal_last_error")
+  fiscalAttemptedAt DateTime? @map("fiscal_attempted_at")
+  fiscalIssuedAt DateTime? @map("fiscal_issued_at")
   notes          String?
   waiterId       String?   @map("waiter_id")
   cashierId      String?   @map("cashier_id")
@@ -846,6 +850,7 @@ model Order {
   waiter   User?       @relation("OrderWaiter", fields: [waiterId], references: [id])
   cashier  User?       @relation("OrderCashier", fields: [cashierId], references: [id])
   items    OrderItem[]
+  fiscalVoucher FiscalVoucher?
 
   @@index([locationId])
   @@index([tableId])
@@ -853,6 +858,7 @@ model Order {
   @@index([cashierId])
   @@index([status])
   @@index([customerId])
+  @@index([fiscalStatus])
   @@map("orders")
 }
 
@@ -1024,7 +1030,11 @@ model Customer {
   id         String   @id @default(cuid())
   locationId String   @map("location_id")
   name       String
+  legalName  String?  @map("legal_name")
   cuit       String
+  taxCondition String? @map("tax_condition")
+  documentType String? @map("document_type")
+  documentNumber String? @map("document_number")
   email      String?
   address    String?
   phone      String?
@@ -1040,6 +1050,33 @@ model Customer {
   @@index([locationId])
   @@index([cuit])
   @@map("customers")
+}
+
+model FiscalVoucher {
+  id              String    @id @default(cuid())
+  orderId         String    @unique @map("order_id")
+  status          String    @default("pending")
+  invoiceType     String    @map("invoice_type")
+  cbteTipo        Int?      @map("cbte_tipo")
+  ptoVta          Int?      @map("pto_vta")
+  cbteDesde       Int?      @map("cbte_desde")
+  cbteHasta       Int?      @map("cbte_hasta")
+  cae             String?
+  caeVto          DateTime? @map("cae_vto")
+  requestPayload  String?   @map("request_payload")
+  responsePayload String?   @map("response_payload")
+  errorCode       String?   @map("error_code")
+  errorMessage    String?   @map("error_message")
+  attemptCount    Int       @default(0) @map("attempt_count")
+  issuedAt        DateTime? @map("issued_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([cae])
+  @@map("fiscal_vouchers")
 }
 
 // ─── CashMovement (ingresos y egresos de caja) ──────────────────

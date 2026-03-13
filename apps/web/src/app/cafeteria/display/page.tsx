@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { ordersApi } from "@/lib/api/orders"
 import { authApi } from "@/lib/api/auth"
-import { api } from "@/lib/api"
+import { api, getLocationKey } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import {
   Coffee,
@@ -41,6 +41,7 @@ const SECTOR_LABELS: Record<string, string> = {
 
 const URGENT_PENDING_MIN = 10
 const URGENT_PREP_MIN = 30
+const LEGACY_CAFETERIA_LOCATION_KEY = "elio_cafeteria_location"
 
 /* ── Helpers ── */
 function minutesAgo(dateStr: string): number {
@@ -95,7 +96,16 @@ export default function CafeteriaDisplayPage() {
     if (!isAuth) { router.push("/cafeteria"); return }
     const user = authApi.getStoredUser()
     const loc = user?.location || (() => {
-      try { return JSON.parse(localStorage.getItem("elio_cafeteria_location") || "null") } catch { return null }
+      try {
+        const scopedValue = localStorage.getItem(getLocationKey())
+        if (scopedValue) return JSON.parse(scopedValue)
+
+        const legacyValue = localStorage.getItem(LEGACY_CAFETERIA_LOCATION_KEY)
+        if (!legacyValue) return null
+
+        localStorage.setItem(getLocationKey(), legacyValue)
+        return JSON.parse(legacyValue)
+      } catch { return null }
     })()
     if (loc?.id) { setLocationId(loc.id); setLocationName(loc.name || "Cafetería") }
     else { router.push("/cafeteria") }

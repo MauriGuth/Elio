@@ -36,26 +36,26 @@ const statusConfig: Record<
   draft: {
     label: "Borrador",
     dot: "bg-gray-400",
-    bg: "bg-gray-100",
-    text: "text-gray-700",
+    bg: "bg-gray-100 dark:bg-gray-700/70",
+    text: "text-gray-700 dark:text-gray-100",
   },
   pending_review: {
     label: "Pendiente",
     dot: "bg-yellow-400",
-    bg: "bg-yellow-50",
-    text: "text-yellow-700",
+    bg: "bg-yellow-50 dark:bg-yellow-900/30",
+    text: "text-yellow-700 dark:text-yellow-200",
   },
   confirmed: {
     label: "Confirmado",
     dot: "bg-green-500",
-    bg: "bg-green-50",
-    text: "text-green-700",
+    bg: "bg-green-50 dark:bg-green-900/30",
+    text: "text-green-700 dark:text-green-200",
   },
   cancelled: {
     label: "Cancelado",
     dot: "bg-red-500",
-    bg: "bg-red-50",
-    text: "text-red-700",
+    bg: "bg-red-50 dark:bg-red-900/30",
+    text: "text-red-700 dark:text-red-200",
   },
 }
 
@@ -500,6 +500,7 @@ export default function GoodsReceiptsPage() {
         notes: newReceipt.notes || undefined,
         items: validItems.map((item) => ({
           productId: item.productId,
+          orderedQty: item.receivedQty,
           receivedQty: item.receivedQty,
           unitCost: item.unitCost,
         })),
@@ -898,17 +899,17 @@ export default function GoodsReceiptsPage() {
                       </td>
                       <td className="px-4 py-3">
                         {method === "ocr" ? (
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700">
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 dark:bg-blue-900/30 px-2.5 py-0.5 text-xs font-medium text-blue-700 dark:text-blue-200">
                             <Sparkles className="h-3 w-3" />
                             OCR
                             {receipt.ocrConfidence != null && (
-                              <span className="ml-0.5 text-blue-500">
+                              <span className="ml-0.5 text-blue-500 dark:text-blue-300">
                                 {receipt.ocrConfidence}%
                               </span>
                             )}
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-900">
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-gray-100 dark:bg-gray-700/70 px-2.5 py-0.5 text-xs font-medium text-gray-900 dark:text-gray-100">
                             <ClipboardList className="h-3 w-3" />
                             Manual
                           </span>
@@ -965,9 +966,9 @@ export default function GoodsReceiptsPage() {
                   <tr>
                     <td
                       colSpan={9}
-                      className="px-4 py-12 text-center text-sm text-gray-400"
+                      className="px-4 py-12 text-center text-sm text-gray-400 dark:text-gray-500"
                     >
-                      <FileText className="mx-auto mb-2 h-8 w-8 text-gray-300" />
+                      <FileText className="mx-auto mb-2 h-8 w-8 text-gray-300 dark:text-gray-600" />
                       No se encontraron ingresos con los filtros seleccionados
                     </td>
                   </tr>
@@ -977,8 +978,8 @@ export default function GoodsReceiptsPage() {
           </div>
 
           {filteredReceipts.length > 0 && (
-            <div className="border-t border-gray-200 bg-gray-50 px-4 py-3">
-              <p className="text-sm text-gray-500">
+            <div className="border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60 px-4 py-3">
+              <p className="text-sm text-gray-500 dark:text-gray-300">
                 Mostrando{" "}
                 <span className="font-medium text-gray-700 dark:text-white">
                   {filteredReceipts.length}
@@ -1175,7 +1176,7 @@ export default function GoodsReceiptsPage() {
                             disabled={savingReceipt}
                             placeholder="Ej: Faltaban 2 unidades de agua, una caja llegó golpeada..."
                             rows={2}
-                            className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white placeholder:text-gray-400"
+                            className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white placeholder:text-gray-600 dark:placeholder:text-gray-400"
                           />
                         </div>
                         {savingReceipt && (
@@ -1560,9 +1561,9 @@ export default function GoodsReceiptsPage() {
                         <FormattedNumberInput
                           value={item.receivedQty}
                           onChange={(n) =>
-                            updateReceiptItem(index, "receivedQty", Math.max(1, n))
+                            updateReceiptItem(index, "receivedQty", n)
                           }
-                          placeholder="Cant."
+                          placeholder="1"
                           className="w-20 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                         />
                         <input

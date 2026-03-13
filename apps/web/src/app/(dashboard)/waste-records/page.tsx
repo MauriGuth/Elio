@@ -10,6 +10,7 @@ import {
   X,
   Package,
   MapPin,
+  ChevronDown,
 } from "lucide-react"
 import { wasteRecordsApi } from "@/lib/api/waste-records"
 import { locationsApi } from "@/lib/api/locations"
@@ -62,7 +63,7 @@ export default function WasteRecordsPage() {
   const [selectedLocation, setSelectedLocation] = useState("")
   const [searchQuery, setSearchQuery] = useState("")
   const [locations, setLocations] = useState<{ id: string; name: string }[]>([])
-  const [products, setProducts] = useState<{ id: string; name: string; unit?: string }[]>([])
+  const [products, setProducts] = useState<{ id: string; name: string; unit?: string; sku?: string }[]>([])
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
@@ -75,6 +76,8 @@ export default function WasteRecordsPage() {
     unit: "",
     notes: "",
   })
+  const [productSearch, setProductSearch] = useState("")
+  const [productDropdownOpen, setProductDropdownOpen] = useState(false)
 
   const fetchRecords = useCallback(async () => {
     setLoading(true)
@@ -102,12 +105,15 @@ export default function WasteRecordsPage() {
   }, [fetchRecords])
 
   useEffect(() => {
-    Promise.all([locationsApi.getAll(), productsApi.getAll({ limit: 500 })])
+    Promise.all([
+      locationsApi.getAll({ type: "WAREHOUSE" }),
+      productsApi.getAll({ limit: 5000 }),
+    ])
       .then(([locRes, prodRes]) => {
         const locs = Array.isArray(locRes) ? locRes : (locRes as any)?.data ?? []
         setLocations(locs.map((l: any) => ({ id: l.id, name: l.name })))
         const prods = (prodRes as any)?.data ?? []
-        setProducts(prods.map((p: any) => ({ id: p.id, name: p.name, unit: p.unit })))
+        setProducts(prods.map((p: any) => ({ id: p.id, name: p.name, unit: p.unit, sku: p.sku })))
       })
       .catch(() => {})
   }, [])
@@ -141,6 +147,8 @@ export default function WasteRecordsPage() {
       })
       setShowCreateModal(false)
       setForm({ locationId: "", productId: "", type: "other", reason: "", quantity: 1, unit: "", notes: "" })
+      setProductSearch("")
+      setProductDropdownOpen(false)
       fetchRecords()
       sileo.success({ title: "Merma registrada correctamente" })
     } catch (err: any) {
@@ -299,25 +307,90 @@ export default function WasteRecordsPage() {
                     <option key={l.id} value={l.id}>{l.name}</option>
                   ))}
                 </select>
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Solo ubicaciones tipo depósito</p>
               </div>
-              <div>
+              <div className="relative">
                 <label htmlFor="waste-product" className="mb-1 block text-sm font-medium text-gray-700 dark:text-white">Producto *</label>
-                <select
-                  id="waste-product"
-                  aria-label="Producto"
-                  value={form.productId}
-                  onChange={(e) => {
-                    const p = products.find((x) => x.id === e.target.value)
-                    setForm((f) => ({ ...f, productId: e.target.value, unit: p?.unit ?? "" }))
-                  }}
-                  required
-                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                >
-                  <option value="">Seleccionar...</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
+                <div className="relative">
+                  <input
+                    id="waste-product"
+                    type="text"
+                    aria-label="Producto"
+                    aria-autocomplete="list"
+                    aria-expanded={productDropdownOpen}
+                    role="combobox"
+                    required={!form.productId}
+                    value={
+                      form.productId
+                        ? (() => {
+                            const p = products.find((x) => x.id === form.productId)
+                            return p ? (p.sku ? `${p.name} (${p.sku})` : p.name) : productSearch
+                          })()
+                        : productSearch
+                    }
+                    onChange={(e) => {
+                      setProductSearch(e.target.value)
+                      setProductDropdownOpen(true)
+                      if (form.productId) setForm((f) => ({ ...f, productId: "", unit: "" }))
+                    }}
+                    onFocus={() => setProductDropdownOpen(true)}
+                    onBlur={() => setTimeout(() => setProductDropdownOpen(false), 150)}
+                    placeholder="Escribí para buscar producto..."
+                    className="w-full rounded-lg border border-gray-300 dark:border-gray-600 dark:bg-gray-800 px-3 py-2 pr-9 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
+                  <ChevronDown className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 pointer-events-none text-gray-400" />
+                </div>
+                {productDropdownOpen && (
+                  <ul
+                    className="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 py-1 shadow-lg"
+                    role="listbox"
+                  >
+                    {products
+                      .filter(
+                        (p) =>
+                          !productSearch.trim() ||
+                          (p.sku ? `${p.name} (${p.sku})` : p.name)
+                            .toLowerCase()
+                            .includes(productSearch.trim().toLowerCase()) ||
+                          p.name.toLowerCase().includes(productSearch.trim().toLowerCase()) ||
+                          (p.sku && p.sku.toLowerCase().includes(productSearch.trim().toLowerCase()))
+                      )
+                      .map((p) => (
+                        <li
+                          key={p.id}
+                          role="option"
+                          aria-selected={form.productId === p.id}
+                          className={cn(
+                            "cursor-pointer px-3 py-2 text-sm",
+                            form.productId === p.id
+                              ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-200"
+                              : "text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                          )}
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            setForm((f) => ({ ...f, productId: p.id, unit: p.unit ?? "" }))
+                            setProductSearch("")
+                            setProductDropdownOpen(false)
+                          }}
+                        >
+                          {p.sku ? `${p.name} (${p.sku})` : p.name}
+                        </li>
+                      ))}
+                    {productSearch.trim() &&
+                      products.filter(
+                        (p) =>
+                          (p.sku ? `${p.name} (${p.sku})` : p.name)
+                            .toLowerCase()
+                            .includes(productSearch.trim().toLowerCase()) ||
+                          p.name.toLowerCase().includes(productSearch.trim().toLowerCase()) ||
+                          (p.sku && p.sku.toLowerCase().includes(productSearch.trim().toLowerCase()))
+                      ).length === 0 && (
+                        <li className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
+                          No hay productos que coincidan
+                        </li>
+                      )}
+                  </ul>
+                )}
               </div>
               <div>
                 <label htmlFor="waste-type" className="mb-1 block text-sm font-medium text-gray-700 dark:text-white">Tipo *</label>
@@ -340,8 +413,9 @@ export default function WasteRecordsPage() {
                   type="number"
                   min={0.001}
                   step="any"
-                  value={form.quantity}
+                  value={form.quantity || ""}
                   onChange={(e) => setForm((f) => ({ ...f, quantity: parseFloat(e.target.value) || 0 }))}
+                  placeholder="1"
                   required
                   aria-label="Cantidad"
                   className="w-full rounded-lg border border-gray-300 dark:border-gray-600 dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"

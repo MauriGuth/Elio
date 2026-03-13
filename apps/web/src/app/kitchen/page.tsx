@@ -14,7 +14,7 @@ import {
 } from "lucide-react"
 import { authApi } from "@/lib/api/auth"
 import { locationsApi } from "@/lib/api/locations"
-import { api } from "@/lib/api"
+import { api, getLocationKey } from "@/lib/api"
 import { NeedPhotoStep } from "@/components/auth/need-photo-step"
 import { VerifyIdentityStep } from "@/components/auth/verify-identity-step"
 
@@ -28,6 +28,7 @@ const KITCHEN_ROLES = [
   "ADMIN",
   "LOCATION_MANAGER",
 ]
+const LEGACY_KITCHEN_LOCATION_KEY = "elio_kitchen_location"
 
 export default function KitchenLoginPage() {
   const router = useRouter()
@@ -44,6 +45,24 @@ export default function KitchenLoginPage() {
   const [locations, setLocations] = useState<any[]>([])
   const [loadingLocations, setLoadingLocations] = useState(false)
   const [user, setUser] = useState<any>(null)
+  const isAdminUser = user?.role === "admin" || user?.role === "ADMIN"
+
+  const readStoredLocation = () => {
+    try {
+      const scopedKey = getLocationKey()
+      const scopedValue = localStorage.getItem(scopedKey)
+      if (scopedValue) return JSON.parse(scopedValue)
+
+      const legacyValue = localStorage.getItem(LEGACY_KITCHEN_LOCATION_KEY)
+      if (!legacyValue) return null
+
+      const parsed = JSON.parse(legacyValue)
+      localStorage.setItem(scopedKey, legacyValue)
+      return parsed
+    } catch {
+      return null
+    }
+  }
 
   // Check if already logged in
   useEffect(() => {
@@ -109,36 +128,34 @@ export default function KitchenLoginPage() {
   }
 
   const selectLocation = (location: any) => {
-    localStorage.setItem(
-      "elio_kitchen_location",
-      JSON.stringify({
-        id: location.id,
-        name: location.name,
-        type: location.type,
-      })
-    )
+    const serialized = JSON.stringify({
+      id: location.id,
+      name: location.name,
+      type: location.type,
+    })
+    localStorage.setItem(getLocationKey(), serialized)
+    localStorage.setItem(LEGACY_KITCHEN_LOCATION_KEY, serialized)
     router.push("/kitchen/display")
   }
 
   const proceedAfterVerify = () => {
-    const loc =
-      user?.location ||
-      (() => {
-        try {
-          return JSON.parse(
-            localStorage.getItem("elio_kitchen_location") || "null"
-          )
-        } catch {
-          return null
-        }
-      })()
+    if (isAdminUser) {
+      setStep("select-location")
+      fetchLocations()
+      return
+    }
+
+    const loc = user?.location || readStoredLocation()
     if (loc) {
-      if (!user?.location)
-        localStorage.setItem("elio_kitchen_location", JSON.stringify(loc))
+      if (!user?.location) {
+        const serialized = JSON.stringify(loc)
+        localStorage.setItem(getLocationKey(), serialized)
+        localStorage.setItem(LEGACY_KITCHEN_LOCATION_KEY, serialized)
+      }
       router.push("/kitchen/display")
       return
     }
-    if (user?.role === "admin" || user?.role === "ADMIN" || user?.role === "LOCATION_MANAGER" || user?.role === "location_manager") {
+    if (user?.role === "LOCATION_MANAGER" || user?.role === "location_manager") {
       setStep("select-location")
       fetchLocations()
       return
@@ -346,7 +363,7 @@ export default function KitchenLoginPage() {
         </div>
 
         <p className="mt-6 text-center text-xs text-gray-600">
-          Elio Kitchen &copy; {new Date().getFullYear()}
+          Nova Kitchen &copy; {new Date().getFullYear()}
         </p>
       </div>
     </div>

@@ -6,13 +6,14 @@ import { sileo } from "sileo"
 import { ArrowLeft, Eye, EyeOff, Loader2, UtensilsCrossed, MapPin, ChevronRight } from "lucide-react"
 import { authApi } from "@/lib/api/auth"
 import { locationsApi } from "@/lib/api/locations"
-import { api } from "@/lib/api"
+import { api, getLocationKey } from "@/lib/api"
 import { NeedPhotoStep } from "@/components/auth/need-photo-step"
 import { VerifyIdentityStep } from "@/components/auth/verify-identity-step"
 
 type Step = "login" | "need-photo" | "verify-identity" | "select-location"
 
 const MOZO_ROLES = ["waiter", "WAITER", "admin", "ADMIN", "location_manager", "LOCATION_MANAGER"]
+const LEGACY_MOZO_LOCATION_KEY = "elio_mozo_location"
 
 export default function MozoLoginPage() {
   const router = useRouter()
@@ -27,6 +28,24 @@ export default function MozoLoginPage() {
   const [user, setUser] = useState<any>(null)
   const [userTypedEmail, setUserTypedEmail] = useState(false)
   const [userTypedPassword, setUserTypedPassword] = useState(false)
+  const isAdminUser = user?.role === "admin" || user?.role === "ADMIN"
+
+  const readStoredLocation = () => {
+    try {
+      const scopedKey = getLocationKey()
+      const scopedValue = localStorage.getItem(scopedKey)
+      if (scopedValue) return JSON.parse(scopedValue)
+
+      const legacyValue = localStorage.getItem(LEGACY_MOZO_LOCATION_KEY)
+      if (!legacyValue) return null
+
+      const parsed = JSON.parse(legacyValue)
+      localStorage.setItem(scopedKey, legacyValue)
+      return parsed
+    } catch {
+      return null
+    }
+  }
 
   useEffect(() => {
     const storedUser = authApi.getStoredUser()
@@ -84,24 +103,30 @@ export default function MozoLoginPage() {
   }
 
   const selectLocation = (location: any) => {
-    localStorage.setItem("elio_mozo_location", JSON.stringify({ id: location.id, name: location.name, type: location.type }))
+    const serialized = JSON.stringify({ id: location.id, name: location.name, type: location.type })
+    localStorage.setItem(getLocationKey(), serialized)
+    localStorage.setItem(LEGACY_MOZO_LOCATION_KEY, serialized)
     router.push("/pos/tables?station=mozo")
   }
 
   const proceedAfterVerify = () => {
-    const loc = user?.location || (() => {
-      try {
-        return JSON.parse(localStorage.getItem("elio_mozo_location") || "null")
-      } catch {
-        return null
-      }
-    })()
+    if (isAdminUser) {
+      setStep("select-location")
+      fetchLocations()
+      return
+    }
+
+    const loc = user?.location || readStoredLocation()
     if (loc) {
-      if (!user?.location) localStorage.setItem("elio_mozo_location", JSON.stringify(loc))
+      if (!user?.location) {
+        const serialized = JSON.stringify(loc)
+        localStorage.setItem(getLocationKey(), serialized)
+        localStorage.setItem(LEGACY_MOZO_LOCATION_KEY, serialized)
+      }
       router.push("/pos/tables?station=mozo")
       return
     }
-    if (user?.role === "admin" || user?.role === "ADMIN" || user?.role === "LOCATION_MANAGER" || user?.role === "location_manager") {
+    if (user?.role === "LOCATION_MANAGER" || user?.role === "location_manager") {
       setStep("select-location")
       fetchLocations()
       return

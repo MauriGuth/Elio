@@ -609,6 +609,17 @@ export default function ReportsPage() {
     if (activeReport === "sales") fetchMainChartData()
   }, [activeReport, fetchMainChartData])
 
+  const salesTotalByLocation = useMemo(() => {
+    if (!salesStackedByLocation.length) return []
+    const totals: Record<string, number> = {}
+    salesStackedByLocation.forEach((row: Record<string, string | number>) => {
+      Object.entries(row).forEach(([k, v]) => {
+        if (k !== "date" && typeof v === "number") totals[k] = (totals[k] ?? 0) + v
+      })
+    })
+    return Object.entries(totals).map(([name, total]) => ({ name, total })).sort((a, b) => b.total - a.total)
+  }, [salesStackedByLocation])
+
   // ── Preset handler ──
   const applyPreset = (preset: string) => {
     const r = getPresetRange(preset)
@@ -622,6 +633,11 @@ export default function ReportsPage() {
     if (!selectedLocation) return stockLevels
     return stockLevels.filter((sl: any) => sl.locationId === selectedLocation)
   }, [stockLevels, selectedLocation])
+
+  const activeLocations = useMemo(
+    () => (locations || []).filter((l: any) => l.isActive !== false),
+    [locations]
+  )
 
   // ═══════════════════════════════════════════════════════════════════
   // COMPUTED DATA — Visión General
@@ -650,8 +666,14 @@ export default function ReportsPage() {
       locMap[id].value += (sl.quantity || 0) * (sl.product?.avgCost || 0)
       locMap[id].products += 1
     })
-    return Object.values(locMap).sort((a, b) => b.value - a.value)
-  }, [stockLevels])
+    return activeLocations
+      .map((loc: any) => ({
+        name: loc.name || loc.id,
+        value: locMap[loc.id]?.value ?? 0,
+        products: locMap[loc.id]?.products ?? 0,
+      }))
+      .sort((a, b) => b.value - a.value)
+  }, [stockLevels, activeLocations])
 
   const topProductsByValue = useMemo(() => {
     const pMap: Record<
@@ -867,11 +889,25 @@ export default function ReportsPage() {
         locMap[id].critical += 1
       }
     })
-    return Object.values(locMap).map((l) => ({
-      ...l,
-      avgStock: l.products > 0 ? Math.round(l.totalQty / l.products) : 0,
-    }))
-  }, [stockLevels])
+    return activeLocations.map((loc: any) => {
+      const l = locMap[loc.id] ?? {
+        name: loc.name || loc.id,
+        value: 0,
+        products: 0,
+        critical: 0,
+        totalQty: 0,
+      }
+      return {
+        ...l,
+        name: loc.name || loc.id,
+        value: l.value,
+        products: l.products,
+        critical: l.critical,
+        totalQty: l.totalQty,
+        avgStock: l.products > 0 ? Math.round(l.totalQty / l.products) : 0,
+      }
+    })
+  }, [stockLevels, activeLocations])
 
   // ═══════════════════════════════════════════════════════════════════
   // IA ANALYSIS
@@ -1055,9 +1091,7 @@ export default function ReportsPage() {
             className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 py-2 pl-3 pr-8 text-sm font-medium text-gray-700 dark:text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           >
             <option value="">Todos los locales</option>
-            {locations
-              .filter((l: any) => l.isActive !== false)
-              .map((l: any) => (
+            {activeLocations.map((l: any) => (
                 <option key={l.id} value={l.id}>
                   {l.name}
                 </option>
@@ -2255,11 +2289,11 @@ export default function ReportsPage() {
                     )}
                   </div>
 
-                  {/* Monto y cantidad por sucursal (usan el local del filtro global) */}
+                  {/* Monto y cantidad por sucursal: con local seleccionado = serie por día; sin local = total por local (todos los locales) */}
                   <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                     <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
                       <h3 className="mb-4 text-sm font-semibold text-gray-900 dark:text-white">Monto de ventas por sucursal</h3>
-                      {salesByDayBranch.length > 0 ? (
+                      {selectedLocation && salesByDayBranch.length > 0 ? (
                         <>
                           <div className="h-64">
                             <ResponsiveContainer width="100%" height="100%">
@@ -2274,13 +2308,29 @@ export default function ReportsPage() {
                           </div>
                           <p className="mt-3 text-sm font-medium text-gray-700 dark:text-gray-300">Total monto: {formatCurrency(salesByDayBranch.reduce((s, d) => s + d.amount, 0))}</p>
                         </>
+                      ) : !selectedLocation && salesTotalByLocation.length > 0 ? (
+                        <>
+                          <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">Todos los locales — monto total en el período</p>
+                          <div className="h-64">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <BarChart data={salesTotalByLocation} layout="vertical" margin={{ left: 10 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_STROKE} horizontal={false} />
+                                <XAxis type="number" tickFormatter={(v) => formatCurrency(v).replace(/\s/g, "")} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                                <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} width={100} />
+                                <Tooltip content={<CurrencyTooltip />} />
+                                <Bar dataKey="total" name="Monto" fill="#06B6D4" radius={[0, 6, 6, 0]} barSize={24} />
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </div>
+                          <p className="mt-3 text-sm font-medium text-gray-700 dark:text-gray-300">Total: {formatCurrency(salesTotalByLocation.reduce((s, d) => s + d.total, 0))}</p>
+                        </>
                       ) : (
-                        <EmptyState message={selectedLocation ? "Sin datos para este local" : "Seleccioná un local en el filtro superior"} />
+                        <EmptyState message={selectedLocation ? "Sin datos para este local" : "Seleccioná un local para ver evolución por día, o revisá el gráfico de totalizadas por sucursal más abajo"} />
                       )}
                     </div>
                     <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
                       <h3 className="mb-4 text-sm font-semibold text-gray-900 dark:text-white">Cantidad de ventas por sucursal</h3>
-                      {salesByDayBranch.length > 0 && salesByDayBranch.some((d) => (d as any).count != null) ? (
+                      {selectedLocation && salesByDayBranch.length > 0 && salesByDayBranch.some((d) => (d as any).count != null) ? (
                         <>
                           <div className="h-64">
                             <ResponsiveContainer width="100%" height="100%">
@@ -2295,8 +2345,10 @@ export default function ReportsPage() {
                           </div>
                           <p className="mt-3 text-sm font-medium text-gray-700 dark:text-gray-300">Total cantidad: {formatNumber((salesByDayBranch as { count?: number }[]).reduce((s, d) => s + (d.count ?? 0), 0))}</p>
                         </>
+                      ) : !selectedLocation ? (
+                        <EmptyState message="Seleccioná un local en el filtro superior para ver cantidad de ventas por día en ese local. El gráfico de abajo muestra monto por sucursal para todos los locales." />
                       ) : (
-                        <EmptyState message={selectedLocation ? "Sin datos para este local" : "Seleccioná un local en el filtro superior"} />
+                        <EmptyState message="Sin datos para este local" />
                       )}
                     </div>
                   </div>
@@ -2312,7 +2364,7 @@ export default function ReportsPage() {
                             <XAxis dataKey="date" interval={0} tick={{ fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={(v: string, i: number) => (i % 2 === 0 ? formatShortDate(v) : "")} />
                             <YAxis tickFormatter={(v) => formatCurrency(v).replace(/\s/g, "")} tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                             <Tooltip content={<CurrencyTooltip />} />
-                            {locations.slice(0, 10).map((loc: any, i: number) => (
+                            {activeLocations.map((loc: any, i: number) => (
                               <Area key={loc.id} type="monotone" dataKey={loc.name} stackId="1" stroke={CHART_COLORS[i % CHART_COLORS.length]} fill={CHART_COLORS[i % CHART_COLORS.length]} fillOpacity={0.7} strokeWidth={1} />
                             ))}
                           </AreaChart>
@@ -2500,7 +2552,9 @@ export default function ReportsPage() {
                 }
               />
 
-              {comparisonData.length > 0 ? (
+              {activeLocations.length === 0 ? (
+                <EmptyState message="No hay locales cargados. Los gráficos y la tabla incluyen todos los locales activos." />
+              ) : comparisonData.length > 0 ? (
                 <>
                   {/* Grouped Bar Chart */}
                   <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">

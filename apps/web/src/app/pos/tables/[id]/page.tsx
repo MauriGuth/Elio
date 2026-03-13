@@ -365,6 +365,16 @@ export default function TableOrderPage() {
   const [preCierreOrderId, setPreCierreOrderId] = useState<string | null>(null)
   /** Modal con el comprobante de pre cierre para imprimir en la misma página. */
   const [showPreCierreModal, setShowPreCierreModal] = useState(false)
+  /** Tras cerrar la cuenta: modal con comprobante para imprimir antes de volver a mesas. */
+  const [showCierreReceiptModal, setShowCierreReceiptModal] = useState(false)
+  const [closedOrderSnapshot, setClosedOrderSnapshot] = useState<{
+    orderNumber: string
+    tableName: string
+    items: any[]
+    total: number
+    paymentMethod: string
+    discount: number
+  } | null>(null)
 
   /* ── notes modal ── */
   const [notesTarget, setNotesTarget] = useState<string | null>(null)
@@ -952,7 +962,7 @@ export default function TableOrderPage() {
             paymentMethod: effectiveMethod,
             discountAmount: discount > 0 ? discount : undefined,
             notes: paymentNotes || undefined,
-            invoiceType: invoiceType === "factura_a" ? "factura_a" : undefined,
+            invoiceType: invoiceType === "factura_a" ? "factura_a" : "consumidor",
             customerId: customerId || undefined,
           }
       if (hasSplitPayments) {
@@ -964,11 +974,23 @@ export default function TableOrderPage() {
       }
       await ordersApi.close(order.id, payload)
       setShowPayment(false)
+      const methodLabel = effectiveMethod === "cash" ? "Efectivo" : effectiveMethod === "card" ? "Tarjeta" : effectiveMethod === "transfer" ? "Transferencia" : effectiveMethod
+      setClosing(false)
+      setClosedOrderSnapshot({
+        orderNumber: order.orderNumber ?? order.id,
+        tableName: /^\d+$/.test(String(table?.name ?? "")) ? `Mesa ${table?.name}` : (table?.name ?? "Mesa"),
+        items: order.items ?? [],
+        total: orderTotal,
+        paymentMethod: methodLabel,
+        discount,
+      })
+      setShowCierreReceiptModal(true)
       sileo.success({ title: "Cuenta cerrada correctamente" })
-      router.push("/pos/tables" + posStationSuffix())
-    } catch {
-      setError("Error al cerrar la cuenta")
-      sileo.error({ title: "Error al cerrar la cuenta" })
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Error al cerrar la cuenta"
+      setError(msg)
+      sileo.error({ title: msg })
       setClosing(false)
     }
   }
@@ -978,6 +1000,24 @@ export default function TableOrderPage() {
     if (!order || !table) return
     setShowPreCierreModal(true)
   }
+
+  /* Auto-imprimir al abrir el modal de pre cierre (abre el cuadro de impresión del sistema con la impresora por defecto) */
+  useEffect(() => {
+    if (!showPreCierreModal || !order) return
+    const t = setTimeout(() => {
+      window.print()
+    }, 400)
+    return () => clearTimeout(t)
+  }, [showPreCierreModal, order?.id])
+
+  /* Auto-imprimir al abrir el modal de comprobante de cierre */
+  useEffect(() => {
+    if (!showCierreReceiptModal || !closedOrderSnapshot) return
+    const t = setTimeout(() => {
+      window.print()
+    }, 400)
+    return () => clearTimeout(t)
+  }, [showCierreReceiptModal, closedOrderSnapshot])
 
   /* ── loading ── */
   if (loading) {
@@ -2051,18 +2091,100 @@ export default function TableOrderPage() {
                 Total: {formatCurrency(Math.max(0, orderTotal))}
               </p>
               <p className="mt-4 text-xs text-gray-500">Documento de verificación. No es ticket de pago.</p>
-              <div className="no-print mt-6">
+              <p className="no-print mt-2 text-xs text-gray-500">Se abrió el cuadro de impresión. Elegí la impresora y confirmá.</p>
+              <div className="no-print mt-4 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="flex-1 rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Reimprimir
+                </button>
                 <button
                   type="button"
                   onClick={() => {
-                    window.print()
                     setPreCierreOrderId(order.id)
                     setShowPreCierreModal(false)
-                    sileo.success({ title: "Impreso. Ya podés cerrar la cuenta." })
+                    sileo.success({ title: "Ya podés cerrar la cuenta." })
                   }}
-                  className="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700"
+                  className="flex-1 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700"
                 >
-                  Imprimir
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ═══════════════════════════════════
+          MODAL COMPROBANTE DE CIERRE (imprimir al cerrar cuenta)
+          ═══════════════════════════════════ */}
+      {showCierreReceiptModal && closedOrderSnapshot && (
+        <>
+          <style dangerouslySetInnerHTML={{ __html: `@media print { body * { visibility: hidden; } .cierre-receipt-print-content, .cierre-receipt-print-content * { visibility: visible; } .cierre-receipt-print-content { position: absolute; left: 0; top: 0; width: 100%; max-width: 100%; background: white; padding: 24px; } .no-print { display: none !important; } }` }} />
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+            <div className="cierre-receipt-print-content max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+              <h1 className="text-lg font-bold text-gray-900">Comprobante de cierre</h1>
+              <p className="mt-1 text-sm text-gray-500">
+                {closedOrderSnapshot.tableName} · Pedido #{closedOrderSnapshot.orderNumber}
+              </p>
+              <p className="text-sm text-gray-500">
+                {new Date().toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" })}
+              </p>
+              <p className="mb-4 text-sm font-medium text-emerald-700">Cuenta cerrada</p>
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
+                    <th className="pb-2">Producto</th>
+                    <th className="pb-2 w-12">Cant.</th>
+                    <th className="pb-2 w-20">P.unit</th>
+                    <th className="pb-2 text-right w-24">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(closedOrderSnapshot.items ?? []).map((i: any) => {
+                    const qty = i.quantity ?? 1
+                    const up = i.unitPrice ?? (i.totalPrice ?? 0) / qty
+                    const total = i.totalPrice ?? up * qty
+                    return (
+                      <tr key={i.id} className="border-b border-gray-100">
+                        <td className="py-2">{i.productName ?? i.product?.name ?? "Ítem"}</td>
+                        <td className="py-2">{qty}</td>
+                        <td className="py-2">{formatCurrency(up)}</td>
+                        <td className="py-2 text-right">{formatCurrency(total)}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+              {closedOrderSnapshot.discount > 0 && (
+                <p className="mt-2 text-sm text-amber-700">Descuento: -{formatCurrency(closedOrderSnapshot.discount)}</p>
+              )}
+              <p className="mt-3 text-base font-bold text-gray-900">
+                Total: {formatCurrency(Math.max(0, closedOrderSnapshot.total))}
+              </p>
+              <p className="mt-1 text-sm text-gray-600">Pago: {closedOrderSnapshot.paymentMethod}</p>
+              <p className="mt-4 text-xs text-gray-500">Comprobante de cierre de cuenta.</p>
+              <p className="no-print mt-2 text-xs text-gray-500">Se abrió el cuadro de impresión. Elegí la impresora y confirmá.</p>
+              <div className="no-print mt-4 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="flex-1 rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Reimprimir
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCierreReceiptModal(false)
+                    setClosedOrderSnapshot(null)
+                    router.push("/pos/tables" + posStationSuffix())
+                  }}
+                  className="flex-1 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700"
+                >
+                  Listo
                 </button>
               </div>
             </div>
@@ -2462,6 +2584,63 @@ export default function TableOrderPage() {
                 {formatCurrency(Math.max(0, orderTotal))}
               </span>
             </div>
+
+            {/* Vista previa del comprobante (Factura A / Consumidor) */}
+            {(table?.tableType !== "errors" && table?.tableType !== "trash") && order && (
+              <div className="mb-5 rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/50 p-4">
+                <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-gray-500">
+                  Vista previa del comprobante
+                </p>
+                <div className="rounded-lg border border-gray-200 bg-white p-3 font-mono text-xs text-gray-800 shadow-inner">
+                  <div className="border-b border-gray-200 pb-2">
+                    <p className="font-semibold">
+                      {invoiceType === "factura_a" ? "FACTURA A" : "COMPROBANTE CONSUMIDOR FINAL"}
+                    </p>
+                    <p className="mt-0.5 text-gray-600">
+                      {/^\d+$/.test(String(table?.name ?? "")) ? `Mesa ${table?.name}` : table?.name} · Pedido #{order.orderNumber ?? order.id}
+                    </p>
+                    <p className="text-gray-500">
+                      {new Date().toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" })}
+                    </p>
+                  </div>
+                  {invoiceType === "factura_a" && (cuitSearchResult || customerId) && (
+                    <div className="border-b border-gray-200 py-2">
+                      <p className="text-gray-600">
+                        Cliente: {cuitSearchResult?.name ?? cuitSearchResult?.razonSocial ?? "—"}
+                      </p>
+                      <p className="text-gray-500">
+                        CUIT: {cuitSearchResult?.cuit ?? cuitSearchResult?.CUIT ?? "—"}
+                      </p>
+                    </div>
+                  )}
+                  <div className="max-h-24 overflow-y-auto py-2">
+                    {(order.items ?? []).map((i: any) => {
+                      const qty = i.quantity ?? 1
+                      const up = i.unitPrice ?? (i.totalPrice ?? 0) / qty
+                      const total = i.totalPrice ?? up * qty
+                      return (
+                        <div key={i.id} className="flex justify-between gap-2 border-b border-gray-100 py-0.5 last:border-0">
+                          <span className="truncate">{i.productName ?? i.product?.name ?? "Ítem"}</span>
+                          <span className="shrink-0">{qty} × {formatCurrency(up)} = {formatCurrency(total)}</span>
+                        </div>
+                      )
+                    })}
+                    {pendingItems.map((p) => (
+                      <div key={p.tempId} className="flex justify-between gap-2 border-b border-gray-100 py-0.5 last:border-0">
+                        <span className="truncate">{p.productName}</span>
+                        <span className="shrink-0">{p.quantity} × {formatCurrency(p.unitPrice)} = {formatCurrency(p.unitPrice * p.quantity)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {discount > 0 && (
+                    <p className="py-1 text-amber-700">Descuento: -{formatCurrency(discount)}</p>
+                  )}
+                  <div className="mt-2 border-t border-gray-200 pt-2 font-semibold">
+                    Total: {formatCurrency(Math.max(0, orderTotal))}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Resumen por comensal (dividir cuenta) */}
             {(table?.tableType !== "errors" && table?.tableType !== "trash") && splitMode && Object.keys(splitTotals).length > 0 && (
