@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
+import { SpeedInsights } from '@vercel/speed-insights/next'
 import { SileoToaster } from '@/components/sileo-toaster'
 import './globals.css'
 
@@ -55,6 +56,7 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <SileoToaster />
         {children}
+        <SpeedInsights />
       </body>
     </html>
   )
