@@ -10,7 +10,7 @@ Pasos para tener tu URL de API en producción (ej. `https://nova-api.up.railway.
 2. Click en **"New Project"**.
 3. Elegí **"Deploy from GitHub repo"**.
 4. Autorizá Railway para acceder a GitHub si te lo pide.
-5. Seleccioná el repositorio **MauriGuth/Elio** (o el que uses).
+5. Seleccioná el repositorio **MauriGuth/Nova** (o el que uses).
 
 ---
 
@@ -45,7 +45,7 @@ En el **servicio de la API** (no en la base de datos):
 |------------------|--------|
 | `DATABASE_URL`   | La URL que te dio Railway para PostgreSQL (ej. `postgresql://postgres:xxx@xxx.railway.app:5432/railway`). |
 | `JWT_SECRET`     | Una clave larga y aleatoria solo para producción (ej. generá una con un generador de contraseñas). |
-| `FRONTEND_URL`   | La URL de tu front en Vercel, ej. `https://elio.vercel.app` (podés poner varias separadas por coma). |
+| `FRONTEND_URL`   | La URL de tu front en Vercel, ej. `https://nova.vercel.app` (podés poner varias separadas por coma). |
 | `PORT`           | No suele hacer falta; Railway la inyecta. Si te pide algo, usá `PORT` y Railway la asigna. |
 
 Opcional (si usás OpenAI en la app):
@@ -83,7 +83,7 @@ Si tenés Railway instalado en la terminal (`railway` en el PATH):
 
 1. **Enlazar el proyecto** (solo la primera vez, desde la raíz del repo):
    ```bash
-   cd /ruta/al/repo/Elio
+   cd /ruta/al/repo/Nova
    railway link
    ```
    Elegí el proyecto y el **servicio de la API** (no el de PostgreSQL).
@@ -111,7 +111,7 @@ En el dashboard de Railway el **Root Directory** del servicio debe seguir siendo
 2. Buscá **"Networking"** o **"Public Networking"**.
 3. **"Generate domain"** (o "Add domain").
 4. Railway te da una URL tipo:  
-   `https://elio-api-production-xxxx.up.railway.app`
+   `https://nova-api-production-xxxx.up.railway.app`
 
 Esa es **tu URL de API en producción**.
 
@@ -196,7 +196,7 @@ Cuando en local tenés más productos (u otros datos) que en la API remota y que
 **Si Railway está conectado a GitHub** (deploy automático al hacer push):
 
 ```bash
-cd /ruta/al/repo/Elio
+cd /ruta/al/repo/Nova
 git add -A
 git status   # revisar qué se sube
 git commit -m "Sync: código y migraciones"
@@ -206,7 +206,7 @@ git push origin main
 **Si desplegás con Railway CLI** (sin depender del push):
 
 ```bash
-cd /ruta/al/repo/Elio
+cd /ruta/al/repo/Nova
 railway link   # solo la primera vez: elegí proyecto y servicio API
 cd apps/api
 railway up
@@ -219,7 +219,7 @@ El frontend (Vercel) suele hacer deploy automático al hacer `git push`; si no, 
 Después de subir código que incluye cambios en el schema (Prisma):
 
 ```bash
-cd /ruta/al/repo/Elio/apps/api
+cd /ruta/al/repo/Nova/apps/api
 railway run npx prisma migrate deploy
 ```
 
@@ -241,12 +241,12 @@ Luego:
 
 ```bash
 # 1. Exportar la BD local a un archivo (desde tu máquina)
-pg_dump "postgresql://usuario@localhost:5432/elio" --no-owner --no-acl -F c -f elio_local.dump
+pg_dump "postgresql://usuario@localhost:5432/elio" --no-owner --no-acl -F c -f nova_local.dump
 
 # 2. Copiá la DATABASE_URL del servicio PostgreSQL en Railway (Variables en el dashboard).
 
 # 3. Restaurar en la BD remota (reemplazá REMOTE_DATABASE_URL por la URL real)
-pg_restore --no-owner --no-acl -d "REMOTE_DATABASE_URL" -c elio_local.dump
+pg_restore --no-owner --no-acl -d "REMOTE_DATABASE_URL" -c nova_local.dump
 ```
 
 Si preferís no usar PATH, podés llamar a los binarios con la ruta completa:  
@@ -271,4 +271,4 @@ Mientras tanto, la forma segura de igualar productos es Opción A solo si podés
 | Primera vez| Correr `prisma migrate deploy` contra la base de Railway. |
 | Vercel     | `NEXT_PUBLIC_API_URL` = `https://tu-dominio.up.railway.app/api`. |
 
-Tu **URL de API en producción** es la que te asigna Railway al generar el dominio (ej. `https://elio-api-production-xxxx.up.railway.app`).
+Tu **URL de API en producción** es la que te asigna Railway al generar el dominio (ej. `https://nova-api-production-xxxx.up.railway.app`).

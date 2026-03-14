@@ -2,7 +2,7 @@
 
 import { useEffect } from "react"
 
-const PREF_THEME = "elio_preferencias_tema"
+const PREF_THEME = "nova_preferencias_tema"
 
 function applyStoredTheme() {
   if (typeof window === "undefined") return

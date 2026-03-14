@@ -788,7 +788,7 @@ export default function TableOrderPage() {
   /* ── add product ── */
   const addProduct = (product: any) => {
     if (locationId && !hasOpenShift) {
-      sileo.warning({ title: "Abra un turno para cargar la mesa", message: "Vaya a Caja y abra el turno." })
+      sileo.warning({ title: "Abra un turno para cargar la mesa", description: "Vaya a Caja y abra el turno." })
       return
     }
     const existing = pendingItems.find((i) => i.productId === product.id)
@@ -2391,7 +2391,7 @@ export default function TableOrderPage() {
                               locationId,
                               customerSearch.trim()
                             )
-                            const list = Array.isArray(listRaw) ? listRaw : listRaw?.data ?? []
+                            const list = Array.isArray(listRaw) ? listRaw : (listRaw as any)?.data ?? []
                             if (list.length === 0) {
                               setCuitSearchResult(null)
                               setCustomerId(null)

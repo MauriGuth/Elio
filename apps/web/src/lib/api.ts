@@ -26,39 +26,39 @@ function getStationFromUrl(): string | null {
 }
 
 export function getTokenKey(): string {
-  if (typeof window === 'undefined') return 'elio_token';
+  if (typeof window === 'undefined') return 'nova_token';
   const p = window.location.pathname;
   const station = getStationFromUrl();
-  if (p.startsWith('/cajero')) return scopedStorageKey('elio_token_cajero');
-  if (p.startsWith('/mozo')) return scopedStorageKey('elio_token_mozo');
-  if (p.startsWith('/deposito')) return scopedStorageKey('elio_token_deposito');
+  if (p.startsWith('/cajero')) return scopedStorageKey('nova_token_cajero');
+  if (p.startsWith('/mozo')) return scopedStorageKey('nova_token_mozo');
+  if (p.startsWith('/deposito')) return scopedStorageKey('nova_token_deposito');
   if (p.startsWith('/pos')) {
-    if (station === 'cajero') return scopedStorageKey('elio_token_cajero');
-    if (station === 'mozo') return scopedStorageKey('elio_token_mozo');
-    if (station === 'deposito') return scopedStorageKey('elio_token_deposito');
-    return scopedStorageKey('elio_token_pos');
+    if (station === 'cajero') return scopedStorageKey('nova_token_cajero');
+    if (station === 'mozo') return scopedStorageKey('nova_token_mozo');
+    if (station === 'deposito') return scopedStorageKey('nova_token_deposito');
+    return scopedStorageKey('nova_token_pos');
   }
-  if (p.startsWith('/kitchen')) return scopedStorageKey('elio_token_kitchen');
-  if (p.startsWith('/cafeteria')) return scopedStorageKey('elio_token_cafeteria');
-  return scopedStorageKey('elio_token');
+  if (p.startsWith('/kitchen')) return scopedStorageKey('nova_token_kitchen');
+  if (p.startsWith('/cafeteria')) return scopedStorageKey('nova_token_cafeteria');
+  return scopedStorageKey('nova_token');
 }
 
 export function getUserKey(): string {
-  if (typeof window === 'undefined') return 'elio_user';
+  if (typeof window === 'undefined') return 'nova_user';
   const p = window.location.pathname;
   const station = getStationFromUrl();
-  if (p.startsWith('/cajero')) return scopedStorageKey('elio_user_cajero');
-  if (p.startsWith('/mozo')) return scopedStorageKey('elio_user_mozo');
-  if (p.startsWith('/deposito')) return scopedStorageKey('elio_user_deposito');
+  if (p.startsWith('/cajero')) return scopedStorageKey('nova_user_cajero');
+  if (p.startsWith('/mozo')) return scopedStorageKey('nova_user_mozo');
+  if (p.startsWith('/deposito')) return scopedStorageKey('nova_user_deposito');
   if (p.startsWith('/pos')) {
-    if (station === 'cajero') return scopedStorageKey('elio_user_cajero');
-    if (station === 'mozo') return scopedStorageKey('elio_user_mozo');
-    if (station === 'deposito') return scopedStorageKey('elio_user_deposito');
-    return scopedStorageKey('elio_user_pos');
+    if (station === 'cajero') return scopedStorageKey('nova_user_cajero');
+    if (station === 'mozo') return scopedStorageKey('nova_user_mozo');
+    if (station === 'deposito') return scopedStorageKey('nova_user_deposito');
+    return scopedStorageKey('nova_user_pos');
   }
-  if (p.startsWith('/kitchen')) return scopedStorageKey('elio_user_kitchen');
-  if (p.startsWith('/cafeteria')) return scopedStorageKey('elio_user_cafeteria');
-  return scopedStorageKey('elio_user');
+  if (p.startsWith('/kitchen')) return scopedStorageKey('nova_user_kitchen');
+  if (p.startsWith('/cafeteria')) return scopedStorageKey('nova_user_cafeteria');
+  return scopedStorageKey('nova_user');
 }
 
 /** Para que los links del POS mantengan la sesión por pestaña (cajero/mozo) */
@@ -69,18 +69,18 @@ export function posStationSuffix(): string {
 
 /** Clave de localStorage para la ubicación según la estación (cajero/mozo/pos) */
 export function getLocationKey(): string {
-  if (typeof window === 'undefined') return 'elio_pos_location';
+  if (typeof window === 'undefined') return 'nova_pos_location';
   const p = window.location.pathname;
   const station = getStationFromUrl();
-  if (p.startsWith('/cajero')) return scopedStorageKey('elio_cajero_location');
-  if (p.startsWith('/mozo')) return scopedStorageKey('elio_mozo_location');
-  if (p.startsWith('/deposito')) return scopedStorageKey('elio_deposito_location');
+  if (p.startsWith('/cajero')) return scopedStorageKey('nova_cajero_location');
+  if (p.startsWith('/mozo')) return scopedStorageKey('nova_mozo_location');
+  if (p.startsWith('/deposito')) return scopedStorageKey('nova_deposito_location');
   if (p.startsWith('/pos')) {
-    if (station === 'cajero') return scopedStorageKey('elio_cajero_location');
-    if (station === 'mozo') return scopedStorageKey('elio_mozo_location');
-    if (station === 'deposito') return scopedStorageKey('elio_deposito_location');
+    if (station === 'cajero') return scopedStorageKey('nova_cajero_location');
+    if (station === 'mozo') return scopedStorageKey('nova_mozo_location');
+    if (station === 'deposito') return scopedStorageKey('nova_deposito_location');
   }
-  return scopedStorageKey('elio_pos_location');
+  return scopedStorageKey('nova_pos_location');
 }
 
 class ApiClient {
@@ -95,8 +95,8 @@ class ApiClient {
     const key = getTokenKey();
     let token = localStorage.getItem(key);
     // Si estás en el dashboard y no hay token de panel, usar el del POS (por si iniciaste sesión como Admin en POS)
-    if (!token && key === scopedStorageKey('elio_token')) {
-      token = localStorage.getItem(scopedStorageKey('elio_token_pos'));
+    if (!token && key === scopedStorageKey('nova_token')) {
+      token = localStorage.getItem(scopedStorageKey('nova_token_pos'));
     }
     return token;
   }
@@ -150,8 +150,8 @@ class ApiClient {
       const error = await response.json().catch(() => ({ message: 'Error del servidor' }));
       // Si 403 en dashboard, limpiar token del panel para que la próxima petición use el del POS (por si es Admin)
       if (response.status === 403 && typeof window !== 'undefined' && !window.location.pathname.startsWith('/pos')) {
-        localStorage.removeItem(scopedStorageKey('elio_token'));
-        localStorage.removeItem(scopedStorageKey('elio_user'));
+        localStorage.removeItem(scopedStorageKey('nova_token'));
+        localStorage.removeItem(scopedStorageKey('nova_user'));
       }
       const message = response.status === 403
         ? (error.message || 'No tienes permiso. Inicia sesión en el panel con un usuario Admin (/login).')

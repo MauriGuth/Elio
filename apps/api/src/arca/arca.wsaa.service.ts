@@ -57,7 +57,7 @@ export class ArcaWsaaService {
     );
     this.cacheFilePath = path.join(
       os.tmpdir(),
-      `elio-arca-wsaa-${createHash('sha1')
+      `nova-arca-wsaa-${createHash('sha1')
         .update(`${this.environment}:${this.service}:${this.cuit}:${this.certPath}`)
         .digest('hex')}.json`,
     );
@@ -68,7 +68,7 @@ export class ArcaWsaaService {
    * Usado cuando ARCA_CERT_BASE64 y ARCA_KEY_BASE64 están definidos y no hay ARCA_CERT_PATH/ARCA_KEY_PATH.
    */
   private writeTempCertAndKey(certBase64: string, keyBase64: string): { certPath: string; keyPath: string } {
-    const dir = path.join(os.tmpdir(), 'elio-arca-certs');
+    const dir = path.join(os.tmpdir(), 'nova-arca-certs');
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const certPath = path.join(dir, 'cert.pem');
     const keyPath = path.join(dir, 'key.pem');

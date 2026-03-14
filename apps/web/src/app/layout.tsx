@@ -33,7 +33,7 @@ const themeScript = `
   if (isCajeroMozo) {
     setDark(false);
   } else {
-    var theme = typeof localStorage !== 'undefined' && localStorage.getItem('elio_preferencias_tema');
+    var theme = typeof localStorage !== 'undefined' && localStorage.getItem('nova_preferencias_tema');
     if (theme === 'dark') setDark(true);
     else if (theme === 'light') setDark(false);
     else {

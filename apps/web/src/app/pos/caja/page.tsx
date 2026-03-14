@@ -54,11 +54,11 @@ const DENOMINATIONS = [20000, 10000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5]
 
 /** Clave para guardar el borrador del micro balance por draft (para no perder cantidades al cambiar de pestaña). */
 const MICRO_BALANCE_DRAFT_STORAGE_KEY = (draftId: string) =>
-  `elio_micro_balance_draft_${draftId}`
+  `nova_micro_balance_draft_${draftId}`
 
 /** Clave para guardar el borrador del formulario Cerrar caja (para no perder valores al ir a otra página). */
 const CERRAR_CAJA_DRAFT_STORAGE_KEY = (registerId: string) =>
-  `elio_cerrar_caja_draft_${registerId}`
+  `nova_cerrar_caja_draft_${registerId}`
 
 interface ProductRow {
   id: string

@@ -1,4 +1,4 @@
-const STORAGE_KEY = "elio_settings"
+const STORAGE_KEY = "nova_settings"
 
 export type SecuritySettings = {
   minPasswordLength: number

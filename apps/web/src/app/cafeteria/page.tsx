@@ -27,7 +27,7 @@ const CAFE_ROLES = [
   "ADMIN",
   "LOCATION_MANAGER",
 ]
-const LEGACY_CAFETERIA_LOCATION_KEY = "elio_cafeteria_location"
+const LEGACY_CAFETERIA_LOCATION_KEY = "nova_cafeteria_location"
 
 export default function CafeteriaLoginPage() {
   const router = useRouter()

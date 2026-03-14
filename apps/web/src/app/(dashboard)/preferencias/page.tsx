@@ -5,8 +5,8 @@ import Link from "next/link"
 import { Settings, Bell, Palette, Globe, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 
-const PREF_THEME = "elio_preferencias_tema"
-const PREF_NOTIFICACIONES = "elio_preferencias_notificaciones"
+const PREF_THEME = "nova_preferencias_tema"
+const PREF_NOTIFICACIONES = "nova_preferencias_notificaciones"
 
 export default function PreferenciasPage() {
   const [theme, setTheme] = useState<"light" | "dark" | "system">("system")

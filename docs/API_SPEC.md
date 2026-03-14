@@ -1,6 +1,6 @@
 # ELIO — Especificación de APIs REST
 
-## Base URL: `https://api.elio.app/v1`
+## Base URL: `https://api.nova.app/v1`
 
 ## Formato: JSON  
 ## Autenticación: Bearer Token (JWT)  
@@ -28,7 +28,7 @@
 ```json
 // Request
 {
-  "email": "mauricio@elio.app",
+  "email": "mauricio@nova.app",
   "password": "********"
 }
 
@@ -40,15 +40,15 @@
   "token_type": "Bearer",
   "user": {
     "id": "uuid",
-    "email": "mauricio@elio.app",
+    "email": "mauricio@nova.app",
     "first_name": "Mauricio",
     "last_name": "Huentelaf",
     "role": "admin",
     "location_id": null,
     "tenant": {
       "id": "uuid",
-      "name": "Elio Gastronomía",
-      "slug": "elio-gastronomia"
+      "name": "Nova Gastronomía",
+      "slug": "nova-gastronomia"
     }
   }
 }
@@ -92,7 +92,7 @@ Query params:
   "data": [
     {
       "id": "uuid",
-      "email": "juan@elio.app",
+      "email": "juan@nova.app",
       "first_name": "Juan",
       "last_name": "Pérez",
       "role": "warehouse_manager",
@@ -163,7 +163,7 @@ Query params:
         "icon": "🌾"
       },
       "unit": "kg",
-      "image_url": "https://cdn.elio.app/products/har-001.jpg",
+      "image_url": "https://cdn.nova.app/products/har-001.jpg",
       "avg_cost": 2450.00,
       "last_cost": 2500.00,
       "sale_price": 0,
@@ -303,7 +303,7 @@ Query params:
   "type": "breakage",
   "quantity": -5,
   "reason": "5 medialunas cayeron al piso durante el servicio",
-  "photo_url": "https://cdn.elio.app/corrections/foto-123.jpg"
+  "photo_url": "https://cdn.nova.app/corrections/foto-123.jpg"
 }
 
 // Response 201
@@ -391,7 +391,7 @@ Query params:
         }
       ]
     },
-    "image_url": "https://cdn.elio.app/receipts/ocr-123.jpg"
+    "image_url": "https://cdn.nova.app/receipts/ocr-123.jpg"
   }
 }
 ```
@@ -1042,7 +1042,7 @@ Query params:
 ### Conexión
 
 ```
-wss://api.elio.app/ws?token={jwt_token}
+wss://api.nova.app/ws?token={jwt_token}
 ```
 
 ### Canales
@@ -1062,7 +1062,7 @@ wss://api.elio.app/ws?token={jwt_token}
 ### Ejemplo de Uso (Cliente)
 
 ```javascript
-const ws = new WebSocket('wss://api.elio.app/ws?token=eyJhbG...');
+const ws = new WebSocket('wss://api.nova.app/ws?token=eyJhbG...');
 
 // Suscribirse a canal
 ws.send(JSON.stringify({

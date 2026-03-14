@@ -74,9 +74,9 @@ export class ArcaFiscalService {
     }
 
     const invoiceType = this.resolveInvoiceType(order.invoiceType);
-    this.validateCustomerForInvoice(order.customer, invoiceType);
+    this.validateCustomerForInvoice((order as { customer?: unknown }).customer, invoiceType);
 
-    const ptoVta = this.getPtoVtaForOrder(order);
+    const ptoVta = this.getPtoVtaForOrder(order as { location?: { arcaPtoVta?: number | null } | null });
     const cbteTipo = this.mapVoucherType(invoiceType);
     const voucher = await this.prisma.fiscalVoucher.upsert({
       where: { orderId },

@@ -6,7 +6,7 @@
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-OUTPUT_FILE="${REPO_ROOT}/elio_local.dump"
+OUTPUT_FILE="${REPO_ROOT}/nova_local.dump"
 
 # En macOS, libpq de Homebrew suele no estar en PATH
 BREW_LIBPQ=""

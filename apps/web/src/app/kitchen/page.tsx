@@ -28,7 +28,7 @@ const KITCHEN_ROLES = [
   "ADMIN",
   "LOCATION_MANAGER",
 ]
-const LEGACY_KITCHEN_LOCATION_KEY = "elio_kitchen_location"
+const LEGACY_KITCHEN_LOCATION_KEY = "nova_kitchen_location"
 
 export default function KitchenLoginPage() {
   const router = useRouter()

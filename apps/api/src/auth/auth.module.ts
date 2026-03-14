@@ -9,7 +9,7 @@ import { JwtStrategy } from './jwt.strategy';
   imports: [
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.register({
-      secret: process.env.JWT_SECRET || 'elio-dev-secret-key',
+      secret: process.env.JWT_SECRET || 'nova-dev-secret-key',
       signOptions: { expiresIn: '24h' },
     }),
   ],

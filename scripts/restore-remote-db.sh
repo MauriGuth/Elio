@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Restaura el dump local (elio_local.dump) en la BD de Railway.
+# Restaura el dump local (nova_local.dump) en la BD de Railway.
 # Uso: REMOTE_DATABASE_URL="postgresql://postgres:PASSWORD@HOST:PORT/railway" ./scripts/restore-remote-db.sh
 # Cuidado: reemplaza los datos actuales en la base remota.
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-DUMP_FILE="${REPO_ROOT}/elio_local.dump"
+DUMP_FILE="${REPO_ROOT}/nova_local.dump"
 
 # PATH: Homebrew libpq (Apple Silicon + Intel) y ruta dinámica con brew --prefix
 BREW_LIBPQ=""

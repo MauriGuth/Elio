@@ -17,7 +17,7 @@
 ### API (`apps/api/.env`)
 - `PORT=4010` → la API escucha en el puerto 4010.
 - `FRONTEND_URL=http://localhost:3000,http://localhost:3001,...` → CORS permite esos orígenes.
-- `DATABASE_URL=postgresql://mauriciohuentelaf@localhost:5432/elio` → conexión a PostgreSQL.
+- `DATABASE_URL=postgresql://mauriciohuentelaf@localhost:5432/nova` → conexión a PostgreSQL.
 
 ### CORS
 - La API permite peticiones desde `localhost` y `127.0.0.1` en cualquier puerto.
@@ -25,7 +25,7 @@
 
 ## Cómo levantar todo
 
-1. **Base de datos**: PostgreSQL debe estar corriendo (ej. Postgres.app) con la base `elio` creada (`createdb elio`).
+1. **Base de datos**: PostgreSQL debe estar corriendo (ej. Postgres.app) con la base `nova` creada (`createdb nova`).
 2. **API**:  
    `cd apps/api && npm run start:dev`  
    (usa `PORT=4010` del `.env`).

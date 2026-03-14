@@ -13,7 +13,7 @@ import { VerifyIdentityStep } from "@/components/auth/verify-identity-step"
 type Step = "login" | "need-photo" | "verify-identity" | "select-location"
 
 const CAJERO_ROLES = ["cashier", "CASHIER", "admin", "ADMIN", "location_manager", "LOCATION_MANAGER"]
-const LEGACY_CAJERO_LOCATION_KEY = "elio_cajero_location"
+const LEGACY_CAJERO_LOCATION_KEY = "nova_cajero_location"
 
 export default function CajeroLoginPage() {
   const router = useRouter()
