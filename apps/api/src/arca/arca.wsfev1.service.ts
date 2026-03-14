@@ -137,7 +137,7 @@ export class ArcaWsfev1Service {
     );
 
     const cae = extractXmlTag(xml, 'CAE') || '';
-    const caeVto = extractXmlTag(xml, 'CAEFchVto');
+    const caeVto = extractXmlTag(xml, 'CAEFchVto') ?? undefined;
     const result = extractXmlTag(xml, 'Resultado') || '';
     const errors = this.parseErrors(xml, 'Err');
     const observations = this.parseErrors(xml, 'Obs');
