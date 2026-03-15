@@ -349,7 +349,7 @@ export default function TableOrderPage() {
   const [selectedItemIdsForMove, setSelectedItemIdsForMove] = useState<string[]>([])
   const [changingTable, setChangingTable] = useState(false)
   const [changeTableError, setChangeTableError] = useState<string | null>(null)
-  const [invoiceType, setInvoiceType] = useState<"consumidor" | "factura_a">("consumidor")
+  const [invoiceType, setInvoiceType] = useState<"consumidor" | "eventual" | "factura_a">("consumidor")
   const [customerId, setCustomerId] = useState<string | null>(null)
   const [customerSearch, setCustomerSearch] = useState("")
   const [cuitSearchResult, setCuitSearchResult] = useState<any>(null)
@@ -962,7 +962,7 @@ export default function TableOrderPage() {
             paymentMethod: effectiveMethod,
             discountAmount: discount > 0 ? discount : undefined,
             notes: paymentNotes || undefined,
-            invoiceType: invoiceType === "factura_a" ? "factura_a" : "consumidor",
+            invoiceType: invoiceType === "factura_a" ? "factura_a" : invoiceType === "eventual" ? "eventual" : "consumidor",
             customerId: customerId || undefined,
           }
       if (hasSplitPayments) {
@@ -2287,7 +2287,7 @@ export default function TableOrderPage() {
             <p className="mb-2 text-sm font-medium text-gray-700">
               Comprobante
             </p>
-            <div className="mb-4 flex gap-2">
+            <div className="mb-4 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -2300,13 +2300,33 @@ export default function TableOrderPage() {
                   setShowAddCustomer(false)
                 }}
                 className={cn(
-                  "flex-1 rounded-xl border px-4 py-2.5 text-sm font-medium transition-all",
+                  "flex-1 min-w-0 rounded-xl border px-4 py-2.5 text-sm font-medium transition-all",
                   invoiceType === "consumidor"
                     ? "border-emerald-500 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-500"
                     : "border-gray-200 text-gray-600 hover:bg-gray-50"
                 )}
               >
                 Consumidor
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setInvoiceType("eventual")
+                  setCustomerId(null)
+                  setCustomerSearch("")
+                  setCuitSearchResult(null)
+                  setCustomerSearchResults([])
+                  setCustomerSearchEmpty(false)
+                  setShowAddCustomer(false)
+                }}
+                className={cn(
+                  "flex-1 min-w-0 rounded-xl border px-4 py-2.5 text-sm font-medium transition-all",
+                  invoiceType === "eventual"
+                    ? "border-emerald-500 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-500"
+                    : "border-gray-200 text-gray-600 hover:bg-gray-50"
+                )}
+              >
+                Eventual
               </button>
               <button
                 type="button"
@@ -2319,7 +2339,7 @@ export default function TableOrderPage() {
                   setShowAddCustomer(false)
                 }}
                 className={cn(
-                  "flex-1 rounded-xl border px-4 py-2.5 text-sm font-medium transition-all",
+                  "flex-1 min-w-0 rounded-xl border px-4 py-2.5 text-sm font-medium transition-all",
                   invoiceType === "factura_a"
                     ? "border-emerald-500 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-500"
                     : "border-gray-200 text-gray-600 hover:bg-gray-50"
@@ -2594,7 +2614,11 @@ export default function TableOrderPage() {
                 <div className="rounded-lg border border-gray-200 bg-white p-3 font-mono text-xs text-gray-800 shadow-inner">
                   <div className="border-b border-gray-200 pb-2">
                     <p className="font-semibold">
-                      {invoiceType === "factura_a" ? "FACTURA A" : "COMPROBANTE CONSUMIDOR FINAL"}
+                      {invoiceType === "factura_a"
+                        ? "FACTURA A"
+                        : invoiceType === "eventual"
+                          ? "COMPROBANTE EVENTUAL"
+                          : "COMPROBANTE CONSUMIDOR FINAL"}
                     </p>
                     <p className="mt-0.5 text-gray-600">
                       {/^\d+$/.test(String(table?.name ?? "")) ? `Mesa ${table?.name}` : table?.name} · Pedido #{order.orderNumber ?? order.id}

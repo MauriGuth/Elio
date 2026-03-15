@@ -439,9 +439,12 @@ export class OrdersService {
       }
     }
 
+    const isEventual = data.invoiceType === 'eventual';
     const invoiceType =
       !isSpecialTable && data.invoiceType
-        ? this.arcaFiscalService.resolveInvoiceType(data.invoiceType)
+        ? isEventual
+          ? 'eventual'
+          : this.arcaFiscalService.resolveInvoiceType(data.invoiceType)
         : undefined;
 
     const closedOrder = await this.prisma.$transaction(async (tx) => {
@@ -511,7 +514,7 @@ export class OrdersService {
           notes: data.notes ?? order.notes,
           invoiceType: invoiceType ?? 'consumidor',
           customerId: effectiveCustomerId,
-          fiscalStatus: isSpecialTable
+          fiscalStatus: isSpecialTable || isEventual
             ? 'skipped'
             : this.arcaFiscalService.isEnabled()
               ? 'pending'
@@ -550,17 +553,22 @@ export class OrdersService {
       });
 
       if (!isSpecialTable) {
+        const fiscalVoucherStatus = isEventual
+          ? 'skipped'
+          : this.arcaFiscalService.isEnabled()
+            ? 'pending'
+            : 'disabled';
         await tx.fiscalVoucher.upsert({
           where: { orderId: order.id },
           update: {
-            status: this.arcaFiscalService.isEnabled() ? 'pending' : 'disabled',
+            status: fiscalVoucherStatus,
             invoiceType: invoiceType ?? 'consumidor',
             errorCode: null,
             errorMessage: null,
           },
           create: {
             orderId: order.id,
-            status: this.arcaFiscalService.isEnabled() ? 'pending' : 'disabled',
+            status: fiscalVoucherStatus,
             invoiceType: invoiceType ?? 'consumidor',
           },
         });
@@ -580,7 +588,11 @@ export class OrdersService {
       return closedOrder;
     });
 
-    if (!isSpecialTable && this.arcaFiscalService.isEnabled()) {
+    if (
+      !isSpecialTable &&
+      this.arcaFiscalService.isEnabled() &&
+      closedOrder.invoiceType !== 'eventual'
+    ) {
       void this.arcaFiscalService.emitForOrder(closedOrder.id).catch(() => undefined);
     }
 

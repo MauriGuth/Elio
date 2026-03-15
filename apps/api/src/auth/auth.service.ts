@@ -39,6 +39,11 @@ export class AuthService {
       throw new UnauthorizedException('Account is deactivated');
     }
 
+    if (!user.passwordHash?.trim()) {
+      console.warn('[AuthService] User has no password hash:', user.email);
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
     const now = new Date();
     if (user.lockedUntil && now < user.lockedUntil) {
       const minutesLeft = Math.ceil((user.lockedUntil.getTime() - now.getTime()) / 60000);
@@ -48,10 +53,16 @@ export class AuthService {
       );
     }
 
-    const isPasswordValid = await bcrypt.compare(
-      loginDto.password,
-      user.passwordHash,
-    );
+    let isPasswordValid = false;
+    try {
+      isPasswordValid = await bcrypt.compare(
+        loginDto.password,
+        user.passwordHash,
+      );
+    } catch (err) {
+      console.error('[AuthService] bcrypt.compare failed for', user.email, err);
+      throw new UnauthorizedException('Invalid credentials');
+    }
 
     if (!isPasswordValid) {
       const newAttempts = (user.failedLoginAttempts ?? 0) + 1;

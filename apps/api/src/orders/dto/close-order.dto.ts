@@ -37,7 +37,7 @@ export class CloseOrderDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['consumidor', 'factura_a', 'factura_b', 'factura_c'])
+  @IsIn(['consumidor', 'eventual', 'factura_a', 'factura_b', 'factura_c'])
   invoiceType?: string;
 
   @IsOptional()
