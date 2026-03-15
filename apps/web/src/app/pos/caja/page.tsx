@@ -54,11 +54,11 @@ const DENOMINATIONS = [20000, 10000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5]
 
 /** Clave para guardar el borrador del micro balance por draft (para no perder cantidades al cambiar de pestaña). */
 const MICRO_BALANCE_DRAFT_STORAGE_KEY = (draftId: string) =>
-  `nova_micro_balance_draft_${draftId}`
+  `elio_micro_balance_draft_${draftId}`
 
 /** Clave para guardar el borrador del formulario Cerrar caja (para no perder valores al ir a otra página). */
 const CERRAR_CAJA_DRAFT_STORAGE_KEY = (registerId: string) =>
-  `nova_cerrar_caja_draft_${registerId}`
+  `elio_cerrar_caja_draft_${registerId}`
 
 interface ProductRow {
   id: string
@@ -339,11 +339,6 @@ export default function PosCajaPage() {
       // ignore
     }
   }, [registerIdForStorage])
-
-  /** Solo se puede cerrar el turno que está abierto; sincronizar y no permitir elegir otro. */
-  useEffect(() => {
-    if (currentRegister?.shift) setCloseShift(currentRegister.shift)
-  }, [currentRegister?.shift])
 
   const cerrarCajaSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
@@ -1632,12 +1627,8 @@ export default function PosCajaPage() {
                       onChange={(e) => setCloseShift(e.target.value)}
                       className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-base font-medium !text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20"
                       aria-label="Turno al cerrar"
-                      title={currentRegister?.shift ? "Solo podés cerrar el turno actual (evita confusiones)." : undefined}
                     >
-                      {(currentRegister?.shift
-                        ? SHIFT_OPTIONS.filter((s) => s.value === currentRegister.shift)
-                        : SHIFT_OPTIONS
-                      ).map((s) => (
+                      {SHIFT_OPTIONS.map((s) => (
                         <option key={s.value} value={s.value}>
                           {s.label}
                         </option>

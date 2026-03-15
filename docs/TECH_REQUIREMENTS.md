@@ -147,7 +147,7 @@
 ### 3.1 Monorepo Structure
 
 ```
-nova/
+elio/
 ├── apps/
 │   ├── web/                    # Next.js Frontend
 │   │   ├── app/
@@ -304,7 +304,7 @@ APP_NAME=Nova
 APP_URL=https://app.nova.ar
 
 # ═══ Database ═══
-DATABASE_URL=postgresql://user:pass@host:5432/nova?schema=public
+DATABASE_URL=postgresql://user:pass@host:5432/elio?schema=public
 DATABASE_POOL_SIZE=20
 
 # ═══ Redis ═══
@@ -319,7 +319,7 @@ JWT_REFRESH_EXPIRES_IN=604800
 AWS_ACCESS_KEY_ID=AKIA...
 AWS_SECRET_ACCESS_KEY=...
 AWS_REGION=sa-east-1
-AWS_S3_BUCKET=nova-storage
+AWS_S3_BUCKET=elio-storage
 
 # ═══ OpenAI ═══
 OPENAI_API_KEY=sk-...
@@ -329,7 +329,7 @@ OPENAI_MODEL_WHISPER=whisper-1
 
 # ═══ Email ═══
 SENDGRID_API_KEY=SG...
-EMAIL_FROM=notificaciones@nova.ar
+EMAIL_FROM=notificaciones@elio.ar
 
 # ═══ SMS ═══
 TWILIO_ACCOUNT_SID=AC...
@@ -337,7 +337,7 @@ TWILIO_AUTH_TOKEN=...
 TWILIO_PHONE_NUMBER=+541...
 
 # ═══ Push Notifications ═══
-FIREBASE_PROJECT_ID=nova-app
+FIREBASE_PROJECT_ID=elio-app
 FIREBASE_PRIVATE_KEY=...
 
 # ═══ AI Service ═══
@@ -501,9 +501,9 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: nova
-      POSTGRES_USER: nova
-      POSTGRES_PASSWORD: nova_dev
+      POSTGRES_DB: elio
+      POSTGRES_USER: elio
+      POSTGRES_PASSWORD: elio_dev
     ports:
       - "5432:5432"
     volumes:
@@ -521,7 +521,7 @@ services:
     ports:
       - "3001:3001"
     environment:
-      DATABASE_URL: postgresql://nova:nova_dev@postgres:5432/nova
+      DATABASE_URL: postgresql://elio:elio_dev@postgres:5432/elio
       REDIS_URL: redis://redis:6379
     depends_on:
       - postgres
@@ -534,7 +534,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://nova:nova_dev@postgres:5432/nova
+      DATABASE_URL: postgresql://elio:elio_dev@postgres:5432/elio
       REDIS_URL: redis://redis:6379
     depends_on:
       - postgres

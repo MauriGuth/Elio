@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import { sileo } from "sileo"
@@ -448,6 +448,17 @@ export default function ProductDetailPage() {
   }, [])
   const isLogisticsRole =
     user?.role === "LOGISTICS" || user?.role === "logistics"
+
+  // Familias = categorías con slug familia-* (para selector en editar producto)
+  const familias = useMemo(
+    () =>
+      categories
+        .filter((c) => c.slug.startsWith("familia-"))
+        .sort((a, b) =>
+          getCategoryDisplayName(a.name).localeCompare(getCategoryDisplayName(b.name), "es", { sensitivity: "base" })
+        ),
+    [categories]
+  )
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -906,17 +917,22 @@ export default function ProductDetailPage() {
                 <label htmlFor="edit-familia" className="block text-sm font-medium text-gray-700 dark:text-white">
                   Familia
                 </label>
-                <input
+                <select
                   id="edit-familia"
-                  type="text"
                   value={editForm.familia}
                   onChange={(e) =>
                     setEditForm((f) => ({ ...f, familia: e.target.value }))
                   }
-                  placeholder="Ej. ADICIONAL, TAPEOS"
                   className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   aria-label="Familia del producto"
-                />
+                >
+                  <option value="">Seleccionar familia...</option>
+                  {familias.map((fam) => (
+                    <option key={fam.id} value={getCategoryDisplayName(fam.name)}>
+                      {getCategoryDisplayName(fam.name)}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label htmlFor="edit-unit" className="block text-sm font-medium text-gray-700 dark:text-white">

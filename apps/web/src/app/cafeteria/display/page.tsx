@@ -41,7 +41,7 @@ const SECTOR_LABELS: Record<string, string> = {
 
 const URGENT_PENDING_MIN = 10
 const URGENT_PREP_MIN = 30
-const LEGACY_CAFETERIA_LOCATION_KEY = "nova_cafeteria_location"
+const LEGACY_CAFETERIA_LOCATION_KEY = "elio_cafeteria_location"
 
 /* ── Helpers ── */
 function minutesAgo(dateStr: string): number {
@@ -239,7 +239,7 @@ export default function CafeteriaDisplayPage() {
     } catch { setError("Error al actualizar estado") } finally { setUpdating(null) }
   }
   const handleLogout = () => {
-    localStorage.removeItem("nova_cafeteria_location")
+    localStorage.removeItem("elio_cafeteria_location")
     api.clearToken()
     router.push("/cafeteria")
   }

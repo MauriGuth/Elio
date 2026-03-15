@@ -128,7 +128,7 @@ async function main() {
 
   const admin = await prisma.user.create({
     data: {
-      email: 'admin@nova.com',
+      email: 'admin@elio.com',
       passwordHash,
       firstName: 'Martín',
       lastName: 'Rodríguez',
@@ -139,7 +139,7 @@ async function main() {
 
   const depositoMgr = await prisma.user.create({
     data: {
-      email: 'deposito@nova.com',
+      email: 'deposito@elio.com',
       passwordHash,
       firstName: 'Carlos',
       lastName: 'Fernández',
@@ -151,7 +151,7 @@ async function main() {
 
   const palermoMgr = await prisma.user.create({
     data: {
-      email: 'palermo@nova.com',
+      email: 'palermo@elio.com',
       passwordHash,
       firstName: 'Lucía',
       lastName: 'García',
@@ -163,7 +163,7 @@ async function main() {
 
   const recoletaMgr = await prisma.user.create({
     data: {
-      email: 'recoleta@nova.com',
+      email: 'recoleta@elio.com',
       passwordHash,
       firstName: 'Ana',
       lastName: 'Martínez',
@@ -175,7 +175,7 @@ async function main() {
 
   await prisma.user.create({
     data: {
-      email: 'mozo@nova.com',
+      email: 'mozo@elio.com',
       passwordHash,
       firstName: 'Diego',
       lastName: 'López',
@@ -187,7 +187,7 @@ async function main() {
 
   await prisma.user.create({
     data: {
-      email: 'cocina@nova.com',
+      email: 'cocina@elio.com',
       passwordHash,
       firstName: 'Roberto',
       lastName: 'Sánchez',
@@ -199,7 +199,7 @@ async function main() {
 
   await prisma.user.create({
     data: {
-      email: 'caja@nova.com',
+      email: 'caja@elio.com',
       passwordHash,
       firstName: 'Valentina',
       lastName: 'Torres',
@@ -211,7 +211,7 @@ async function main() {
 
   const logistics = await prisma.user.create({
     data: {
-      email: 'logistica@nova.com',
+      email: 'logistica@elio.com',
       passwordHash,
       firstName: 'Pablo',
       lastName: 'Díaz',

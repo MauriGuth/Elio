@@ -13,7 +13,7 @@ import { VerifyIdentityStep } from "@/components/auth/verify-identity-step"
 type Step = "login" | "need-photo" | "verify-identity" | "select-location"
 
 const MOZO_ROLES = ["waiter", "WAITER", "admin", "ADMIN", "location_manager", "LOCATION_MANAGER"]
-const LEGACY_MOZO_LOCATION_KEY = "nova_mozo_location"
+const LEGACY_MOZO_LOCATION_KEY = "elio_mozo_location"
 
 export default function MozoLoginPage() {
   const router = useRouter()

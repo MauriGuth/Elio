@@ -12,19 +12,19 @@ El proyecto está configurado para **PostgreSQL** (recomendado para producción 
 1. **Crear la base de datos** (si no existe):
 
    ```bash
-   createdb nova
+   createdb elio
    ```
 
    O desde `psql`:
 
    ```sql
-   CREATE DATABASE nova;
+   CREATE DATABASE elio;
    ```
 
 2. **Configurar `.env`** en `apps/api/`:
 
    ```
-   DATABASE_URL="postgresql://USUARIO:CONTRASEÑA@localhost:5432/nova"
+   DATABASE_URL="postgresql://USUARIO:CONTRASEÑA@localhost:5432/elio"
    ```
 
    Ajusta `USUARIO` y `CONTRASEÑA` según tu instalación de PostgreSQL.

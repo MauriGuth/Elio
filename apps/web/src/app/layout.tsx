@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
-import { SpeedInsights } from '@vercel/speed-insights/next'
 import { SileoToaster } from '@/components/sileo-toaster'
 import './globals.css'
 
@@ -34,7 +33,7 @@ const themeScript = `
   if (isCajeroMozo) {
     setDark(false);
   } else {
-    var theme = typeof localStorage !== 'undefined' && localStorage.getItem('nova_preferencias_tema');
+    var theme = typeof localStorage !== 'undefined' && localStorage.getItem('elio_preferencias_tema');
     if (theme === 'dark') setDark(true);
     else if (theme === 'light') setDark(false);
     else {
@@ -56,7 +55,6 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <SileoToaster />
         {children}
-        <SpeedInsights />
       </body>
     </html>
   )

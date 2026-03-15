@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react"
 import { authApi } from "@/lib/api/auth"
 import { alertsApi } from "@/lib/api/alerts"
 
-const STORAGE_KEY = "nova_settings"
+const STORAGE_KEY = "elio_settings"
 const CHECK_STOCK_INTERVAL_MS = 5 * 60 * 1000 // 5 minutos
 
 export type NotificationPrefs = {

@@ -23,7 +23,7 @@ import { sileo } from "sileo"
 
 // ---------- helpers ----------
 
-const STORAGE_KEY = "nova_settings"
+const STORAGE_KEY = "elio_settings"
 
 interface AppSettings {
   general: {

@@ -28,7 +28,7 @@ export const goodsReceiptsApi = {
   ocrScan: async (file: File) => {
     const formData = new FormData();
     formData.append('invoice', file);
-    const token = typeof window !== 'undefined' ? localStorage.getItem('nova_token') : null;
+    const token = typeof window !== 'undefined' ? localStorage.getItem('elio_token') : null;
     const res = await fetch(`${API_BASE_URL}/goods-receipts/ocr-scan`, {
       method: 'POST',
       headers: token ? { Authorization: `Bearer ${token}` } : {},

@@ -67,10 +67,10 @@ export default function PerfilPage() {
       const updated = await authApi.me()
       setUser(updated)
       if (typeof window !== "undefined") {
-        const stored = localStorage.getItem("nova_user")
+        const stored = localStorage.getItem("elio_user")
         if (stored) {
           const parsed = JSON.parse(stored)
-          localStorage.setItem("nova_user", JSON.stringify({ ...parsed, ...updated }))
+          localStorage.setItem("elio_user", JSON.stringify({ ...parsed, ...updated }))
         }
       }
       setEditing(false)

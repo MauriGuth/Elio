@@ -25,7 +25,7 @@ const DEPOSITO_ROLES = [
   "AUDITOR",
 ]
 
-const LEGACY_DEPOSITO_LOCATION_KEY = "nova_deposito_location"
+const LEGACY_DEPOSITO_LOCATION_KEY = "elio_deposito_location"
 
 export default function DepositoLoginPage() {
   const router = useRouter()

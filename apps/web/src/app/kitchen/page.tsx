@@ -14,11 +14,9 @@ import {
 } from "lucide-react"
 import { authApi } from "@/lib/api/auth"
 import { locationsApi } from "@/lib/api/locations"
-import { api, getLocationKey } from "@/lib/api"
-import { NeedPhotoStep } from "@/components/auth/need-photo-step"
-import { VerifyIdentityStep } from "@/components/auth/verify-identity-step"
+import { getLocationKey } from "@/lib/api"
 
-type Step = "login" | "need-photo" | "verify-identity" | "select-location"
+type Step = "login" | "select-location"
 
 const KITCHEN_ROLES = [
   "kitchen",
@@ -28,7 +26,7 @@ const KITCHEN_ROLES = [
   "ADMIN",
   "LOCATION_MANAGER",
 ]
-const LEGACY_KITCHEN_LOCATION_KEY = "nova_kitchen_location"
+const LEGACY_KITCHEN_LOCATION_KEY = "elio_kitchen_location"
 
 export default function KitchenLoginPage() {
   const router = useRouter()
@@ -64,6 +62,28 @@ export default function KitchenLoginPage() {
     }
   }
 
+  // Ir directo a sucursal o pantalla (cocina no exige verificación por rostro)
+  const goAfterLogin = (u: any) => {
+    const isAdmin = u?.role === "admin" || u?.role === "ADMIN"
+    const isLocMgr = u?.role === "LOCATION_MANAGER" || u?.role === "location_manager"
+    if (isAdmin || isLocMgr) {
+      setStep("select-location")
+      fetchLocations()
+      return
+    }
+    const loc = u?.location || readStoredLocation()
+    if (loc) {
+      if (!u?.location) {
+        const serialized = JSON.stringify({ id: loc.id, name: loc.name, type: loc.type })
+        localStorage.setItem(getLocationKey(), serialized)
+        localStorage.setItem(LEGACY_KITCHEN_LOCATION_KEY, serialized)
+      }
+      router.push("/kitchen/display")
+      return
+    }
+    setError("Tu cuenta no tiene una sucursal asignada")
+  }
+
   // Check if already logged in
   useEffect(() => {
     const storedUser = authApi.getStoredUser()
@@ -71,11 +91,7 @@ export default function KitchenLoginPage() {
 
     if (isAuth && storedUser && KITCHEN_ROLES.includes(storedUser.role)) {
       setUser(storedUser)
-      if (!storedUser.avatarUrl) {
-        setStep("need-photo")
-        return
-      }
-      setStep("verify-identity")
+      goAfterLogin(storedUser)
     }
   }, [router])
 
@@ -110,12 +126,7 @@ export default function KitchenLoginPage() {
       }
 
       setUser(response.user)
-
-      if (!response.user.avatarUrl) {
-        setStep("need-photo")
-        return
-      }
-      setStep("verify-identity")
+      goAfterLogin(response.user)
       return
     } catch (err: unknown) {
       const message =
@@ -136,52 +147,6 @@ export default function KitchenLoginPage() {
     localStorage.setItem(getLocationKey(), serialized)
     localStorage.setItem(LEGACY_KITCHEN_LOCATION_KEY, serialized)
     router.push("/kitchen/display")
-  }
-
-  const proceedAfterVerify = () => {
-    if (isAdminUser) {
-      setStep("select-location")
-      fetchLocations()
-      return
-    }
-
-    const loc = user?.location || readStoredLocation()
-    if (loc) {
-      if (!user?.location) {
-        const serialized = JSON.stringify(loc)
-        localStorage.setItem(getLocationKey(), serialized)
-        localStorage.setItem(LEGACY_KITCHEN_LOCATION_KEY, serialized)
-      }
-      router.push("/kitchen/display")
-      return
-    }
-    if (user?.role === "LOCATION_MANAGER" || user?.role === "location_manager") {
-      setStep("select-location")
-      fetchLocations()
-      return
-    }
-    setError("Tu cuenta no tiene una sucursal asignada")
-  }
-
-  const handleRejectOrLogout = () => {
-    api.clearToken()
-    setUser(null)
-    setStep("login")
-    setError("")
-  }
-
-  if (step === "need-photo") {
-    return <NeedPhotoStep onLogout={handleRejectOrLogout} />
-  }
-
-  if (step === "verify-identity" && user) {
-    return (
-      <VerifyIdentityStep
-        user={user}
-        onVerified={proceedAfterVerify}
-        onReject={handleRejectOrLogout}
-      />
-    )
   }
 
   /* ── STEP 2: Location selector ── */

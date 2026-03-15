@@ -39,7 +39,7 @@ const SECTOR_LABELS: Record<string, string> = {
 /* ── Thresholds ── */
 const URGENT_PENDING_MIN = 10
 const URGENT_PREP_MIN = 30
-const LEGACY_KITCHEN_LOCATION_KEY = "nova_kitchen_location"
+const LEGACY_KITCHEN_LOCATION_KEY = "elio_kitchen_location"
 
 /* ── Helpers ── */
 function minutesAgo(dateStr: string): number {
@@ -370,7 +370,7 @@ export default function KitchenDisplayPage() {
   }
 
   const handleLogout = () => {
-    localStorage.removeItem("nova_kitchen_location")
+    localStorage.removeItem("elio_kitchen_location")
     api.clearToken()
     router.push("/kitchen")
   }
