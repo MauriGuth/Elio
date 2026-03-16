@@ -630,6 +630,7 @@ export default function TableOrderPage() {
           isSellable: true,
           isActive: true,
           limit: 5000,
+          _refresh: Date.now(),
         })
         const rawProducts = productsData?.data ?? productsData ?? []
         const scopedProducts = rawProducts

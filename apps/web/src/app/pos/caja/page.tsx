@@ -507,7 +507,7 @@ export default function PosCajaPage() {
 
     setLoadingProd(true)
     try {
-      const res = await productsApi.getAll({ limit: 5000, isActive: true })
+      const res = await productsApi.getAll({ limit: 5000, isActive: true, _refresh: Date.now() })
       const list = res?.data ?? []
       setProducts(
         list

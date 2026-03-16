@@ -1517,7 +1517,7 @@ export default function StockPage() {
                       }
                       className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
-                    Vendible
+                    Vendible <span className="text-xs text-gray-500 dark:text-gray-400">(para que aparezca en Mesas/comandas)</span>
                   </label>
                   <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
                     <input
