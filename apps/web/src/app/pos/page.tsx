@@ -1,11 +1,92 @@
 "use client"
 
+import { useState, useCallback, useEffect } from "react"
 import Link from "next/link"
-import { Banknote, UtensilsCrossed, ChefHat, Coffee, Warehouse } from "lucide-react"
+import { Banknote, UtensilsCrossed, ChefHat, Coffee, Warehouse, MapPin } from "lucide-react"
+import { setStoredPosCoords, getStoredPosCoords } from "@/lib/api/auth"
 
 export default function PosStationSelectorPage() {
+  const [locationStatus, setLocationStatus] = useState<"idle" | "asking" | "granted" | "denied" | "error">("idle")
+  const [locationError, setLocationError] = useState("")
+
+  useEffect(() => {
+    if (getStoredPosCoords()) setLocationStatus("granted")
+  }, [])
+
+  const requestLocation = useCallback(() => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setLocationStatus("error")
+      setLocationError("Tu navegador no soporta ubicación.")
+      return
+    }
+    setLocationError("")
+    setLocationStatus("asking")
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setStoredPosCoords(pos.coords.latitude, pos.coords.longitude)
+        setLocationStatus("granted")
+      },
+      (err: GeolocationPositionError) => {
+        if (err.code === 1) {
+          setLocationStatus("denied")
+          setLocationError("Tenés que permitir la ubicación para poder ingresar como Cajero, Mozo, etc.")
+        } else if (err.code === 3) {
+          setLocationStatus("error")
+          setLocationError("Se acabó el tiempo. Tocá de nuevo «Permitir ubicación».")
+        } else {
+          setLocationStatus("error")
+          setLocationError("No se pudo obtener la ubicación.")
+        }
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+    )
+  }, [])
+
+  const showOverlay = locationStatus !== "granted" && locationStatus !== "denied"
+
   return (
     <div className="flex min-h-[100dvh] min-h-screen items-center justify-center bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 px-3 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-[env(safe-area-inset-top)] sm:px-4">
+      {/* Overlay: pedir ubicación al entrar a /pos */}
+      {showOverlay && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-sm rounded-2xl border border-amber-100 bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex justify-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-500">
+                <MapPin className="h-8 w-8 text-white" />
+              </div>
+            </div>
+            <h2 className="text-center text-lg font-semibold text-gray-800">
+              Ubicación necesaria
+            </h2>
+            <p className="mt-2 text-center text-sm text-gray-600">
+              Para ingresar como Cajero, Mozo, Cocina, Cafetería o Depósito necesitamos tu ubicación.
+            </p>
+            {(locationError || locationStatus === "error") && (
+              <p className="mt-2 text-center text-sm text-red-600">{locationError}</p>
+            )}
+            <div className="mt-6">
+              <button
+                type="button"
+                onClick={requestLocation}
+                disabled={locationStatus === "asking"}
+                className="w-full rounded-xl bg-amber-500 px-4 py-3 font-medium text-white transition active:scale-[0.99] disabled:opacity-70 hover:bg-amber-600"
+              >
+                {locationStatus === "asking" ? "Obteniendo ubicación…" : "Permitir ubicación"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {locationStatus === "denied" && !showOverlay && (
+        <div className="fixed left-0 right-0 top-0 z-40 border-b border-amber-200 bg-amber-50 px-3 py-2 text-center text-sm text-amber-800">
+          Sin ubicación no podrás iniciar sesión en Cajero, Mozo, Cocina, Cafetería ni Depósito.{" "}
+          <button type="button" onClick={requestLocation} className="underline font-medium">
+            Permitir ubicación
+          </button>
+        </div>
+      )}
+
       <div className="w-full max-w-md">
         <div className="rounded-2xl border border-amber-100 bg-white px-4 py-8 shadow-xl sm:px-8 sm:py-10">
           <div className="mb-6 text-center sm:mb-8">

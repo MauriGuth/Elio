@@ -5,6 +5,31 @@ const getApiUrl = () =>
     ? process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4010/api'
     : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4010/api';
 
+/** Clave y validez de coordenadas GPS guardadas al permitir ubicación en /pos */
+const POS_GPS_STORAGE_KEY = 'elio_pos_gps_coords';
+const POS_GPS_MAX_AGE_MS = 2 * 60 * 1000; // 2 minutos
+
+export function getStoredPosCoords(): { lat: number; lng: number } | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = sessionStorage.getItem(POS_GPS_STORAGE_KEY);
+    if (!raw) return null;
+    const { lat, lng, timestamp } = JSON.parse(raw) as { lat: number; lng: number; timestamp: number };
+    if (typeof lat !== 'number' || typeof lng !== 'number' || !timestamp) return null;
+    if (Date.now() - timestamp > POS_GPS_MAX_AGE_MS) return null;
+    return { lat, lng };
+  } catch {
+    return null;
+  }
+}
+
+export function setStoredPosCoords(lat: number, lng: number): void {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(POS_GPS_STORAGE_KEY, JSON.stringify({ lat, lng, timestamp: Date.now() }));
+  } catch {}
+}
+
 export interface LoginRequest {
   email: string;
   password: string;
@@ -84,7 +109,13 @@ export const authApi = {
   },
 
   login: async (data: LoginRequest): Promise<LoginResponse> => {
-    const { response, body } = await loginRequest(data);
+    const payload = { ...data };
+    const stored = getStoredPosCoords();
+    if (stored && typeof payload.latitude !== 'number' && typeof payload.longitude !== 'number') {
+      payload.latitude = stored.lat;
+      payload.longitude = stored.lng;
+    }
+    const { response, body } = await loginRequest(payload);
 
     if (response.ok) {
       const loginBody = body as LoginResponse;
