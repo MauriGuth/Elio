@@ -28,6 +28,7 @@ export default function CajeroLoginPage() {
   const [user, setUser] = useState<any>(null)
   const [userTypedEmail, setUserTypedEmail] = useState(false)
   const [userTypedPassword, setUserTypedPassword] = useState(false)
+  const [needLocationPrompt, setNeedLocationPrompt] = useState(false)
   const isAdminUser = user?.role === "admin" || user?.role === "ADMIN"
 
   const readStoredLocation = () => {
@@ -75,6 +76,7 @@ export default function CajeroLoginPage() {
   const handleLogin = async (e: FormEvent) => {
     e.preventDefault()
     setError("")
+    setNeedLocationPrompt(false)
     if (!email.trim() || !password.trim()) {
       setError("Por favor, completa todos los campos")
       return
@@ -94,7 +96,39 @@ export default function CajeroLoginPage() {
       setStep("verify-identity")
       return
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Error al iniciar sesión"
+      const code = (err as Error & { code?: string })?.code
+      if (code === "LOCATION_REQUIRED") {
+        setNeedLocationPrompt(true)
+        setError((err as Error).message)
+      } else {
+        const msg = err instanceof Error ? err.message : "Error al iniciar sesión"
+        setError(msg)
+        sileo.error({ title: msg })
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleLoginWithLocation = async () => {
+    setError("")
+    if (!email.trim() || !password.trim()) return
+    setLoading(true)
+    try {
+      const response = await authApi.loginWithLocation({ email, password })
+      if (!CAJERO_ROLES.includes(response.user.role)) {
+        setError("Solo Cajero, Admin o Gerente pueden acceder aquí")
+        return
+      }
+      setUser(response.user)
+      setNeedLocationPrompt(false)
+      if (!response.user.avatarUrl) {
+        setStep("need-photo")
+        return
+      }
+      setStep("verify-identity")
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Error al obtener ubicación"
       setError(msg)
       sileo.error({ title: msg })
     } finally {
@@ -249,7 +283,28 @@ export default function CajeroLoginPage() {
                 </button>
               </div>
             </div>
-            {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+            {error && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {error}
+                {needLocationPrompt && (
+                  <button
+                    type="button"
+                    onClick={handleLoginWithLocation}
+                    disabled={loading}
+                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-600 disabled:opacity-60"
+                  >
+                    {loading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <>
+                        <MapPin className="h-4 w-4" />
+                        Usar mi ubicación e iniciar sesión
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            )}
             <button
               type="submit"
               disabled={loading}

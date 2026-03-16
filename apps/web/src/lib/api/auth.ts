@@ -38,6 +38,51 @@ async function loginRequest(payload: LoginRequest): Promise<{ response: Response
 }
 
 export const authApi = {
+  /**
+   * Iniciar sesión enviando ubicación GPS. Debe llamarse desde un clic del usuario
+   * (ej. botón "Usar mi ubicación") para que el navegador permita el acceso.
+   */
+  loginWithLocation: async (data: { email: string; password: string }): Promise<LoginResponse> => {
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      throw new Error('Tu navegador no soporta ubicación. Probá desde otro dispositivo.');
+    }
+    return new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          loginRequest({
+            ...data,
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+          })
+            .then(({ response: res2, body: body2 }) => {
+              if (res2.ok) {
+                const loginBody2 = body2 as LoginResponse;
+                api.setToken(loginBody2.access_token);
+                if (typeof window !== 'undefined') {
+                  localStorage.setItem(getUserKey(), JSON.stringify(loginBody2.user));
+                }
+                resolve(loginBody2);
+              } else {
+                const err2 = body2 as { message?: string };
+                reject(new Error(err2?.message ?? 'Error al verificar ubicación.'));
+              }
+            })
+            .catch(reject);
+        },
+        (err: GeolocationPositionError) => {
+          if (err.code === 1) {
+            reject(new Error('Tenés que permitir la ubicación para ingresar.'));
+          } else if (err.code === 3) {
+            reject(new Error('Se acabó el tiempo. Intentá de nuevo y permití la ubicación.'));
+          } else {
+            reject(new Error('No se pudo obtener la ubicación. Revisá que esté permitida.'));
+          }
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+      );
+    });
+  },
+
   login: async (data: LoginRequest): Promise<LoginResponse> => {
     const { response, body } = await loginRequest(data);
 
@@ -60,49 +105,13 @@ export const authApi = {
           errBody?.message ?? 'Solo puede ingresar cuando esté en una de sus ubicaciones asignadas.',
         );
       }
-      if (typeof navigator !== 'undefined' && navigator.geolocation) {
-        return new Promise((resolve, reject) => {
-          navigator.geolocation.getCurrentPosition(
-            (pos) => {
-              loginRequest({
-                ...data,
-                latitude: pos.coords.latitude,
-                longitude: pos.coords.longitude,
-              })
-                .then(({ response: res2, body: body2 }) => {
-                  if (res2.ok) {
-                    const loginBody2 = body2 as LoginResponse;
-                    api.setToken(loginBody2.access_token);
-                    if (typeof window !== 'undefined') {
-                      localStorage.setItem(
-                        getUserKey(),
-                        JSON.stringify(loginBody2.user),
-                      );
-                    }
-                    resolve(loginBody2);
-                  } else {
-                    const err2 = body2 as { message?: string };
-                    reject(new Error(err2?.message ?? 'Error al verificar ubicación.'));
-                  }
-                })
-                .catch(reject);
-            },
-            () => {
-              reject(
-                new Error(
-                  errBody?.message ??
-                    'Debe permitir el acceso a la ubicación para ingresar.',
-                ),
-              );
-            },
-            { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
-          );
-        });
-      }
-      throw new Error(
-        errBody?.message ??
-          'Debe permitir el acceso a la ubicación para ingresar desde este rol.',
-      );
+      // No pedir ubicación aquí: los navegadores solo la permiten tras un gesto del usuario (clic).
+      // La pantalla debe mostrar un botón "Usar mi ubicación" que llame a loginWithLocation().
+      const locErr = new Error(
+        errBody?.message ?? 'Debe permitir el acceso a la ubicación para ingresar desde este rol.',
+      ) as Error & { code: string };
+      locErr.code = 'LOCATION_REQUIRED';
+      throw locErr;
     }
 
     throw new Error(

@@ -42,6 +42,7 @@ export default function CafeteriaLoginPage() {
   const [locations, setLocations] = useState<any[]>([])
   const [loadingLocations, setLoadingLocations] = useState(false)
   const [user, setUser] = useState<any>(null)
+  const [needLocationPrompt, setNeedLocationPrompt] = useState(false)
   const isAdminUser = user?.role === "admin" || user?.role === "ADMIN"
 
   const readStoredLocation = () => {
@@ -116,6 +117,7 @@ export default function CafeteriaLoginPage() {
     }
 
     setLoading(true)
+    setNeedLocationPrompt(false)
     try {
       const response = await authApi.login({ email, password })
 
@@ -128,9 +130,33 @@ export default function CafeteriaLoginPage() {
       goAfterLogin(response.user)
       return
     } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "Error al iniciar sesión"
-      setError(message)
+      const code = (err as Error & { code?: string })?.code
+      if (code === "LOCATION_REQUIRED") {
+        setNeedLocationPrompt(true)
+        setError((err as Error).message)
+      } else {
+        setError(err instanceof Error ? err.message : "Error al iniciar sesión")
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleLoginWithLocation = async () => {
+    setError("")
+    if (!email.trim() || !password.trim()) return
+    setLoading(true)
+    try {
+      const response = await authApi.loginWithLocation({ email, password })
+      if (!CAFE_ROLES.includes(response.user.role)) {
+        setError("No tienes permisos para acceder a la cafetería")
+        return
+      }
+      setUser(response.user)
+      setNeedLocationPrompt(false)
+      goAfterLogin(response.user)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Error al obtener ubicación")
     } finally {
       setLoading(false)
     }
@@ -305,6 +331,16 @@ export default function CafeteriaLoginPage() {
             {error && (
               <div className="rounded-xl border border-red-700 bg-red-900/50 px-4 py-3 text-sm text-red-300">
                 {error}
+                {needLocationPrompt && (
+                  <button
+                    type="button"
+                    onClick={handleLoginWithLocation}
+                    disabled={loading}
+                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-amber-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-amber-600 disabled:opacity-60"
+                  >
+                    {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <><MapPin className="h-4 w-4" /> Usar mi ubicación e iniciar sesión</>}
+                  </button>
+                )}
               </div>
             )}
 
