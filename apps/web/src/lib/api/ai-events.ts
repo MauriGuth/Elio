@@ -23,10 +23,11 @@ export const aiEventsApi = {
 
   analyzeAlerts: () => api.post<any>('/ai-events/analyze-alerts'),
 
-  transcribeAudio: (audio: string, language?: string, fileExt?: string) =>
+  transcribeAudio: (audio: string, language?: string, fileExt?: string, prompt?: string) =>
     api.post<{ success: boolean; transcript: string }>('/ai-events/transcribe-audio', {
       audio,
       language: language ?? 'es',
       fileExt: fileExt ?? 'webm',
+      ...(prompt ? { prompt } : {}),
     }),
 };

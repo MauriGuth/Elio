@@ -170,7 +170,15 @@ const SPANISH_NUMBERS: Record<string, number> = {
   once: 11, doce: 12, medio: 1, media: 1,
 }
 
-/** Separa "producto" y "notas" (ej. "latte con leche de almendras" → ["latte", "con leche de almendras"]) */
+/** Palabras que suelen ser notas cuando van al final (ej. "cortado jarrito suave" → nota "suave") */
+const TRAILING_NOTE_WORDS = new Set([
+  "suave", "fuerte", "caliente", "frio", "frío", "tibio", "liviano", "cargado",
+  "dulce", "amargo", "bien dulce", "bien cargado", "bien suave", "bien fuerte",
+  "sin azucar", "sin azúcar", "con leche", "con hielo", "grande", "chico", "mediano",
+  "al punto", "jugoso", "seco", "extra", "doble", "light", "descremado", "entero",
+])
+
+/** Separa "producto" y "notas" (ej. "latte con leche de almendras" → producto + nota; "cortado jarrito suave" → producto + "suave") */
 function splitProductAndNotes(productText: string): { productPart: string; notesPart: string } {
   const lower = productText.trim().toLowerCase()
   const noteMarkers = [
@@ -192,6 +200,20 @@ function splitProductAndNotes(productText: string): { productPart: string; notes
       if (before.length >= 2) {
         return { productPart: before, notesPart: after }
       }
+    }
+  }
+  // Nota al final: "cortado jarrito suave" → producto "cortado jarrito", nota "suave"
+  const words = lower.split(/\s+/).filter(Boolean)
+  if (words.length >= 2) {
+    const last = words[words.length - 1]
+    const lastTwo = words.slice(-2).join(" ")
+    if (TRAILING_NOTE_WORDS.has(last)) {
+      const productPart = words.slice(0, -1).join(" ")
+      if (productPart.length >= 2) return { productPart, notesPart: last }
+    }
+    if (TRAILING_NOTE_WORDS.has(lastTwo)) {
+      const productPart = words.slice(0, -2).join(" ")
+      if (productPart.length >= 2) return { productPart, notesPart: lastTwo }
     }
   }
   return { productPart: productText.trim(), notesPart: "" }
@@ -237,12 +259,13 @@ function parseVoiceCommand(
       }
     }
 
-    const normalizedFull = normalize(productText)
-    if (normalizedFull.length < 2) continue
+    // Primero separar posible nota (ej. "cortado jarrito suave" → producto "cortado jarrito", nota "suave")
+    const { productPart, notesPart } = splitProductAndNotes(productText)
+    const normalizedSearch = normalize(notesPart ? productPart : productText)
+    if (normalizedSearch.length < 2) continue
 
     let bestMatch: any = null
     let bestScore = 0
-    let notes = ""
 
     const scoreProduct = (search: string, pName: string) => {
       if (pName === search) return 100
@@ -255,28 +278,6 @@ function parseVoiceCommand(
       return (matchingWords.length / Math.max(searchWords.length, 1)) * 80
     }
 
-    for (const p of products) {
-      const pName = normalize(p.name || "")
-      const s = scoreProduct(normalizedFull, pName)
-      if (s > bestScore) {
-        bestScore = s
-        bestMatch = p
-        notes = ""
-      }
-    }
-
-    if (bestMatch && bestScore >= 40) {
-      const sector = detectSector(bestMatch)
-      results.push({ product: bestMatch, quantity, sector, notes })
-      continue
-    }
-
-    const { productPart, notesPart } = splitProductAndNotes(productText)
-    const normalizedSearch = normalize(productPart)
-    if (normalizedSearch.length < 2) continue
-
-    bestMatch = null
-    bestScore = 0
     for (const p of products) {
       const pName = normalize(p.name || "")
       const s = scoreProduct(normalizedSearch, pName)
@@ -404,7 +405,13 @@ export default function TableOrderPage() {
 
   const startVoice = useCallback(async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      })
 
       // Pick a supported mimeType (webm for Chrome/Firefox, mp4 for Safari)
       const preferredTypes = [
@@ -466,7 +473,12 @@ export default function TableOrderPage() {
             : actualMime.includes("ogg") ? "ogg"
             : "webm"
 
-          const response = await aiEventsApi.transcribeAudio(base64, "es", ext)
+          // Prompt con nombres de productos y palabras clave para mejorar precisión (ruido de fondo, acentos)
+          const vocab = [
+            "café", "cortado", "jarrito", "latte", "suave", "fuerte", "caliente", "frío", "con leche", "sin azúcar",
+            ...products.slice(0, 80).map((p: any) => (p.name || "").trim()).filter(Boolean),
+          ].join(". ")
+          const response = await aiEventsApi.transcribeAudio(base64, "es", ext, vocab)
           const transcript = response.transcript?.trim() || ""
 
           if (!transcript) {

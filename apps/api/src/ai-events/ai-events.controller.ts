@@ -90,7 +90,7 @@ export class AIEventsController {
 
   @Post('transcribe-audio')
   async transcribeAudio(
-    @Body() body: { audio: string; language?: string; fileExt?: string },
+    @Body() body: { audio: string; language?: string; fileExt?: string; prompt?: string },
   ) {
     if (!body.audio) {
       throw new BadRequestException('Audio data is required');
@@ -99,6 +99,7 @@ export class AIEventsController {
       body.audio,
       body.language ?? 'es',
       body.fileExt ?? 'webm',
+      body.prompt,
     );
   }
 }

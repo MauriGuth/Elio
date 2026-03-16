@@ -688,6 +688,7 @@ Reglas:
     audioBase64: string,
     language: string,
     fileExt: string = 'webm',
+    prompt?: string,
   ) {
     const openai = this.getOpenAI();
 
@@ -717,6 +718,7 @@ Reglas:
         model: 'whisper-1',
         language,
         response_format: 'text',
+        ...(prompt && prompt.trim().length > 0 ? { prompt: prompt.trim().slice(0, 800) } : {}),
       });
 
       const transcript =
