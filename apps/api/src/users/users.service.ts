@@ -19,13 +19,16 @@ export class UsersService {
     const skip = (page - 1) * limit;
 
     const where: Prisma.UserWhereInput = {};
+    const and: Prisma.UserWhereInput[] = [];
 
     if (search) {
-      where.OR = [
-        { firstName: { contains: search } },
-        { lastName: { contains: search } },
-        { email: { contains: search } },
-      ];
+      and.push({
+        OR: [
+          { firstName: { contains: search } },
+          { lastName: { contains: search } },
+          { email: { contains: search } },
+        ],
+      });
     }
 
     if (role) {
@@ -33,11 +36,20 @@ export class UsersService {
     }
 
     if (locationId) {
-      where.locationId = locationId;
+      and.push({
+        OR: [
+          { locationId },
+          { userLocations: { some: { locationId } } },
+        ],
+      });
     }
 
     if (isActive !== undefined) {
       where.isActive = isActive;
+    }
+
+    if (and.length > 0) {
+      where.AND = and;
     }
 
     const [data, total] = await Promise.all([
@@ -46,27 +58,26 @@ export class UsersService {
         skip,
         take: limit,
         orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          email: true,
-          firstName: true,
-          lastName: true,
-          phone: true,
-          avatarUrl: true,
-          role: true,
-          locationId: true,
-          isActive: true,
-          lastLogin: true,
-          createdAt: true,
-          updatedAt: true,
+        include: {
           location: true,
+          userLocations: { include: { location: true } },
         },
       }),
       this.prisma.user.count({ where }),
     ]);
 
+    const dataWithLocations = data.map((u) => {
+      const assigned =
+        (u as any).userLocations?.map((ul: any) => ul.location).filter(Boolean) ?? [];
+      if (u.location && !assigned.some((l: any) => l?.id === u.locationId)) {
+        assigned.push(u.location);
+      }
+      const { userLocations, ...rest } = u as any;
+      return { ...rest, locations: assigned };
+    });
+
     return {
-      data,
+      data: dataWithLocations,
       total,
       page,
       limit,
@@ -76,20 +87,9 @@ export class UsersService {
   async findById(id: string) {
     const user = await this.prisma.user.findUnique({
       where: { id },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        phone: true,
-        avatarUrl: true,
-        role: true,
-        locationId: true,
-        isActive: true,
-        lastLogin: true,
-        createdAt: true,
-        updatedAt: true,
+      include: {
         location: true,
+        userLocations: { include: { location: true } },
       },
     });
 
@@ -97,7 +97,13 @@ export class UsersService {
       throw new NotFoundException(`User with ID "${id}" not found`);
     }
 
-    return user;
+    const assigned =
+      (user as any).userLocations?.map((ul: any) => ul.location).filter(Boolean) ?? [];
+    if (user.location && !assigned.some((l: any) => l?.id === user.locationId)) {
+      assigned.push(user.location);
+    }
+    const { userLocations, ...rest } = user as any;
+    return { ...rest, locations: assigned };
   }
 
   async create(createUserDto: CreateUserDto) {
@@ -110,6 +116,12 @@ export class UsersService {
     }
 
     const passwordHash = await bcrypt.hash(createUserDto.password, 10);
+    const locationIds = createUserDto.locationIds?.length
+      ? createUserDto.locationIds
+      : createUserDto.locationId
+        ? [createUserDto.locationId]
+        : [];
+    const defaultLocationId = locationIds[0] ?? createUserDto.locationId ?? null;
 
     const user = await this.prisma.user.create({
       data: {
@@ -120,26 +132,40 @@ export class UsersService {
         phone: createUserDto.phone,
         avatarUrl: createUserDto.avatarUrl,
         role: createUserDto.role,
-        locationId: createUserDto.locationId,
+        locationId: defaultLocationId,
         isActive: createUserDto.isActive ?? true,
       },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        phone: true,
-        avatarUrl: true,
-        role: true,
-        locationId: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true,
+      include: {
         location: true,
+        userLocations: { include: { location: true } },
       },
     });
 
-    return user;
+    if (locationIds.length > 0) {
+      await this.prisma.userLocation.createMany({
+        data: locationIds.map((locationId) => ({
+          userId: user.id,
+          locationId,
+        })),
+        skipDuplicates: true,
+      });
+      const updated = await this.prisma.user.findUnique({
+        where: { id: user.id },
+        include: {
+          location: true,
+          userLocations: { include: { location: true } },
+        },
+      });
+      const assigned =
+        (updated as any).userLocations?.map((ul: any) => ul.location).filter(Boolean) ?? [];
+      if (updated!.location && !assigned.some((l: any) => l?.id === updated!.locationId)) {
+        assigned.push(updated!.location);
+      }
+      const { userLocations, ...rest } = updated as any;
+      return { ...rest, locations: assigned };
+    }
+
+    return { ...user, locations: user.location ? [user.location] : [] };
   }
 
   async update(id: string, updateUserDto: UpdateUserDto) {
@@ -168,11 +194,25 @@ export class UsersService {
       data.avatarUrl = updateUserDto.avatarUrl;
     if (updateUserDto.role !== undefined) data.role = updateUserDto.role;
     if (updateUserDto.locationId !== undefined)
-      data.locationId = updateUserDto.locationId === '' || updateUserDto.locationId === null ? null : updateUserDto.locationId;
+      data.locationId =
+        updateUserDto.locationId === '' || updateUserDto.locationId === null
+          ? null
+          : updateUserDto.locationId;
     if (updateUserDto.isActive !== undefined)
       data.isActive = updateUserDto.isActive;
 
-    // Hash new password if provided
+    if (updateUserDto.locationIds !== undefined) {
+      await this.prisma.userLocation.deleteMany({ where: { userId: id } });
+      const locationIds = updateUserDto.locationIds.filter(Boolean);
+      if (locationIds.length > 0) {
+        await this.prisma.userLocation.createMany({
+          data: locationIds.map((locationId) => ({ userId: id, locationId })),
+          skipDuplicates: true,
+        });
+      }
+      data.locationId = locationIds[0] ?? null;
+    }
+
     if (updateUserDto.password) {
       data.passwordHash = await bcrypt.hash(updateUserDto.password, 10);
     }
@@ -180,24 +220,19 @@ export class UsersService {
     const user = await this.prisma.user.update({
       where: { id },
       data,
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        phone: true,
-        avatarUrl: true,
-        role: true,
-        locationId: true,
-        isActive: true,
-        lastLogin: true,
-        createdAt: true,
-        updatedAt: true,
+      include: {
         location: true,
+        userLocations: { include: { location: true } },
       },
     });
 
-    return user;
+    const assigned =
+      (user as any).userLocations?.map((ul: any) => ul.location).filter(Boolean) ?? [];
+    if (user.location && !assigned.some((l: any) => l?.id === user.locationId)) {
+      assigned.push(user.location);
+    }
+    const { userLocations, ...rest } = user as any;
+    return { ...rest, locations: assigned };
   }
 
   async deactivate(id: string) {

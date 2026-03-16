@@ -113,7 +113,7 @@ function UserModal({
     email: "",
     password: "",
     role: "CASHIER",
-    locationId: "",
+    locationIds: [] as string[],
     phone: "",
     avatarUrl: "",
   })
@@ -130,13 +130,16 @@ function UserModal({
     if (!open) return
     setValidationError(null)
     if (user) {
+      const ids =
+        (user.locations?.length && user.locations.map((l: any) => l.id)) ||
+        (user.locationId || user.location?.id ? [user.locationId || user.location?.id] : [])
       setForm({
         firstName: user.firstName ?? "",
         lastName: user.lastName ?? "",
         email: user.email ?? "",
         password: "",
         role: user.role ?? "CASHIER",
-        locationId: user.locationId ?? user.location?.id ?? "",
+        locationIds: Array.isArray(ids) ? ids : [],
         phone: formatPhoneNumber(user.phone ?? ""),
         avatarUrl: user.avatarUrl ?? "",
       })
@@ -147,7 +150,7 @@ function UserModal({
         email: "",
         password: "",
         role: "CASHIER",
-        locationId: "",
+        locationIds: [],
         phone: "",
         avatarUrl: "",
       })
@@ -235,8 +238,7 @@ function UserModal({
         return
       }
     }
-    // Enviar null cuando no hay ubicación para que el backend la limpie
-    data.locationId = form.locationId || null
+    data.locationIds = form.locationIds?.length ? form.locationIds : []
     if (!data.avatarUrl) delete data.avatarUrl
     onSave(data)
   }
@@ -302,8 +304,8 @@ function UserModal({
           </div>
         </div>
       )}
-      <div className="modal-editar-usuario relative w-full max-w-lg rounded-xl bg-white dark:bg-gray-800 p-6 shadow-2xl border border-gray-200 dark:border-gray-700">
-        <div className="mb-5 flex items-center justify-between">
+      <div className="modal-editar-usuario relative flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-xl bg-white dark:bg-gray-800 shadow-2xl border border-gray-200 dark:border-gray-700">
+        <div className="shrink-0 flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
             {isEditing ? "Editar Usuario" : "Nuevo Usuario"}
           </h2>
@@ -315,6 +317,7 @@ function UserModal({
             <X className="h-5 w-5" />
           </button>
         </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -398,25 +401,40 @@ function UserModal({
                 ))}
               </select>
             </div>
-            <div>
+            <div className="col-span-2">
               <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-white">
-                Ubicación
+                Ubicaciones (puede elegir varias)
               </label>
-              <select
-                aria-label="Ubicación del usuario"
-                value={form.locationId}
-                onChange={(e) =>
-                  setForm({ ...form, locationId: e.target.value })
-                }
-                className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              >
-                <option value="">Sin asignar</option>
+              <div className="max-h-40 overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 p-2 space-y-1">
                 {locations.map((loc: any) => (
-                  <option key={loc.id} value={loc.id}>
-                    {loc.name}
-                  </option>
+                  <label
+                    key={loc.id}
+                    className="flex items-center gap-2 cursor-pointer rounded px-2 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={form.locationIds.includes(loc.id)}
+                      onChange={(e) => {
+                        setForm((f) => ({
+                          ...f,
+                          locationIds: e.target.checked
+                            ? [...f.locationIds, loc.id]
+                            : f.locationIds.filter((id) => id !== loc.id),
+                        }))
+                      }}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span className="text-sm text-gray-700 dark:text-gray-200">
+                      {loc.name}
+                    </span>
+                  </label>
                 ))}
-              </select>
+                {locations.length === 0 && (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 py-1">
+                    No hay ubicaciones cargadas.
+                  </p>
+                )}
+              </div>
             </div>
           </div>
           <div>
@@ -520,7 +538,7 @@ function UserModal({
               {saveError || validationError}
             </div>
           )}
-          <div className="flex items-center justify-end gap-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/80 pt-4 mt-4 -mx-6 -mb-6 px-6 pb-6">
+          <div className="flex items-center justify-end gap-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/80 pt-4 mt-4 px-0 pb-1">
             <button
               type="button"
               onClick={onClose}
@@ -540,6 +558,7 @@ function UserModal({
             </button>
           </div>
         </form>
+        </div>
       </div>
     </div>
   )
@@ -868,10 +887,14 @@ export default function UsersPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        {user.location?.name ?? user.locationName ? (
+                        {(user.locations?.length
+                          ? user.locations.map((l: any) => l.name).join(", ")
+                          : user.location?.name ?? user.locationName) ? (
                           <div className="flex items-center gap-1 text-sm text-gray-600 dark:text-white">
                             <MapPin className="h-3.5 w-3.5 text-gray-400 dark:text-gray-300" />
-                            {user.location?.name ?? user.locationName}
+                            {user.locations?.length
+                              ? user.locations.map((l: any) => l.name).join(", ")
+                              : user.location?.name ?? user.locationName}
                           </div>
                         ) : (
                           <span className="text-xs text-gray-400 dark:text-white">

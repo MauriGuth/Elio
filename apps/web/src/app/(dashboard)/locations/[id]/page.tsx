@@ -157,6 +157,9 @@ export default function LocationDetailPage() {
   const [editName, setEditName] = useState("")
   const [editAddress, setEditAddress] = useState("")
   const [editType, setEditType] = useState("CAFE")
+  const [editLatitude, setEditLatitude] = useState<string>("")
+  const [editLongitude, setEditLongitude] = useState<string>("")
+  const [editGeofenceRadius, setEditGeofenceRadius] = useState<string>("")
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -173,6 +176,9 @@ export default function LocationDetailPage() {
     setEditName(loc.name ?? "")
     setEditAddress(loc.address ?? "")
     setEditType((loc.type ?? "CAFE").toUpperCase())
+    setEditLatitude(loc.latitude != null ? String(loc.latitude) : "")
+    setEditLongitude(loc.longitude != null ? String(loc.longitude) : "")
+    setEditGeofenceRadius(loc.geofenceRadiusMeters != null ? String(loc.geofenceRadiusMeters) : "200")
     setSaveError(null)
     setEditing(true)
   }
@@ -191,6 +197,9 @@ export default function LocationDetailPage() {
         name: editName.trim(),
         address: editAddress.trim() || undefined,
         type: editType,
+        latitude: editLatitude ? parseFloat(editLatitude) : undefined,
+        longitude: editLongitude ? parseFloat(editLongitude) : undefined,
+        geofenceRadiusMeters: editGeofenceRadius ? parseInt(editGeofenceRadius, 10) : undefined,
       })
       setEditing(false)
       fetchData()
@@ -379,6 +388,49 @@ export default function LocationDetailPage() {
                     </option>
                   ))}
                 </select>
+              </div>
+              <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+                <p className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                  Geofence (para que mozos, cajeros, cocina, etc. solo entren en el local)
+                </p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div>
+                    <label className="mb-0.5 block text-xs text-gray-500 dark:text-gray-400">Latitud</label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={editLatitude}
+                      onChange={(e) => setEditLatitude(e.target.value)}
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                      placeholder="Ej: -34.6037"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-0.5 block text-xs text-gray-500 dark:text-gray-400">Longitud</label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={editLongitude}
+                      onChange={(e) => setEditLongitude(e.target.value)}
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                      placeholder="Ej: -58.3816"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-0.5 block text-xs text-gray-500 dark:text-gray-400">Radio (m)</label>
+                    <input
+                      type="number"
+                      min={50}
+                      value={editGeofenceRadius}
+                      onChange={(e) => setEditGeofenceRadius(e.target.value)}
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                      placeholder="200"
+                    />
+                  </div>
+                </div>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Si se completan lat/long, esos roles solo podrán iniciar sesión estando dentro del radio (metros).
+                </p>
               </div>
               {saveError && (
                 <p className="text-sm text-red-600 dark:text-red-400">

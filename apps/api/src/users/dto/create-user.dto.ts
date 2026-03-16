@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsOptional,
   IsBoolean,
+  IsArray,
 } from 'class-validator';
 import { Role } from '../../../generated/prisma';
 
@@ -33,9 +34,16 @@ export class CreateUserDto {
   @IsEnum(Role)
   role: Role;
 
+  /** Una ubicación (se mantiene por compatibilidad; si se envía locationIds, se usa el primero como default). */
   @IsOptional()
   @IsString()
   locationId?: string;
+
+  /** Múltiples ubicaciones asignadas al usuario. */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  locationIds?: string[];
 
   @IsOptional()
   @IsBoolean()

@@ -4,6 +4,7 @@ import {
   IsBoolean,
   IsEnum,
   IsInt,
+  IsNumber,
   Min,
   MinLength,
   MaxLength,
@@ -51,4 +52,19 @@ export class CreateLocationDto {
   @IsInt()
   @Min(1)
   arcaPtoVta?: number;
+
+  /** Latitud para geofence (obligatorio para restricción por GPS). */
+  @IsOptional()
+  @IsNumber()
+  latitude?: number;
+
+  @IsOptional()
+  @IsNumber()
+  longitude?: number;
+
+  /** Radio en metros para considerar "en el local" (default 200). */
+  @IsOptional()
+  @IsInt()
+  @Min(50)
+  geofenceRadiusMeters?: number;
 }

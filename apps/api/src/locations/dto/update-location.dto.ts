@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsObject,
   IsInt,
+  IsNumber,
   Min,
   MinLength,
   MaxLength,
@@ -52,4 +53,17 @@ export class UpdateLocationDto {
   @IsOptional()
   @IsObject()
   mapConfig?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsNumber()
+  latitude?: number;
+
+  @IsOptional()
+  @IsNumber()
+  longitude?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(50)
+  geofenceRadiusMeters?: number;
 }

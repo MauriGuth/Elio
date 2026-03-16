@@ -117,6 +117,10 @@ export class LocationsService {
     if (data.isProduction !== undefined) updateData.isProduction = data.isProduction;
     if (data.hasTables !== undefined) updateData.hasTables = data.hasTables;
     if (data.arcaPtoVta !== undefined) updateData.arcaPtoVta = data.arcaPtoVta;
+    if (data.latitude !== undefined) updateData.latitude = data.latitude;
+    if (data.longitude !== undefined) updateData.longitude = data.longitude;
+    if (data.geofenceRadiusMeters !== undefined)
+      updateData.geofenceRadiusMeters = data.geofenceRadiusMeters;
 
     // mapConfig: asegurar objeto JSON serializable para Prisma (evita 500 por tipos/serialización)
     if (data.mapConfig !== undefined) {

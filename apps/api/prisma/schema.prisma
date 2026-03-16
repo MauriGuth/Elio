@@ -62,7 +62,8 @@ model User {
   updatedAt    DateTime  @updatedAt @map("updated_at")
 
   // Relations
-  location Location? @relation(fields: [locationId], references: [id])
+  location     Location?       @relation(fields: [locationId], references: [id])
+  userLocations UserLocation[]
 
   stockMovements             StockMovement[]
   createdGoodsReceipts       GoodsReceipt[]      @relation("GoodsReceiptCreator")
@@ -111,11 +112,18 @@ model Location {
   /** Punto de venta AFIP para este local (si no se define, se usa ARCA_PTO_VTA global). */
   arcaPtoVta   Int?         @map("arca_pto_vta")
   mapConfig    Json?        @map("map_config")
+  /** Latitud para geofence (obligatorio si se exige ingreso por ubicación). */
+  latitude     Float?       @map("latitude")
+  /** Longitud para geofence. */
+  longitude    Float?      @map("longitude")
+  /** Radio en metros para considerar que el usuario está en el local (default 200). */
+  geofenceRadiusMeters Int? @map("geofence_radius_meters")
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
 
   // Relations
   users                User[]
+  userLocations        UserLocation[]
   stockLevels          StockLevel[]
   stockMovements       StockMovement[]
   goodsReceipts        GoodsReceipt[]
@@ -135,6 +143,23 @@ model Location {
   @@index([type])
   @@index([isActive])
   @@map("locations")
+}
+
+// ─── UserLocation (many-to-many: usuarios con varias ubicaciones) ───
+
+model UserLocation {
+  id         String   @id @default(cuid())
+  userId     String   @map("user_id")
+  locationId String   @map("location_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, locationId])
+  @@index([userId])
+  @@index([locationId])
+  @@map("user_locations")
 }
 
 // ─── Category ─────────────────────────────────────────────────
