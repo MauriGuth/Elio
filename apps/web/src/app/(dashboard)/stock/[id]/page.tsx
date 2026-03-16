@@ -140,6 +140,7 @@ interface ApiStockLevel {
   quantity: number
   minQuantity: number
   maxQuantity: number
+  salePrice?: number | null
   location: { id: string; name: string; slug: string; type: string }
 }
 
@@ -195,6 +196,7 @@ interface ProcessedStockLevel {
   quantity: number
   minQuantity: number
   maxQuantity?: number
+  salePrice?: number | null
   status: StockStatus
 }
 
@@ -249,6 +251,7 @@ function processProduct(p: ApiProduct): ProcessedProduct {
         quantity: sl.quantity,
         minQuantity: sl.minQuantity,
         maxQuantity: sl.maxQuantity || undefined,
+        salePrice: sl.salePrice ?? undefined,
         status,
       }
     }
@@ -431,6 +434,7 @@ export default function ProductDetailPage() {
     imageUrl: "" as string,
     avgCost: 0,
     salePrice: 0,
+    salePriceByLocation: {} as Record<string, number>,
     isSellable: false,
     isIngredient: false,
     isPerishable: false,
@@ -528,6 +532,11 @@ export default function ProductDetailPage() {
 
   const openEditModal = useCallback(() => {
     if (!product) return
+    const salePriceByLocation: Record<string, number> = {}
+    product.stockByLocation.forEach((stock) => {
+      const price = stock.salePrice ?? product.salePrice ?? 0
+      salePriceByLocation[stock.locationId] = price
+    })
     setEditForm({
       sku: product.sku,
       name: product.name,
@@ -538,6 +547,7 @@ export default function ProductDetailPage() {
       imageUrl: product.imageUrl ?? "",
       avgCost: product.avgCost,
       salePrice: product.salePrice,
+      salePriceByLocation,
       isSellable: product.isSellable,
       isIngredient: product.isIngredient,
       isPerishable: product.isPerishable,
@@ -564,6 +574,11 @@ export default function ProductDetailPage() {
         imageUrl = (res as any)?.url ?? (res as any)?.data?.url ?? ""
         setEditImageUploading(false)
       }
+      const salePriceByLocation: Record<string, number> = {}
+      editForm.locationIds.forEach((locId) => {
+        salePriceByLocation[locId] =
+          editForm.salePriceByLocation[locId] ?? editForm.salePrice ?? 0
+      })
       await productsApi.update(product.id, {
         sku: editForm.sku,
         name: editForm.name,
@@ -574,6 +589,7 @@ export default function ProductDetailPage() {
         imageUrl,
         avgCost: editForm.avgCost,
         salePrice: editForm.salePrice,
+        salePriceByLocation: editForm.locationIds.length > 0 ? salePriceByLocation : undefined,
         isSellable: editForm.isSellable,
         isIngredient: editForm.isIngredient,
         isPerishable: editForm.isPerishable,
@@ -974,12 +990,21 @@ export default function ProductDetailPage() {
                               type="checkbox"
                               checked={checked}
                               onChange={(e) =>
-                                setEditForm((current) => ({
-                                  ...current,
-                                  locationIds: e.target.checked
+                                setEditForm((current) => {
+                                  const adding = e.target.checked
+                                  const nextIds = adding
                                     ? [...current.locationIds, location.id]
-                                    : current.locationIds.filter((id) => id !== location.id),
-                                }))
+                                    : current.locationIds.filter((id) => id !== location.id)
+                                  const nextPrices = { ...current.salePriceByLocation }
+                                  if (adding && nextPrices[location.id] == null)
+                                    nextPrices[location.id] = current.salePrice ?? 0
+                                  if (!adding) delete nextPrices[location.id]
+                                  return {
+                                    ...current,
+                                    locationIds: nextIds,
+                                    salePriceByLocation: nextPrices,
+                                  }
+                                })
                               }
                               className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                             />
@@ -998,48 +1023,69 @@ export default function ProductDetailPage() {
                   )}
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label htmlFor="edit-avgCost" className="block text-sm font-medium text-gray-700 dark:text-white">
-                    Costo promedio
-                  </label>
-                  <input
-                    id="edit-avgCost"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={editForm.avgCost || ""}
-                    onChange={(e) =>
-                      setEditForm((f) => ({
-                        ...f,
-                        avgCost: parseFloat(e.target.value) || 0,
-                      }))
-                    }
-                    className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    aria-label="Costo promedio"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="edit-salePrice" className="block text-sm font-medium text-gray-700 dark:text-white">
-                    Precio de venta
-                  </label>
-                  <input
-                    id="edit-salePrice"
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={editForm.salePrice || ""}
-                    onChange={(e) =>
-                      setEditForm((f) => ({
-                        ...f,
-                        salePrice: parseFloat(e.target.value) || 0,
-                      }))
-                    }
-                    className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    aria-label="Precio de venta"
-                  />
-                </div>
+              <div>
+                <label htmlFor="edit-avgCost" className="block text-sm font-medium text-gray-700 dark:text-white">
+                  Costo promedio
+                </label>
+                <input
+                  id="edit-avgCost"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={editForm.avgCost || ""}
+                  onChange={(e) =>
+                    setEditForm((f) => ({
+                      ...f,
+                      avgCost: parseFloat(e.target.value) || 0,
+                    }))
+                  }
+                  className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  aria-label="Costo promedio"
+                />
               </div>
+              {editForm.locationIds.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-white">
+                    Precio por local
+                  </label>
+                  <p className="mt-1 mb-2 text-xs text-gray-500 dark:text-gray-400">
+                    Precio de venta en cada local.
+                  </p>
+                  <div className="space-y-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3">
+                    {locations
+                      .filter((loc) => editForm.locationIds.includes(loc.id))
+                      .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }))
+                      .map((location) => (
+                        <div key={location.id} className="flex items-center gap-3">
+                          <span className="min-w-[140px] text-sm text-gray-700 dark:text-gray-200">
+                            {location.name}
+                            {location.type === "WAREHOUSE" ? " (Depósito)" : ""}
+                          </span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={editForm.salePriceByLocation[location.id] ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value
+                              const num = v === "" ? undefined : parseFloat(v)
+                              setEditForm((f) => ({
+                                ...f,
+                                salePriceByLocation: {
+                                  ...f.salePriceByLocation,
+                                  [location.id]: num ?? 0,
+                                },
+                              }))
+                            }}
+                            placeholder="0"
+                            className="w-28 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-right tabular-nums text-gray-900 dark:text-white placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            aria-label={`Precio en ${location.name}`}
+                          />
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
               <div className="flex flex-wrap gap-6">
                 <label className="inline-flex items-center gap-2">
                   <input

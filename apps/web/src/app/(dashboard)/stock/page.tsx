@@ -124,6 +124,8 @@ type NewProductForm = {
   imageUrl: string
   avgCost: number
   salePrice: number
+  /** Precio de venta por local (locationId -> precio). Si no se define, se usa salePrice. */
+  salePriceByLocation: Record<string, number>
   isSellable: boolean
   isIngredient: boolean
   isPerishable: boolean
@@ -317,6 +319,7 @@ export default function StockPage() {
       imageUrl: "",
       avgCost: 0,
       salePrice: 0,
+      salePriceByLocation: {},
       isSellable: false,
       isIngredient: false,
       isPerishable: false,
@@ -667,10 +670,17 @@ export default function StockPage() {
         imageUrl = (res as any)?.url ?? (res as any)?.data?.url ?? ""
         setNewProductImageUploading(false)
       }
+      const salePriceByLocation: Record<string, number> = {}
+      newProduct.locationIds.forEach((locId) => {
+        const custom = newProduct.salePriceByLocation[locId]
+        salePriceByLocation[locId] =
+          custom != null && Number(custom) >= 0 ? Number(custom) : (newProduct.salePrice || 0)
+      })
       await productsApi.create({
         ...newProduct,
         imageUrl: imageUrl || undefined,
         familia: newProduct.familia || undefined,
+        salePriceByLocation: newProduct.locationIds.length > 0 ? salePriceByLocation : undefined,
       })
       closeCreateProductModal()
       fetchProducts()
@@ -1429,47 +1439,71 @@ export default function StockPage() {
                   </div>
                 </div>
 
-                {/* Cost + Price row */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
-                      Costo Promedio
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={newProduct.avgCost || ""}
-                      onChange={(e) =>
-                        setNewProduct({
-                          ...newProduct,
-                          avgCost: parseFloat(e.target.value) || 0,
-                        })
-                      }
-                      placeholder="0.00"
-                      className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
-                      Precio de Venta
-                    </label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      value={newProduct.salePrice || ""}
-                      onChange={(e) =>
-                        setNewProduct({
-                          ...newProduct,
-                          salePrice: parseFloat(e.target.value) || 0,
-                        })
-                      }
-                      placeholder="0.00"
-                      className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    />
-                  </div>
+                {/* Costo promedio */}
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
+                    Costo Promedio
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={newProduct.avgCost || ""}
+                    onChange={(e) =>
+                      setNewProduct({
+                        ...newProduct,
+                        avgCost: parseFloat(e.target.value) || 0,
+                      })
+                    }
+                    placeholder="0.00"
+                    className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  />
                 </div>
+
+                {/* Precio por local */}
+                {newProduct.locationIds.length > 0 && (
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
+                      Precio por local
+                    </label>
+                    <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
+                      Precio de venta en cada local.
+                    </p>
+                    <div className="space-y-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3">
+                      {locations
+                        .filter((loc) => newProduct.locationIds.includes(loc.id))
+                        .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }))
+                        .map((location) => (
+                          <div key={location.id} className="flex items-center gap-3">
+                            <span className="min-w-[140px] text-sm text-gray-700 dark:text-gray-200">
+                              {location.name}
+                              {location.type === "WAREHOUSE" ? " (Depósito)" : ""}
+                            </span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={newProduct.salePriceByLocation[location.id] ?? ""}
+                              onChange={(e) => {
+                                const v = e.target.value
+                                const num = v === "" ? undefined : parseFloat(v)
+                                setNewProduct((prev) => ({
+                                  ...prev,
+                                  salePriceByLocation: {
+                                    ...prev.salePriceByLocation,
+                                    [location.id]: num ?? 0,
+                                  },
+                                }))
+                              }}
+                              placeholder="0"
+                              className="w-28 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-right tabular-nums text-gray-900 dark:text-white placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              aria-label={`Precio en ${location.name}`}
+                            />
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Checkboxes */}
                 <div className="flex flex-wrap gap-x-6 gap-y-3 pt-1">

@@ -115,7 +115,7 @@ export class ProductsService {
   }
 
   async create(data: CreateProductDto) {
-    const { locationIds = [], ...productData } = data;
+    const { locationIds = [], salePriceByLocation = {}, ...productData } = data;
 
     const existing = await this.prisma.product.findUnique({
       where: { sku: productData.sku },
@@ -145,18 +145,28 @@ export class ProductsService {
       }
     }
 
+    const priceByLoc =
+      salePriceByLocation && typeof salePriceByLocation === 'object' ? salePriceByLocation : {};
+
     return this.prisma.product.create({
       data: {
         ...productData,
         stockLevels:
           uniqueLocationIds.length > 0
             ? {
-                create: uniqueLocationIds.map((locationId) => ({
-                  locationId,
-                  quantity: 0,
-                  minQuantity: 0,
-                  salePrice: productData.salePrice ?? null,
-                })),
+                create: uniqueLocationIds.map((locationId) => {
+                  const locPrice = priceByLoc[locationId];
+                  const salePrice =
+                    locPrice != null && typeof locPrice === 'number' && locPrice >= 0
+                      ? locPrice
+                      : productData.salePrice ?? null;
+                  return {
+                    locationId,
+                    quantity: 0,
+                    minQuantity: 0,
+                    salePrice,
+                  };
+                }),
               }
             : undefined,
       },
@@ -172,7 +182,7 @@ export class ProductsService {
   }
 
   async update(id: string, data: UpdateProductDto) {
-    const { locationIds, ...productData } = data;
+    const { locationIds, salePriceByLocation, ...productData } = data;
     const product = await this.prisma.product.findUnique({
       where: { id },
     });
@@ -212,6 +222,12 @@ export class ProductsService {
       }
     }
 
+    const priceByLoc =
+      salePriceByLocation && typeof salePriceByLocation === 'object' ? salePriceByLocation : {};
+
+    const defaultSalePrice =
+      productData.salePrice !== undefined ? productData.salePrice : product.salePrice;
+
     await this.prisma.$transaction(async (tx) => {
       await tx.product.update({
         where: { id },
@@ -242,15 +258,31 @@ export class ProductsService {
 
         if (locationIdsToCreate.length > 0) {
           await tx.stockLevel.createMany({
-            data: locationIdsToCreate.map((locationId) => ({
-              productId: id,
-              locationId,
-              quantity: 0,
-              minQuantity: 0,
-              salePrice:
-                productData.salePrice !== undefined ? productData.salePrice : product.salePrice,
-            })),
+            data: locationIdsToCreate.map((locationId) => {
+              const locPrice = priceByLoc[locationId];
+              const salePrice =
+                locPrice != null && typeof locPrice === 'number' && locPrice >= 0
+                  ? locPrice
+                  : defaultSalePrice ?? null;
+              return {
+                productId: id,
+                locationId,
+                quantity: 0,
+                minQuantity: 0,
+                salePrice,
+              };
+            }),
           });
+        }
+
+        if (Object.keys(priceByLoc).length > 0) {
+          for (const [locationId, price] of Object.entries(priceByLoc)) {
+            if (typeof price !== 'number' || price < 0) continue;
+            await tx.stockLevel.updateMany({
+              where: { productId: id, locationId },
+              data: { salePrice: price },
+            });
+          }
         }
       }
     });

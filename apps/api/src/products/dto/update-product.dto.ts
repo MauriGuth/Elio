@@ -87,4 +87,8 @@ export class UpdateProductDto {
   @IsArray()
   @IsString({ each: true })
   locationIds?: string[];
+
+  /** Precio de venta por local (locationId -> precio). Si no se indica para un local, se usa salePrice del producto. */
+  @IsOptional()
+  salePriceByLocation?: Record<string, number>;
 }
