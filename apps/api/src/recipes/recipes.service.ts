@@ -13,10 +13,11 @@ export class RecipesService {
     search?: string;
     category?: string;
     isActive?: boolean;
+    locationIds?: string[];
     page?: number;
     limit?: number;
   }) {
-    const { search, category, isActive, page = 1, limit = 20 } = filters;
+    const { search, category, isActive, locationIds, page = 1, limit = 20 } = filters;
     const skip = (page - 1) * limit;
 
     const where: any = {};
@@ -30,6 +31,12 @@ export class RecipesService {
 
     if (category) {
       where.category = category;
+    }
+
+    if (locationIds?.length) {
+      where.recipeLocations = {
+        some: { locationId: { in: locationIds } },
+      };
     }
 
     where.isActive = isActive ?? true;
@@ -96,6 +103,13 @@ export class RecipesService {
         parent: {
           select: { id: true, version: true, name: true },
         },
+        recipeLocations: {
+          include: {
+            location: {
+              select: { id: true, name: true, type: true },
+            },
+          },
+        },
       },
     });
 
@@ -107,7 +121,28 @@ export class RecipesService {
   }
 
   async create(data: CreateRecipeDto, userId: string) {
-    const { ingredients, ...recipeData } = data;
+    const { ingredients, locationIds = [], prepTimeByLocation = {}, ...recipeData } = data;
+    const uniqueLocationIds = [...new Set((locationIds || []).filter(Boolean))];
+
+    if (uniqueLocationIds.length > 0) {
+      const locations = await this.prisma.location.findMany({
+        where: { id: { in: uniqueLocationIds } },
+        select: { id: true },
+      });
+      if (locations.length !== uniqueLocationIds.length) {
+        throw new NotFoundException('One or more selected locations were not found');
+      }
+    }
+
+    const recipeLocationsCreate =
+      uniqueLocationIds.length > 0
+        ? uniqueLocationIds.map((locationId) => {
+            const min = prepTimeByLocation[locationId];
+            const prepTimeMin =
+              min != null && typeof min === 'number' && min >= 0 ? min : null;
+            return { locationId, prepTimeMin };
+          })
+        : undefined;
 
     return this.prisma.recipe.create({
       data: {
@@ -125,6 +160,9 @@ export class RecipesService {
               })),
             }
           : undefined,
+        recipeLocations: recipeLocationsCreate
+          ? { create: recipeLocationsCreate }
+          : undefined,
       },
       include: {
         ingredients: {
@@ -132,6 +170,11 @@ export class RecipesService {
             product: {
               select: { id: true, name: true, sku: true, unit: true },
             },
+          },
+        },
+        recipeLocations: {
+          include: {
+            location: { select: { id: true, name: true, type: true } },
           },
         },
         createdBy: {
@@ -143,7 +186,7 @@ export class RecipesService {
 
   async update(id: string, data: UpdateRecipeDto) {
     await this.findById(id);
-    const { ingredients, ...recipeData } = data;
+    const { ingredients, locationIds, prepTimeByLocation, ...recipeData } = data;
 
     const updateData: any = { ...recipeData };
     if (Array.isArray(ingredients)) {
@@ -160,6 +203,28 @@ export class RecipesService {
       };
     }
 
+    const uniqueLocationIds =
+      locationIds !== undefined ? [...new Set((locationIds || []).filter(Boolean))] : undefined;
+
+    if (uniqueLocationIds) {
+      const locations = await this.prisma.location.findMany({
+        where: { id: { in: uniqueLocationIds } },
+        select: { id: true },
+      });
+      if (locations.length !== uniqueLocationIds.length) {
+        throw new NotFoundException('One or more selected locations were not found');
+      }
+      updateData.recipeLocations = {
+        deleteMany: {},
+        create: uniqueLocationIds.map((locationId) => {
+          const min = (prepTimeByLocation || {})[locationId];
+          const prepTimeMin =
+            min != null && typeof min === 'number' && min >= 0 ? min : null;
+          return { locationId, prepTimeMin };
+        }),
+      };
+    }
+
     return this.prisma.recipe.update({
       where: { id },
       data: updateData,
@@ -169,6 +234,11 @@ export class RecipesService {
             product: {
               select: { id: true, name: true, sku: true, unit: true },
             },
+          },
+        },
+        recipeLocations: {
+          include: {
+            location: { select: { id: true, name: true, type: true } },
           },
         },
       },

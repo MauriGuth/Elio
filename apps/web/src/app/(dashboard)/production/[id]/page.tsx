@@ -350,7 +350,14 @@ export default function ProductionDetailPage() {
   }
   const elapsedMinutes = Math.floor(elapsedSeconds / 60)
   const elapsedRemainderSec = elapsedSeconds % 60
-  const recipePrepMin = order.recipe?.prepTimeMin ?? null
+  // Tiempo de la receta: por ubicación de la orden o valor global
+  const recipePrepMin =
+    (order.locationId &&
+      order.recipe?.recipeLocations?.find(
+        (rl: any) => (rl.locationId ?? rl.location_id) === order.locationId
+      )?.prepTimeMin) ??
+    order.recipe?.prepTimeMin ??
+    null
 
   return (
     <div className="space-y-6">
@@ -530,7 +537,7 @@ export default function ProductionDetailPage() {
             </p>
           </div>
         ) : (
-          <div className="relative flex items-center justify-between">
+          <div className="relative flex flex-wrap items-center justify-between">
             {/* Connecting line */}
             <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-0.5 bg-gray-200 dark:bg-gray-600" />
             <div
@@ -585,28 +592,42 @@ export default function ProductionDetailPage() {
               )
             })}
 
-            {/* Contador en curso o resumen al completar */}
+            {/* Contador en curso o resumen al completar — fila propia centrada */}
             {status === "in_progress" && startedAtDate && (
-              <div className="mt-6 flex items-center justify-center gap-2 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30 px-4 py-3">
-                <Clock className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+              <div className="mt-6 w-full min-w-full flex basis-full items-center justify-center gap-2 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/30 px-4 py-3">
+                <Clock className="h-5 w-5 shrink-0 text-blue-600 dark:text-blue-400" />
                 <span className="text-sm font-medium text-blue-800 dark:text-blue-200">Tiempo transcurrido:</span>
                 <span className="tabular-nums font-mono text-lg font-semibold text-blue-900 dark:text-blue-100">
                   {elapsedMinutes} min {elapsedRemainderSec.toString().padStart(2, "0")} s
                 </span>
               </div>
             )}
-            {(status === "completed" || status === "completed_adjusted") && startedAtDate && completedAtDate && (
-              <div className="mt-6 rounded-lg border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/30 px-4 py-3">
-                <p className="text-sm font-medium text-green-800 dark:text-green-200">
-                  Tardó <span className="font-mono font-semibold">{elapsedMinutes} min {elapsedRemainderSec.toString().padStart(2, "0")} s</span> en elaboración.
-                </p>
-                {recipePrepMin != null && (
-                  <p className="mt-1 text-sm text-green-700 dark:text-green-300">
-                    Tiempo de la receta: <span className="font-mono font-medium">{recipePrepMin} min</span>
+            {(status === "completed" || status === "completed_adjusted") && startedAtDate && completedAtDate && (() => {
+              const exceeded = recipePrepMin != null && elapsedSeconds > recipePrepMin * 60
+              return (
+                <div className={cn(
+                  "mt-6 w-full min-w-full flex basis-full flex-col items-center justify-center rounded-lg border px-4 py-3",
+                  exceeded
+                    ? "border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/30"
+                    : "border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/30"
+                )}>
+                  <p className={cn(
+                    "text-sm font-medium text-center",
+                    exceeded ? "text-red-800 dark:text-red-200" : "text-green-800 dark:text-green-200"
+                  )}>
+                    Tardó <span className="font-mono font-semibold">{elapsedMinutes} min {elapsedRemainderSec.toString().padStart(2, "0")} s</span> en elaboración.
                   </p>
-                )}
-              </div>
-            )}
+                  {recipePrepMin != null && (
+                    <p className={cn(
+                      "mt-1 text-sm text-center",
+                      exceeded ? "text-red-700 dark:text-red-300" : "text-green-700 dark:text-green-300"
+                    )}>
+                      Tiempo de la receta: <span className="font-mono font-medium">{recipePrepMin} min</span>
+                    </p>
+                  )}
+                </div>
+              )
+            })()}
           </div>
         )}
       </div>

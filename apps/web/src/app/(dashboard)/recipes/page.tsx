@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useMemo } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { sileo } from "sileo"
 import {
   Search,
@@ -11,9 +11,12 @@ import {
   Trash2,
   AlertCircle,
   ChevronDown,
+  ChevronUp,
+  MapPin,
 } from "lucide-react"
 import { recipesApi } from "@/lib/api/recipes"
 import { productsApi } from "@/lib/api/products"
+import { locationsApi } from "@/lib/api/locations"
 import { cn } from "@/lib/utils"
 
 type ProductOption = { id: string; name: string; sku: string; unit?: string }
@@ -22,7 +25,8 @@ type FormState = {
   name: string
   yieldQty: number
   yieldUnit: string
-  prepTimeMin: number | ""
+  locationIds: string[]
+  prepTimeByLocation: Record<string, number>
   productId: string
   ingredients: IngredientRow[]
 }
@@ -31,17 +35,24 @@ const emptyForm: FormState = {
   name: "",
   yieldQty: 1,
   yieldUnit: "porción",
-  prepTimeMin: "",
+  locationIds: [],
+  prepTimeByLocation: {},
   productId: "",
   ingredients: [],
 }
 
+type LocationOption = { id: string; name: string; type: string }
+
 export default function RecipesPage() {
   const [recipes, setRecipes] = useState<any[]>([])
   const [products, setProducts] = useState<ProductOption[]>([])
+  const [locations, setLocations] = useState<LocationOption[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState("")
+  const [filterLocationIds, setFilterLocationIds] = useState<string[]>([])
+  const [locationFilterOpen, setLocationFilterOpen] = useState(false)
+  const locationFilterRef = useRef<HTMLDivElement>(null)
   const [modalMode, setModalMode] = useState<"create" | "edit" | null>(null)
   const [editingRecipeId, setEditingRecipeId] = useState<string | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm)
@@ -79,7 +90,13 @@ export default function RecipesPage() {
     setLoading(true)
     setError(null)
     try {
-      const res = await recipesApi.getAll({ limit: 1000, isActive: true })
+      const res = await recipesApi.getAll({
+        limit: 1000,
+        isActive: true,
+        ...(filterLocationIds.length > 0 && {
+          locationIds: filterLocationIds.join(","),
+        }),
+      })
       const data = (res as any).data ?? []
       setRecipes(
         Array.isArray(data)
@@ -96,11 +113,23 @@ export default function RecipesPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [filterLocationIds])
 
   useEffect(() => {
     fetchRecipes()
   }, [fetchRecipes])
+
+  // Cerrar menú de filtro por ubicación al hacer clic fuera
+  useEffect(() => {
+    if (!locationFilterOpen) return
+    const handleClick = (e: MouseEvent) => {
+      if (locationFilterRef.current && !locationFilterRef.current.contains(e.target as Node)) {
+        setLocationFilterOpen(false)
+      }
+    }
+    document.addEventListener("click", handleClick, true)
+    return () => document.removeEventListener("click", handleClick, true)
+  }, [locationFilterOpen])
 
   useEffect(() => {
     productsApi.getAll({ limit: 5000 }).then((r: any) => {
@@ -116,6 +145,19 @@ export default function RecipesPage() {
               }))
               .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }))
           : []
+      )
+    }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    locationsApi.getAll().then((res: any) => {
+      const list = Array.isArray(res) ? res : res?.data ?? []
+      setLocations(
+        list
+          .map((loc: any) => ({ id: loc.id, name: loc.name, type: loc.type ?? "" }))
+          .sort((a: LocationOption, b: LocationOption) =>
+            a.name.localeCompare(b.name, "es", { sensitivity: "base" })
+          )
       )
     }).catch(() => {})
   }, [])
@@ -136,11 +178,18 @@ export default function RecipesPage() {
     setFormError(null)
     try {
       const full = await recipesApi.getById(recipe.id)
+      const locIds = (full.recipeLocations ?? []).map((rl: any) => rl.locationId ?? rl.location?.id).filter(Boolean)
+      const prepByLoc: Record<string, number> = {}
+      for (const rl of full.recipeLocations ?? []) {
+        const lid = rl.locationId ?? rl.location?.id
+        if (lid != null && rl.prepTimeMin != null) prepByLoc[lid] = rl.prepTimeMin
+      }
       setForm({
         name: full.name ?? "",
         yieldQty: full.yieldQty ?? 1,
         yieldUnit: full.yieldUnit ?? "porción",
-        prepTimeMin: full.prepTimeMin != null ? full.prepTimeMin : "",
+        locationIds: locIds,
+        prepTimeByLocation: prepByLoc,
         productId: full.productId ?? full.product?.id ?? "",
         ingredients: (full.ingredients ?? []).map((ing: any) => ({
           productId: ing.productId ?? ing.product?.id ?? "",
@@ -242,7 +291,8 @@ export default function RecipesPage() {
         name: form.name.trim(),
         yieldQty: form.yieldQty,
         yieldUnit: form.yieldUnit.trim() || "porción",
-        prepTimeMin: form.prepTimeMin !== "" && form.prepTimeMin != null ? Number(form.prepTimeMin) : undefined,
+        locationIds: form.locationIds,
+        prepTimeByLocation: form.prepTimeByLocation,
         productId: form.productId || undefined,
         ingredients: form.ingredients
           .filter((i) => i.productId && i.qtyPerYield > 0)
@@ -323,16 +373,89 @@ export default function RecipesPage() {
         </button>
       </div>
 
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-        <input
-          type="search"
-          placeholder="Buscar por nombre de receta o producto..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:max-w-md"
-          aria-label="Buscar recetas"
-        />
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
+        <div className="relative flex-1 sm:max-w-md">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+          <input
+            type="search"
+            placeholder="Buscar por nombre de receta o producto..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full rounded-lg border border-gray-300 dark:border-gray-600 py-2 pl-9 pr-3 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            aria-label="Buscar recetas"
+          />
+        </div>
+        <div ref={locationFilterRef} className="relative sm:flex-1">
+          <button
+            type="button"
+            onClick={() => setLocationFilterOpen((open) => !open)}
+            className="flex w-full items-center justify-between gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-3 py-2.5 text-left text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            aria-expanded={locationFilterOpen}
+            aria-haspopup="listbox"
+          >
+            <span className="flex items-center gap-2">
+              <MapPin className="h-4 w-4 text-gray-500 dark:text-gray-400" />
+              Filtrar por ubicación
+              {filterLocationIds.length > 0 && (
+                <span className="rounded-full bg-blue-100 dark:bg-blue-900/50 px-2 py-0.5 text-xs text-blue-700 dark:text-blue-300">
+                  {filterLocationIds.length}
+                </span>
+              )}
+            </span>
+            {locationFilterOpen ? (
+              <ChevronUp className="h-4 w-4 shrink-0 text-gray-500" />
+            ) : (
+              <ChevronDown className="h-4 w-4 shrink-0 text-gray-500" />
+            )}
+          </button>
+          {locationFilterOpen && (
+            <div className="absolute left-0 right-0 top-full z-10 mt-1 max-h-64 overflow-y-auto rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 py-2 shadow-lg">
+              <p className="px-3 pb-2 text-[11px] text-gray-500 dark:text-gray-400">
+                Mostrar solo recetas que se realizan en:
+              </p>
+              <div className="flex flex-col gap-0.5 px-2">
+                {locations
+                  .slice()
+                  .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }))
+                  .map((loc) => {
+                    const checked = filterLocationIds.includes(loc.id)
+                    return (
+                      <label
+                        key={loc.id}
+                        className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700/50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            setFilterLocationIds((prev) =>
+                              e.target.checked
+                                ? [...prev, loc.id]
+                                : prev.filter((id) => id !== loc.id)
+                            )
+                          }}
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span>
+                          {loc.name}
+                          {loc.type === "WAREHOUSE" ? " (Depósito)" : ""}
+                        </span>
+                      </label>
+                    )
+                  })}
+              </div>
+              {filterLocationIds.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setFilterLocationIds([])}
+                  className="mx-3 mt-2 w-[calc(100%-1.5rem)] text-left text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  Quitar filtros de ubicación
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -478,22 +601,93 @@ export default function RecipesPage() {
               </div>
 
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-white">Tiempo de elaboración (min)</label>
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  value={form.prepTimeMin === "" ? "" : form.prepTimeMin}
-                  onChange={(e) => {
-                    const v = e.target.value
-                    setForm((f) => ({ ...f, prepTimeMin: v === "" ? "" : Math.max(0, parseInt(v, 10) || 0) }))
-                  }}
-                  placeholder="Ej: 45"
-                  aria-label="Tiempo de elaboración en minutos"
-                  className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                />
-                <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">Opcional. Se usa para comparar con el tiempo real al finalizar la producción.</p>
+                <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">Ubicaciones</label>
+                <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
+                  Dónde se puede elaborar esta receta (depósito, locales, etc.).
+                </p>
+                <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {locations
+                      .slice()
+                      .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }))
+                      .map((location) => {
+                        const checked = form.locationIds.includes(location.id)
+                        return (
+                          <label
+                            key={location.id}
+                            className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(e) =>
+                                setForm((f) => ({
+                                  ...f,
+                                  locationIds: e.target.checked
+                                    ? [...f.locationIds, location.id]
+                                    : f.locationIds.filter((id) => id !== location.id),
+                                }))
+                              }
+                              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span>
+                              {location.name}
+                              {location.type === "WAREHOUSE" ? " (Depósito)" : ""}
+                            </span>
+                          </label>
+                        )
+                      })}
+                  </div>
+                  {locations.length === 0 && (
+                    <p className="text-sm text-gray-500 dark:text-gray-400">No hay ubicaciones disponibles.</p>
+                  )}
+                </div>
               </div>
+
+              {form.locationIds.length > 0 && (
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">Tiempo de elaboración por local</label>
+                  <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
+                    Minutos estimados en cada ubicación. Se usa para comparar con el tiempo real al finalizar la producción.
+                  </p>
+                  <div className="space-y-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-3">
+                    {locations
+                      .filter((loc) => form.locationIds.includes(loc.id))
+                      .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }))
+                      .map((location) => (
+                        <div key={location.id} className="grid grid-cols-[1fr_auto] items-center gap-3">
+                          <span className="text-sm text-gray-700 dark:text-gray-200">
+                            {location.name}
+                            {location.type === "WAREHOUSE" ? " (Depósito)" : ""}
+                          </span>
+                          <div className="flex items-center justify-center gap-2 min-w-[7rem]">
+                            <input
+                              type="number"
+                              min={0}
+                              step={1}
+                              value={form.prepTimeByLocation[location.id] ?? ""}
+                              onChange={(e) => {
+                                const v = e.target.value
+                                const num = v === "" ? undefined : Math.max(0, parseInt(v, 10) || 0)
+                                setForm((prev) => ({
+                                  ...prev,
+                                  prepTimeByLocation: {
+                                    ...prev.prepTimeByLocation,
+                                    [location.id]: num ?? 0,
+                                  },
+                                }))
+                              }}
+                              placeholder="Ej: 45"
+                              className="w-20 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-center tabular-nums text-gray-900 dark:text-white placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              aria-label={`Tiempo en ${location.name}`}
+                            />
+                            <span className="text-xs text-gray-500 dark:text-gray-400">min</span>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
 
               <div className="relative">
                 <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-white">Producto de salida</label>

@@ -168,6 +168,9 @@ export class ProductionService {
             yieldUnit: true,
             productId: true,
             prepTimeMin: true,
+            recipeLocations: {
+              select: { locationId: true, prepTimeMin: true },
+            },
             ingredients: {
               include: {
                 product: {

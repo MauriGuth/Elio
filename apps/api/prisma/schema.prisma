@@ -128,6 +128,7 @@ model Location {
   stockMovements       StockMovement[]
   goodsReceipts        GoodsReceipt[]
   productionOrders     ProductionOrder[]
+  recipeLocations      RecipeLocation[]
   originShipments      Shipment[]       @relation("ShipmentOrigin")
   destinationShipments Shipment[]       @relation("ShipmentDestination")
   tables               Table[]
@@ -619,6 +620,7 @@ model Recipe {
   children         Recipe[]           @relation("RecipeVersion")
   createdBy        User               @relation(fields: [createdById], references: [id])
   ingredients      RecipeIngredient[]
+  recipeLocations  RecipeLocation[]
   productionOrders ProductionOrder[]
 
   @@index([productId])
@@ -626,6 +628,23 @@ model Recipe {
   @@index([createdById])
   @@index([isActive])
   @@map("recipes")
+}
+
+// ─── RecipeLocation ───────────────────────────────────────────
+// Tiempo de elaboración por ubicación (recetas que se hacen en depósito y/o en locales).
+model RecipeLocation {
+  id           String  @id @default(cuid())
+  recipeId     String  @map("recipe_id")
+  locationId   String  @map("location_id")
+  prepTimeMin  Int?    @map("prep_time_min")
+
+  recipe   Recipe   @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([recipeId, locationId])
+  @@index([recipeId])
+  @@index([locationId])
+  @@map("recipe_locations")
 }
 
 // ─── RecipeIngredient ─────────────────────────────────────────

@@ -27,13 +27,21 @@ export class RecipesController {
     @Query('search') search?: string,
     @Query('category') category?: string,
     @Query('isActive') isActive?: boolean,
+    @Query('locationIds') locationIds?: string | string[],
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
+    const locationIdsArr =
+      locationIds == null
+        ? undefined
+        : Array.isArray(locationIds)
+          ? locationIds.filter(Boolean)
+          : String(locationIds).split(',').filter(Boolean);
     return this.recipesService.findAll({
       search,
       category,
       isActive,
+      locationIds: locationIdsArr?.length ? locationIdsArr : undefined,
       page,
       limit,
     });

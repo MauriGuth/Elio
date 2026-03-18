@@ -47,6 +47,14 @@ export class UpdateRecipeDto {
   prepTimeMin?: number;
 
   @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  locationIds?: string[];
+
+  @IsOptional()
+  prepTimeByLocation?: Record<string, number>;
+
+  @IsOptional()
   @IsString()
   instructions?: string;
 

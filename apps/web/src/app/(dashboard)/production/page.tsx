@@ -138,6 +138,8 @@ export default function ProductionPage() {
   // Recipes and locations for create modal
   const [recipesList, setRecipesList] = useState<{ id: string; name: string }[]>([])
   const [locationsList, setLocationsList] = useState<{ id: string; name: string }[]>([])
+  /** Ubicaciones permitidas para la receta seleccionada (según lo configurado en la receta). */
+  const [allowedLocationIds, setAllowedLocationIds] = useState<string[]>([])
 
   // Create modal state
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -182,7 +184,7 @@ export default function ProductionPage() {
     loadAiSuggestion()
   }, [])
 
-  // Load recipes and locations on mount
+  // Load recipes and locations on mount (todas las ubicaciones para filtrar por receta)
   useEffect(() => {
     async function loadRecipes() {
       try {
@@ -195,10 +197,9 @@ export default function ProductionPage() {
     }
     async function loadLocations() {
       try {
-        // Solo ubicaciones tipo depósito (producción solo en depósito)
-        const res = await locationsApi.getAll({ type: "WAREHOUSE" })
+        const res = await locationsApi.getAll()
         const locs = Array.isArray(res) ? res : (res as any).data || []
-        setLocationsList(locs.map((l: any) => ({ id: l.id, name: l.name })))
+        setLocationsList(locs.map((l: any) => ({ id: l.id, name: l.name, type: l.type })))
       } catch {
         // Non-critical
       }
@@ -206,6 +207,41 @@ export default function ProductionPage() {
     loadRecipes()
     loadLocations()
   }, [])
+
+  // Al elegir una receta, cargar sus ubicaciones (las configuradas en la receta)
+  useEffect(() => {
+    if (!showCreateModal || !newOrder.recipeId) {
+      setAllowedLocationIds([])
+      return
+    }
+    let cancelled = false
+    recipesApi
+      .getById(newOrder.recipeId)
+      .then((recipe: any) => {
+        if (cancelled) return
+        const ids = (recipe.recipeLocations ?? []).map(
+          (rl: any) => rl.locationId ?? rl.location?.id
+        ).filter(Boolean)
+        setAllowedLocationIds(ids)
+      })
+      .catch(() => {
+        if (!cancelled) setAllowedLocationIds([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [showCreateModal, newOrder.recipeId])
+
+  // Si la ubicación elegida no está en las permitidas para la receta, limpiarla
+  useEffect(() => {
+    if (
+      newOrder.locationId &&
+      allowedLocationIds.length > 0 &&
+      !allowedLocationIds.includes(newOrder.locationId)
+    ) {
+      setNewOrder((prev) => ({ ...prev, locationId: "" }))
+    }
+  }, [allowedLocationIds, newOrder.locationId])
 
   // Fetch orders
   const fetchOrders = useCallback(async () => {
@@ -655,7 +691,12 @@ export default function ProductionPage() {
                       onChange={(e) => {
                         setRecipeSearch(e.target.value)
                         setRecipeDropdownOpen(true)
-                        if (newOrder.recipeId) setNewOrder({ ...newOrder, recipeId: "" })
+                        if (newOrder.recipeId)
+                        setNewOrder({
+                          ...newOrder,
+                          recipeId: "",
+                          locationId: "",
+                        })
                       }}
                       onFocus={() => setRecipeDropdownOpen(true)}
                       onBlur={() =>
@@ -690,7 +731,11 @@ export default function ProductionPage() {
                             )}
                             onMouseDown={(e) => {
                               e.preventDefault()
-                              setNewOrder({ ...newOrder, recipeId: r.id })
+                              setNewOrder({
+                                ...newOrder,
+                                recipeId: r.id,
+                                locationId: "",
+                              })
                               setRecipeSearch("")
                               setRecipeDropdownOpen(false)
                             }}
@@ -711,7 +756,7 @@ export default function ProductionPage() {
                   )}
                 </div>
 
-                {/* Location */}
+                {/* Location: solo las configuradas para la receta elegida */}
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
                     Ubicación <span className="text-red-500">*</span>
@@ -723,12 +768,25 @@ export default function ProductionPage() {
                     onChange={(e) =>
                       setNewOrder({ ...newOrder, locationId: e.target.value })
                     }
-                    className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    disabled={!newOrder.recipeId}
+                    className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    <option value="">Seleccionar ubicación...</option>
-                    {locationsList.map((loc) => (
+                    <option value="">
+                      {!newOrder.recipeId
+                        ? "Seleccioná primero una receta"
+                        : allowedLocationIds.length === 0
+                          ? "Esta receta no tiene ubicaciones configuradas"
+                          : "Seleccionar ubicación..."}
+                    </option>
+                    {(allowedLocationIds.length > 0
+                      ? locationsList.filter((loc) =>
+                          allowedLocationIds.includes(loc.id)
+                        )
+                      : locationsList
+                    ).map((loc: any) => (
                       <option key={loc.id} value={loc.id}>
                         {loc.name}
+                        {loc.type === "WAREHOUSE" ? " (Depósito)" : ""}
                       </option>
                     ))}
                   </select>

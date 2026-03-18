@@ -66,6 +66,16 @@ export class CreateRecipeDto {
   @Min(0)
   prepTimeMin?: number;
 
+  /** Ubicaciones donde se puede elaborar esta receta. */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  locationIds?: string[];
+
+  /** Tiempo de elaboración (min) por ubicación. Clave = locationId. */
+  @IsOptional()
+  prepTimeByLocation?: Record<string, number>;
+
   @IsOptional()
   @IsString()
   instructions?: string;

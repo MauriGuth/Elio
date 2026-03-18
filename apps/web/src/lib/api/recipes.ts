@@ -1,8 +1,15 @@
 import { api } from '../api';
 
 export const recipesApi = {
-  getAll: (params?: { search?: string; category?: string; isActive?: boolean; page?: number; limit?: number }) =>
-    api.get<{ data: any[]; total: number }>('/recipes', params),
+  getAll: (params?: {
+    search?: string;
+    category?: string;
+    isActive?: boolean;
+    /** IDs de ubicación separados por coma o array; solo recetas que se realizan en al menos una. */
+    locationIds?: string[] | string;
+    page?: number;
+    limit?: number;
+  }) => api.get<{ data: any[]; total: number }>('/recipes', params),
 
   getById: (id: string) => api.get<any>(`/recipes/${id}`),
 
