@@ -778,17 +778,15 @@ export default function ProductionPage() {
                           ? "Esta receta no tiene ubicaciones configuradas"
                           : "Seleccionar ubicación..."}
                     </option>
-                    {(allowedLocationIds.length > 0
-                      ? locationsList.filter((loc) =>
-                          allowedLocationIds.includes(loc.id)
-                        )
-                      : locationsList
-                    ).map((loc: any) => (
-                      <option key={loc.id} value={loc.id}>
-                        {loc.name}
-                        {loc.type === "WAREHOUSE" ? " (Depósito)" : ""}
-                      </option>
-                    ))}
+                    {allowedLocationIds.length > 0 &&
+                      locationsList
+                        .filter((loc) => allowedLocationIds.includes(loc.id))
+                        .map((loc: any) => (
+                          <option key={loc.id} value={loc.id}>
+                            {loc.name}
+                            {loc.type === "WAREHOUSE" ? " (Depósito)" : ""}
+                          </option>
+                        ))}
                   </select>
                 </div>
 
