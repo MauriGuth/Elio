@@ -29,6 +29,9 @@
     "prisma:seed-productos-familias-stock": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/seed-productos-familias-stock.ts",
     "prisma:sync-gastro-sql": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/sync-recetas-gastronomia-local-sql.ts",
     "prisma:reassign-non-prod-skus": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/reassign-non-prod-skus.ts",
+    "prisma:import-clientes": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/import-clientes-cuenta-corriente.ts",
+    "prisma:dedupe-customers": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/dedupe-customers-by-name.ts",
+    "prisma:repair-customers-visible": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/repair-customers-visible-non-deposito.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "prisma": {

@@ -1,8 +1,8 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import { runningAccountsApi, locationsApi, customersApi } from "@/lib/api/index"
-import { BookOpen, Loader2, Send, CheckCircle, ChevronRight, UserPlus, X, Pencil, Trash2, Download, Share2, FileCheck } from "lucide-react"
+import { BookOpen, Loader2, Send, CheckCircle, ChevronRight, UserPlus, X, Pencil, Trash2, Download, Share2, FileCheck, Search } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 function formatCurrency(n: number) {
@@ -98,11 +98,42 @@ function getRemitoMonthHtml(orders: any[], client: any): string {
   </body></html>`
 }
 
+function isDepositoLocation(name: string) {
+  const n = (name ?? "").toLowerCase().normalize("NFD").replace(/\u0301/g, "")
+  return n.includes("deposito")
+}
+
 export default function RunningAccountsPage() {
   const [locations, setLocations] = useState<any[]>([])
-  const [locationId, setLocationId] = useState("")
   const [clients, setClients] = useState<any[]>([])
+  const [clientSearchQuery, setClientSearchQuery] = useState("")
   const [loading, setLoading] = useState(false)
+  const locationsWithoutDeposito = useMemo(
+    () => locations.filter((l: any) => !isDepositoLocation(l.name ?? "")),
+    [locations]
+  )
+  const filteredClients = useMemo(() => {
+    const raw = (clientSearchQuery ?? "").trim()
+    if (!raw) return clients
+    const q = raw.toLowerCase().normalize("NFD").replace(/\u0301/g, "")
+    const cuitQ = raw.replace(/\D/g, "")
+    return clients.filter((c: any) => {
+      const name = (c.name ?? "").toLowerCase().normalize("NFD").replace(/\u0301/g, "")
+      const legalName = (c.legalName ?? "").toLowerCase().normalize("NFD").replace(/\u0301/g, "")
+      const cuit = (c.cuit ?? "").replace(/\D/g, "")
+      const email = (c.email ?? "").toLowerCase()
+      const phone = (c.phone ?? "").replace(/\D/g, "")
+      const locationName = (c.locationName ?? "").toLowerCase().normalize("NFD").replace(/\u0301/g, "")
+      return (
+        name.includes(q) ||
+        legalName.includes(q) ||
+        (cuitQ.length >= 2 && cuit.includes(cuitQ)) ||
+        (q.length >= 2 && email.includes(q)) ||
+        (cuitQ.length >= 2 && phone.includes(cuitQ)) ||
+        locationName.includes(q)
+      )
+    })
+  }, [clients, clientSearchQuery])
   const [selectedClient, setSelectedClient] = useState<any | null>(null)
   const [orders, setOrders] = useState<any[]>([])
   const [ordersMonth, setOrdersMonth] = useState("")
@@ -124,29 +155,27 @@ export default function RunningAccountsPage() {
     locationsApi.getAll?.().then((list: any) => {
       const arr = Array.isArray(list) ? list : list?.data ?? []
       setLocations(arr.filter((l: any) => l.isActive !== false))
-      if (arr.length > 0 && !locationId) setLocationId(arr[0].id)
     }).catch(() => setLocations([]))
   }, [])
 
   const fetchClients = useCallback(() => {
-    if (!locationId) return
     setLoading(true)
-    runningAccountsApi.getClients(locationId).then(setClients).catch(() => setClients([])).finally(() => setLoading(false))
-  }, [locationId])
+    runningAccountsApi.getClients().then(setClients).catch(() => setClients([])).finally(() => setLoading(false))
+  }, [])
 
   useEffect(() => {
     fetchClients()
   }, [fetchClients])
 
   useEffect(() => {
-    if (!locationId || !selectedClient) {
+    if (!selectedClient?.locationId || !selectedClient?.id) {
       setOrders([])
       return
     }
     const month = ordersMonth || undefined
     setLoadingOrders(true)
-    runningAccountsApi.getOrdersByCustomer(locationId, selectedClient.id, month).then(setOrders).catch(() => setOrders([])).finally(() => setLoadingOrders(false))
-  }, [locationId, selectedClient?.id, ordersMonth])
+    runningAccountsApi.getOrdersByCustomer(selectedClient.locationId, selectedClient.id, month).then(setOrders).catch(() => setOrders([])).finally(() => setLoadingOrders(false))
+  }, [selectedClient?.locationId, selectedClient?.id, ordersMonth])
 
   const openRemito = (order: any) => {
     setRemitoOrder(order)
@@ -170,7 +199,7 @@ export default function RunningAccountsPage() {
     try {
       await runningAccountsApi.markRemitoSent(remitoOrder.id)
       setRemitoOrder(null)
-      if (selectedClient) runningAccountsApi.getOrdersByCustomer(locationId, selectedClient.id, ordersMonth || undefined).then(setOrders)
+      if (selectedClient?.locationId) runningAccountsApi.getOrdersByCustomer(selectedClient.locationId, selectedClient.id, ordersMonth || undefined).then(setOrders)
       fetchClients()
     } finally {
       setActioning(null)
@@ -181,7 +210,7 @@ export default function RunningAccountsPage() {
     setActioning(orderId)
     try {
       await runningAccountsApi.markInvoiced(orderId)
-      if (selectedClient) runningAccountsApi.getOrdersByCustomer(locationId, selectedClient.id, ordersMonth || undefined).then(setOrders)
+      if (selectedClient?.locationId) runningAccountsApi.getOrdersByCustomer(selectedClient.locationId, selectedClient.id, ordersMonth || undefined).then(setOrders)
       fetchClients()
     } finally {
       setActioning(null)
@@ -208,10 +237,10 @@ export default function RunningAccountsPage() {
   }
 
   const handleMonthRemitoSent = async () => {
-    if (!locationId || !selectedClient || !monthParam) return
+    if (!selectedClient?.locationId || !selectedClient || !monthParam) return
     setMonthBatchAction("remito")
     try {
-      const updated = await runningAccountsApi.markMonthRemitoSent(locationId, selectedClient.id, monthParam)
+      const updated = await runningAccountsApi.markMonthRemitoSent(selectedClient.locationId, selectedClient.id, monthParam)
       setOrders(updated)
       setShowMonthRemito(false)
       fetchClients()
@@ -221,10 +250,10 @@ export default function RunningAccountsPage() {
   }
 
   const handleMonthInvoiced = async () => {
-    if (!locationId || !selectedClient || !monthParam) return
+    if (!selectedClient?.locationId || !selectedClient || !monthParam) return
     setMonthBatchAction("invoiced")
     try {
-      const updated = await runningAccountsApi.markMonthInvoiced(locationId, selectedClient.id, monthParam)
+      const updated = await runningAccountsApi.markMonthInvoiced(selectedClient.locationId, selectedClient.id, monthParam)
       setOrders(updated)
       fetchClients()
     } finally {
@@ -250,8 +279,12 @@ export default function RunningAccountsPage() {
     e.preventDefault()
     setAddClientError(null)
     const limit = parseCreditLimitDisplay(addClientForm.creditLimit)
-    if (!locationId || !addClientForm.name.trim() || !addClientForm.cuit.trim() || Number.isNaN(limit) || limit <= 0) {
+    if (!addClientForm.name.trim() || !addClientForm.cuit.trim() || Number.isNaN(limit) || limit <= 0) {
       setAddClientError("Completá nombre, CUIT y límite (número mayor a 0).")
+      return
+    }
+    if (!editingClientId && locationsWithoutDeposito.length === 0) {
+      setAddClientError("No hay locales disponibles (excepto depósito).")
       return
     }
     setAddingClient(true)
@@ -266,25 +299,38 @@ export default function RunningAccountsPage() {
           creditLimit: limit,
         })
       } else {
-        await customersApi.create({
-          locationId,
+        const cuitNorm = addClientForm.cuit.trim().replace(/\D/g, "")
+        const payload = {
           name: addClientForm.name.trim(),
-          cuit: addClientForm.cuit.trim().replace(/\D/g, ""),
+          cuit: cuitNorm,
           email: addClientForm.email.trim() || undefined,
           phone: addClientForm.phone.trim() || undefined,
           creditLimit: limit,
-        })
+        }
+        const results = await Promise.allSettled(
+          locationsWithoutDeposito.map((loc: any) =>
+            customersApi.create({ ...payload, locationId: loc.id })
+          )
+        )
+        const failed = results.filter((r) => r.status === "rejected")
+        if (failed.length === results.length) {
+          const msg = (failed[0] as PromiseRejectedResult)?.reason?.message
+          throw new Error(msg ?? "No se pudo crear el cliente en ningún local.")
+        }
+        if (failed.length > 0) {
+          setAddClientError(`Cliente creado en ${results.length - failed.length} local(es). Algunos locales fallaron (ej. CUIT duplicado).`)
+        }
       }
       setShowAddClient(false)
       setEditingClientId(null)
       setAddClientForm({ name: "", cuit: "", email: "", phone: "", creditLimit: "" })
-      const newClients = await runningAccountsApi.getClients(locationId)
+      const newClients = await runningAccountsApi.getClients()
       setClients(newClients)
       if (idEdited && selectedClient?.id === idEdited) {
         setSelectedClient(newClients.find((c: any) => c.id === idEdited) ?? null)
       }
     } catch (err: any) {
-      setAddClientError(err?.message ?? (editingClientId ? "Error al actualizar el cliente." : "Error al crear el cliente. ¿CUIT duplicado en este local?"))
+      setAddClientError(err?.message ?? (editingClientId ? "Error al actualizar el cliente." : "Error al crear el cliente. ¿CUIT duplicado en algún local?"))
     } finally {
       setAddingClient(false)
     }
@@ -314,23 +360,15 @@ export default function RunningAccountsPage() {
           Cuentas corrientes
         </h1>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-gray-600 dark:text-gray-400">Local</label>
-            <select
-              value={locationId}
-              onChange={(e) => { setLocationId(e.target.value); setSelectedClient(null) }}
-              className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-            >
-              <option value="">Seleccionar</option>
-              {locations.map((l) => (
-                <option key={l.id} value={l.id}>{l.name}</option>
-              ))}
-            </select>
-          </div>
           <button
             type="button"
-            onClick={() => { setEditingClientId(null); setShowAddClient(true); setAddClientError(null); setAddClientForm({ name: "", cuit: "", email: "", phone: "", creditLimit: "" }) }}
-            disabled={!locationId}
+            onClick={() => {
+              setEditingClientId(null)
+              setShowAddClient(true)
+              setAddClientError(null)
+              setAddClientForm({ name: "", cuit: "", email: "", phone: "", creditLimit: "" })
+            }}
+            disabled={locationsWithoutDeposito.length === 0}
             className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50 disabled:pointer-events-none"
           >
             <UserPlus className="h-4 w-4" />
@@ -342,13 +380,32 @@ export default function RunningAccountsPage() {
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm dark:border-gray-700 dark:bg-gray-800">
           <h2 className="mb-3 text-sm font-semibold uppercase text-gray-500 dark:text-gray-400">Clientes con cuenta corriente</h2>
+          {!loading && clients.length > 0 && (
+            <div className="mb-3">
+              <label htmlFor="client-search" className="sr-only">Buscar cliente</label>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                <input
+                  id="client-search"
+                  type="text"
+                  autoComplete="off"
+                  value={clientSearchQuery}
+                  onChange={(e) => setClientSearchQuery(e.target.value)}
+                  placeholder="Buscar por nombre, CUIT, email..."
+                  className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-9 pr-3 text-sm placeholder:text-gray-400 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white dark:placeholder:text-gray-500"
+                />
+              </div>
+            </div>
+          )}
           {loading ? (
             <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-amber-500" /></div>
           ) : clients.length === 0 ? (
-            <p className="py-4 text-sm text-gray-500">No hay clientes con límite de cuenta corriente en este local. Usá &quot;Agregar cliente&quot; para dar de alta uno; aparecerá también en Mesas al cerrar con Cuenta corriente.</p>
+            <p className="py-4 text-sm text-gray-500">No hay clientes con cuenta corriente. Usá &quot;Agregar cliente&quot; para dar de alta uno; aparecerá también en Mesas al cerrar con Cuenta corriente.</p>
+          ) : filteredClients.length === 0 ? (
+            <p className="py-4 text-sm text-gray-500">Ningún cliente coincide con la búsqueda.</p>
           ) : (
-            <ul className="space-y-1">
-              {clients.map((c) => (
+            <ul className="max-h-[70vh] space-y-1 overflow-y-auto">
+              {filteredClients.map((c) => (
                 <li key={c.id}>
                   <button
                     type="button"
@@ -437,8 +494,13 @@ export default function RunningAccountsPage() {
                   {orders.map((order) => (
                     <div key={order.id} className="rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden">
                       <div className="flex flex-wrap items-center justify-between gap-2 bg-gray-50 px-3 py-2 dark:bg-gray-700/50">
-                        <span className="text-sm font-medium">Pedido #{order.orderNumber} · {formatDate(order.closedAt)}</span>
-                        <span className="text-sm font-semibold tabular-nums">{formatCurrency(order.total ?? 0)}</span>
+                        <div className="min-w-0">
+                          <span className="text-sm font-medium">Pedido #{order.orderNumber} · {formatDate(order.closedAt)}</span>
+                          {order.location?.name && (
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Local: {order.location.name}</p>
+                          )}
+                        </div>
+                        <span className="text-sm font-semibold tabular-nums shrink-0">{formatCurrency(order.total ?? 0)}</span>
                       </div>
                       <ul className="divide-y divide-gray-100 dark:divide-gray-700">
                         {(order.items ?? []).map((item: any) => (
@@ -531,15 +593,15 @@ export default function RunningAccountsPage() {
                 <X className="h-5 w-5" />
               </button>
             </div>
-            {!editingClientId && <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">El cliente podrá aparecer en Mesas al cerrar con &quot;Cuenta corriente&quot;.</p>}
+            {!editingClientId && <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">El cliente se guardará en todos los locales (excepto depósito) y podrá aparecer en Mesas al cerrar con &quot;Cuenta corriente&quot;.</p>}
             <form onSubmit={handleAddClient} className="space-y-3">
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Nombre *</label>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Nombre / Razón social *</label>
                 <input
                   type="text"
                   value={addClientForm.name}
                   onChange={(e) => setAddClientForm((f) => ({ ...f, name: e.target.value }))}
-                  placeholder="Ej. Juan Pérez"
+                  placeholder="Ej. Juan Pérez o razón social"
                   className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
                   required
                 />

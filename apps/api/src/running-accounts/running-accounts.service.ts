@@ -9,14 +9,27 @@ export class RunningAccountsService {
     private readonly arcaFiscalService: ArcaFiscalService,
   ) {}
 
-  /** Lista clientes con cuenta corriente (creditLimit > 0) y total pendiente por cliente */
-  async getClients(locationId: string) {
+  /** Excluye locales cuyo nombre contiene "deposito" o "depósito" (case-insensitive). */
+  private isDepositoLocation(name: string): boolean {
+    const lower = (name ?? '').toLowerCase().normalize('NFD').replace(/\u0301/g, '');
+    return lower.includes('deposito');
+  }
+
+  /** Lista clientes con cuenta corriente de todos los locales excepto depósito. */
+  async getClients(_locationId?: string) {
+    const locations = await this.prisma.location.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true },
+    });
+    const locationIds = locations.filter((l) => !this.isDepositoLocation(l.name)).map((l) => l.id);
+    if (locationIds.length === 0) return [];
+
     const customers = await this.prisma.customer.findMany({
       where: {
-        locationId,
+        locationId: { in: locationIds },
         isActive: true,
-        creditLimit: { not: null, gt: 0 },
       },
+      include: { location: { select: { id: true, name: true } } },
       orderBy: { name: 'asc' },
     });
 
@@ -50,6 +63,8 @@ export class RunningAccountsService {
           creditLimit: c.creditLimit,
           pendingTotal: pending._sum.total ?? 0,
           ordersCount: count,
+          locationId: c.locationId,
+          locationName: c.location?.name ?? null,
         };
       }),
     );
@@ -93,6 +108,7 @@ export class RunningAccountsService {
           },
         },
         table: { select: { id: true, name: true } },
+        location: { select: { id: true, name: true } },
       },
     });
     return orders;

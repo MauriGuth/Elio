@@ -1,8 +1,8 @@
 import { api } from '../api';
 
 export const runningAccountsApi = {
-  getClients: (locationId: string) =>
-    api.get<any[]>('/running-accounts/clients', { locationId }),
+  getClients: (locationId?: string) =>
+    api.get<any[]>('/running-accounts/clients', locationId ? { locationId } : {}),
 
   getOrdersByCustomer: (locationId: string, customerId: string, month?: string) =>
     api.get<any[]>('/running-accounts/orders', { locationId, customerId, month }),

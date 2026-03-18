@@ -12,7 +12,7 @@ export class RunningAccountsController {
   constructor(private readonly service: RunningAccountsService) {}
 
   @Get('clients')
-  getClients(@Query('locationId') locationId: string) {
+  getClients(@Query('locationId') locationId?: string) {
     return this.service.getClients(locationId);
   }
 

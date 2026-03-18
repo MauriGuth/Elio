@@ -6,6 +6,7 @@ import { tablesApi } from "@/lib/api/tables"
 import { ordersApi } from "@/lib/api/orders"
 import { productsApi } from "@/lib/api/products"
 import { customersApi } from "@/lib/api/customers"
+import { runningAccountsApi } from "@/lib/api/running-accounts"
 import { authApi } from "@/lib/api/auth"
 import { cashRegistersApi } from "@/lib/api/cash-registers"
 import { getLocationKey, posStationSuffix } from "@/lib/api"
@@ -22,6 +23,7 @@ import {
   Receipt,
   Loader2,
   Search,
+  ChevronDown,
   X,
   MessageSquare,
   Users,
@@ -447,14 +449,28 @@ export default function TableOrderPage() {
   /** Clientes con cuenta corriente (para cerrar mesa a cuenta) */
   const [runningAccountCustomers, setRunningAccountCustomers] = useState<any[]>([])
   const [loadingRunningCustomers, setLoadingRunningCustomers] = useState(false)
+  const [runningAccountCustomerSearch, setRunningAccountCustomerSearch] = useState("")
+  const [runningAccountDropdownOpen, setRunningAccountDropdownOpen] = useState(false)
 
   useEffect(() => {
-    if (invoiceType !== "cuenta_corriente" || !locationId) return
+    if (invoiceType !== "cuenta_corriente") return
     setLoadingRunningCustomers(true)
-    customersApi.getAll(locationId, undefined, true).then((list) => {
+    runningAccountsApi.getClients().then((list) => {
       setRunningAccountCustomers(Array.isArray(list) ? list : [])
     }).catch(() => setRunningAccountCustomers([])).finally(() => setLoadingRunningCustomers(false))
-  }, [invoiceType, locationId])
+  }, [invoiceType])
+
+  const filteredRunningAccountCustomers = useMemo(() => {
+    const q = (runningAccountCustomerSearch ?? "").trim().toLowerCase().normalize("NFD").replace(/\u0301/g, "")
+    if (!q) return runningAccountCustomers
+    return runningAccountCustomers.filter((c: any) => {
+      const name = (c.name ?? "").toLowerCase().normalize("NFD").replace(/\u0301/g, "")
+      const legalName = (c.legalName ?? "").toLowerCase().normalize("NFD").replace(/\u0301/g, "")
+      const cuit = (c.cuit ?? "").replace(/\D/g, "")
+      const cuitQ = q.replace(/\D/g, "")
+      return name.includes(q) || legalName.includes(q) || (cuitQ.length >= 2 && cuit.includes(cuitQ))
+    })
+  }, [runningAccountCustomers, runningAccountCustomerSearch])
 
   /** Después de "Pre cierre de control" (impresión), se muestra Cerrar Cuenta para esta orden. */
   const [preCierreOrderId, setPreCierreOrderId] = useState<string | null>(null)
@@ -2533,18 +2549,64 @@ export default function TableOrderPage() {
                 ) : runningAccountCustomers.length === 0 ? (
                   <p className="text-sm text-amber-700">No hay clientes con cuenta corriente. Dales un límite en Gestión → Clientes.</p>
                 ) : (
-                  <select
-                    value={customerId ?? ""}
-                    onChange={(e) => setCustomerId(e.target.value || null)}
-                    className="w-full rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm text-gray-800"
-                  >
-                    <option value="">Elegir cliente</option>
-                    {runningAccountCustomers.map((c: any) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name} {c.creditLimit != null ? `(límite $${Number(c.creditLimit).toLocaleString("es-AR")})` : ""}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="relative w-full">
+                    <button
+                      type="button"
+                      onClick={() => setRunningAccountDropdownOpen((o) => !o)}
+                      className="flex w-full items-center justify-between rounded-lg border border-amber-300 bg-white px-3 py-2 text-left text-sm text-gray-800"
+                    >
+                      <span className="truncate">
+                        {customerId
+                          ? (() => {
+                              const c = runningAccountCustomers.find((x: any) => x.id === customerId)
+                              return c ? `${c.name}${c.creditLimit != null ? ` (límite $${Number(c.creditLimit).toLocaleString("es-AR")})` : ""}` : "Elegir cliente"
+                            })()
+                          : "Elegir cliente"}
+                      </span>
+                      <ChevronDown className="h-4 w-4 shrink-0 text-amber-600" />
+                    </button>
+                    {runningAccountDropdownOpen && (
+                      <div className="absolute left-0 right-0 top-full z-50 mt-1 w-full min-w-0 rounded-lg border border-amber-200 bg-white shadow-lg">
+                        <div className="border-b border-amber-100 p-2">
+                          <div className="relative">
+                            <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                            <input
+                              type="text"
+                              autoComplete="off"
+                              value={runningAccountCustomerSearch}
+                              onChange={(e) => setRunningAccountCustomerSearch(e.target.value)}
+                              placeholder="Buscar por nombre o CUIT..."
+                              className="w-full rounded-md border border-amber-200 py-2 pl-9 pr-2 text-sm focus:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                            />
+                          </div>
+                        </div>
+                        <ul className="max-h-48 overflow-y-auto py-1">
+                          {filteredRunningAccountCustomers.length === 0 ? (
+                            <li className="px-3 py-2 text-sm text-amber-700">Ningún cliente coincide con la búsqueda.</li>
+                          ) : (
+                            filteredRunningAccountCustomers.map((c: any) => (
+                              <li key={c.id}>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setCustomerId(c.id)
+                                    setRunningAccountDropdownOpen(false)
+                                    setRunningAccountCustomerSearch("")
+                                  }}
+                                  className={cn(
+                                    "w-full px-3 py-2 text-left text-sm",
+                                    customerId === c.id ? "bg-amber-100 font-medium text-amber-900" : "text-gray-800 hover:bg-amber-50"
+                                  )}
+                                >
+                                  {c.name} {c.creditLimit != null ? `(límite $${Number(c.creditLimit).toLocaleString("es-AR")})` : ""}
+                                </button>
+                              </li>
+                            ))
+                          )}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
             )}
