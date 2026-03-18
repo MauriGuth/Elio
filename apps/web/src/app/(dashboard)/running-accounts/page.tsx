@@ -160,7 +160,10 @@ export default function RunningAccountsPage() {
 
   const fetchClients = useCallback(() => {
     setLoading(true)
-    runningAccountsApi.getClients().then(setClients).catch(() => setClients([])).finally(() => setLoading(false))
+    runningAccountsApi.getClients().then((res) => {
+      const list = Array.isArray(res) ? res : (res as any)?.data
+      setClients(Array.isArray(list) ? list : [])
+    }).catch(() => setClients([])).finally(() => setLoading(false))
   }, [])
 
   useEffect(() => {
@@ -324,10 +327,12 @@ export default function RunningAccountsPage() {
       setShowAddClient(false)
       setEditingClientId(null)
       setAddClientForm({ name: "", cuit: "", email: "", phone: "", creditLimit: "" })
-      const newClients = await runningAccountsApi.getClients()
-      setClients(newClients)
+      const res = await runningAccountsApi.getClients()
+      const newClients = Array.isArray(res) ? res : (res as any)?.data ?? []
+      const list = Array.isArray(newClients) ? newClients : []
+      setClients(list)
       if (idEdited && selectedClient?.id === idEdited) {
-        setSelectedClient(newClients.find((c: any) => c.id === idEdited) ?? null)
+        setSelectedClient(list.find((c: any) => c.id === idEdited) ?? null)
       }
     } catch (err: any) {
       setAddClientError(err?.message ?? (editingClientId ? "Error al actualizar el cliente." : "Error al crear el cliente. ¿CUIT duplicado en algún local?"))

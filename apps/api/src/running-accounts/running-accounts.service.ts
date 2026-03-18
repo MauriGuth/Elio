@@ -21,8 +21,8 @@ export class RunningAccountsService {
       where: { isActive: true },
       select: { id: true, name: true },
     });
-    const locationIds = locations.filter((l) => !this.isDepositoLocation(l.name)).map((l) => l.id);
-    if (locationIds.length === 0) return [];
+    let locationIds = locations.filter((l) => !this.isDepositoLocation(l.name)).map((l) => l.id);
+    if (locationIds.length === 0) locationIds = locations.map((l) => l.id);
 
     const customers = await this.prisma.customer.findMany({
       where: {
@@ -68,7 +68,15 @@ export class RunningAccountsService {
         };
       }),
     );
-    return result;
+
+    const seenNames = new Set<string>();
+    return result.filter((c) => {
+      const key = (c.name ?? '').trim().toLowerCase();
+      if (!key) return true;
+      if (seenNames.has(key)) return false;
+      seenNames.add(key);
+      return true;
+    });
   }
 
   /** Órdenes a cuenta corriente de un cliente, opcionalmente filtradas por mes */

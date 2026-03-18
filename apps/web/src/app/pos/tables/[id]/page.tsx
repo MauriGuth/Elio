@@ -455,7 +455,8 @@ export default function TableOrderPage() {
   useEffect(() => {
     if (invoiceType !== "cuenta_corriente") return
     setLoadingRunningCustomers(true)
-    runningAccountsApi.getClients().then((list) => {
+    runningAccountsApi.getClients().then((res) => {
+      const list = Array.isArray(res) ? res : (res as any)?.data
       setRunningAccountCustomers(Array.isArray(list) ? list : [])
     }).catch(() => setRunningAccountCustomers([])).finally(() => setLoadingRunningCustomers(false))
   }, [invoiceType])
