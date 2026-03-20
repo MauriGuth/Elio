@@ -380,8 +380,8 @@ export class ProductsService {
     if (!product) {
       throw new NotFoundException(`Product with ID "${productId}" not found`);
     }
+    // Catálogo único: todos los grupos (legacy pueden tener product_id de otro plato)
     return this.prisma.productModifierGroup.findMany({
-      where: { productId },
       orderBy: { sortOrder: 'asc' },
       include: {
         options: {
@@ -402,7 +402,7 @@ export class ProductsService {
     await this.findById(productId);
     return this.prisma.productModifierGroup.create({
       data: {
-        productId,
+        productId: null,
         name: dto.name,
         sortOrder: dto.sortOrder ?? 0,
         required: dto.required ?? false,

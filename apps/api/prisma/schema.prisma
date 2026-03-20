@@ -241,7 +241,8 @@ model Product {
 
 model ProductModifierGroup {
   id        String   @id @default(cuid())
-  productId String   @map("product_id")
+  /** null = catálogo global: visible en todas las recetas / productos del sistema */
+  productId String?  @map("product_id")
   name      String
   sortOrder Int      @default(0) @map("sort_order")
   required  Boolean  @default(false)
@@ -250,7 +251,7 @@ model ProductModifierGroup {
   /** Máximo de opciones; 1 = elección única (radio). 0 = sin tope (multi). */
   maxSelect Int      @default(1) @map("max_select")
 
-  product               Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product               Product?             @relation(fields: [productId], references: [id], onDelete: Cascade)
   options               ProductModifierOption[]
   recipeIngredientLinks RecipeIngredient[]
 

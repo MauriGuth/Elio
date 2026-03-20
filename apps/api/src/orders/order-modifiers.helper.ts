@@ -37,8 +37,15 @@ export async function validateModifierSelections(
   const normalized =
     raw === null || raw === undefined ? null : normalizeModifierSelections(raw);
 
+  const restrict = options?.onlyValidateGroupIds;
+  /** Con IDs de receta: cargar esos grupos aunque legacy tengan otro product_id. Sin filtro: grupos del producto + globales (null). */
   const groupsAll = await db.productModifierGroup.findMany({
-    where: { productId },
+    where:
+      restrict !== undefined && restrict.length > 0
+        ? { id: { in: restrict } }
+        : {
+            OR: [{ productId }, { productId: null }],
+          },
     include: {
       options: { orderBy: { sortOrder: 'asc' }, select: { id: true } },
     },
@@ -52,7 +59,6 @@ export async function validateModifierSelections(
     return null;
   }
 
-  const restrict = options?.onlyValidateGroupIds;
   /** `[]` = la receta no exige ningún grupo (ej. variantes ocultas por exclusión de ingrediente) */
   const allowed =
     restrict !== undefined ? new Set(restrict) : null;

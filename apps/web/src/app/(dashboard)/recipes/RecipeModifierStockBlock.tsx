@@ -67,7 +67,7 @@ export function RecipeModifierStockBlock({
   if (loading) {
     return (
       <div className="rounded-lg border border-dashed border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 px-3 py-4 text-sm text-amber-900 dark:text-amber-100">
-        Cargando opciones de carta del producto…
+        Cargando modificadores de carta…
       </div>
     )
   }
@@ -76,8 +76,9 @@ export function RecipeModifierStockBlock({
   if (!hasOptions) {
     return (
       <p className="rounded-lg border border-dashed border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/50 px-3 py-4 text-sm text-gray-500 dark:text-gray-400">
-        Este producto no tiene grupos de modificadores en Stock → Modificadores de carta. Creá grupos y
-        opciones ahí; después cargá acá los insumos por cada opción.
+        No hay grupos con opciones en el catálogo global (Stock → Modificadores de carta). Creá grupos y
+        opciones ahí; aparecerán en todas las recetas al asignar un grupo a un ingrediente. Luego cargá
+        acá los insumos por cada opción.
       </p>
     )
   }

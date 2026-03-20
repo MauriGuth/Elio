@@ -247,9 +247,11 @@ export function ModifierGroupsPanel({
         </div>
       </div>
       <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">
-        Definí grupos con <strong>Crear grupo</strong> (nombre, obligatorio, máx. opciones) y añadí
-        opciones con Δ precio. Los <strong>insumos que se descuentan del stock</strong> por cada opción
-        cargalos en esta misma receta → cada ingrediente → variante del plato.
+        El catálogo de grupos es <strong>global</strong>: lo que crees acá aparece en <strong>todas</strong>{" "}
+        las recetas al elegir &quot;Grupo de modificadores&quot; en un ingrediente. Definí grupos con{" "}
+        <strong>Crear grupo</strong> (nombre, obligatorio, máx. opciones) y añadí opciones con Δ precio.
+        Los <strong>insumos que se descuentan del stock</strong> por cada opción cargalos en cada receta →
+        ingrediente → variante del plato.
       </p>
       {showRecipesLink ? (
         <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">

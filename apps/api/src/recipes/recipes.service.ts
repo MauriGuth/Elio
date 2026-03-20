@@ -14,7 +14,7 @@ import { getRecipePosContext } from './recipes-pos.helper';
 export class RecipesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Valida grupos de variantes en ingredientes: mismo producto de salida y sin duplicar grupo. */
+  /** Valida grupos de variantes en ingredientes: catálogo global y sin duplicar grupo. */
   private async validateIngredientModifierGroups(
     outputProductId: string | null | undefined,
     ingredients: Array<{ modifierGroupId?: string | null }>,
@@ -35,12 +35,12 @@ export class RecipesService {
       );
     }
     const groups = await this.prisma.productModifierGroup.findMany({
-      where: { id: { in: groupIds }, productId: outputProductId },
+      where: { id: { in: groupIds } },
       select: { id: true },
     });
     if (groups.length !== groupIds.length) {
       throw new BadRequestException(
-        'Uno o más grupos de variantes no existen o no corresponden al producto de salida.',
+        'Uno o más grupos de variantes no existen en el catálogo de modificadores.',
       );
     }
   }
