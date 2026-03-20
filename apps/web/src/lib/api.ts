@@ -1,10 +1,17 @@
-/** En producción (Vercel) usa /api para que el rewrite envíe la petición a Railway (NEXT_PUBLIC_API_URL). */
-function getApiUrl(): string {
+/** Asegura sufijo /api (Nest globalPrefix) aunque NEXT_PUBLIC_API_URL venga sin él. */
+function resolveEnvApiBase(): string {
+  const raw = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4010/api').replace(/\/+$/, '');
+  if (raw.endsWith('/api')) return raw;
+  return `${raw}/api`;
+}
+
+/** En producción (Vercel) usa /api del mismo origen para que el rewrite vaya a Railway y no haya CORS. */
+export function getApiUrl(): string {
   if (typeof window === 'undefined') {
-    return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4010/api';
+    return resolveEnvApiBase();
   }
   if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4010/api';
+    return resolveEnvApiBase();
   }
   return `${window.location.origin}/api`;
 }

@@ -1,9 +1,4 @@
-import { api, getUserKey } from '../api';
-
-const getApiUrl = () =>
-  typeof window !== 'undefined'
-    ? process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4010/api'
-    : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4010/api';
+import { api, getApiUrl, getUserKey } from '../api';
 
 /** Clave y validez de coordenadas GPS guardadas al permitir ubicación en /pos */
 const POS_GPS_STORAGE_KEY = 'elio_pos_gps_coords';
