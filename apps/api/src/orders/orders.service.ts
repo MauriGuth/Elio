@@ -11,6 +11,12 @@ import { UpdateOrderItemDto } from './dto/update-order-item.dto';
 import { CloseOrderDto } from './dto/close-order.dto';
 import { UpdateOrderSplitDto } from './dto/update-order-split.dto';
 import { ArcaFiscalService } from '../arca/arca.fiscal.service';
+import { validateModifierSelections } from './order-modifiers.helper';
+import { applyOrderItemSaleStock } from './order-item-sale-stock.helper';
+import {
+  getPrepMinutesByProductIdsForLocation,
+  getOrderItemRecipeModifierGroupIdsToValidate,
+} from '../recipes/recipes-pos.helper';
 
 @Injectable()
 export class OrdersService {
@@ -164,6 +170,27 @@ export class OrdersService {
     );
     const total = Math.round(subtotal * 100) / 100;
 
+    const resolvedItems: {
+      item: (typeof data.items)[0];
+      sel: Record<string, string[]> | null;
+    }[] = [];
+    for (const item of data.items) {
+      const groupIds = await getOrderItemRecipeModifierGroupIdsToValidate(
+        this.prisma,
+        item.productId,
+        item.excludedRecipeIngredientIds,
+      );
+      const sel = await validateModifierSelections(
+        this.prisma,
+        item.productId,
+        item.modifierSelections,
+        groupIds !== undefined
+          ? { onlyValidateGroupIds: groupIds }
+          : undefined,
+      );
+      resolvedItems.push({ item, sel });
+    }
+
     return this.prisma.$transaction(async (tx) => {
       const order = await tx.order.create({
         data: {
@@ -177,12 +204,14 @@ export class OrdersService {
           notes: data.notes,
           waiterId: userId,
           items: {
-            create: data.items.map((item) => ({
+            create: resolvedItems.map(({ item, sel }) => ({
               productId: item.productId,
               quantity: item.quantity,
               unitPrice: item.unitPrice,
               sector: item.sector,
               notes: item.notes,
+              modifierSelections:
+                sel && Object.keys(sel).length > 0 ? sel : undefined,
             })),
           },
         },
@@ -229,6 +258,20 @@ export class OrdersService {
       );
     }
 
+    const groupIds = await getOrderItemRecipeModifierGroupIdsToValidate(
+      this.prisma,
+      data.productId,
+      data.excludedRecipeIngredientIds,
+    );
+    const sel = await validateModifierSelections(
+      this.prisma,
+      data.productId,
+      data.modifierSelections,
+      groupIds !== undefined
+        ? { onlyValidateGroupIds: groupIds }
+        : undefined,
+    );
+
     return this.prisma.$transaction(async (tx) => {
       const item = await tx.orderItem.create({
         data: {
@@ -238,6 +281,8 @@ export class OrdersService {
           unitPrice: data.unitPrice,
           sector: data.sector,
           notes: data.notes,
+          modifierSelections:
+            sel && Object.keys(sel).length > 0 ? sel : undefined,
         },
         include: {
           product: {
@@ -468,39 +513,15 @@ export class OrdersService {
       // Crear movimientos de stock (venta) solo si NO es la mesa de errores de comandas
       if (!isSpecialTable) {
         for (const item of order.items) {
-          const stockLevel = await tx.stockLevel.findUnique({
-            where: {
-              productId_locationId: {
-                productId: item.productId,
-                locationId: order.locationId,
-              },
-            },
-          });
-
-          if (stockLevel) {
-            await tx.stockLevel.update({
-              where: {
-                productId_locationId: {
-                  productId: item.productId,
-                  locationId: order.locationId,
-                },
-              },
-              data: {
-                quantity: stockLevel.quantity - item.quantity,
-              },
-            });
-          }
-
-          await tx.stockMovement.create({
-            data: {
+          await applyOrderItemSaleStock(tx, {
+            locationId: order.locationId,
+            orderId: order.id,
+            userId,
+            item: {
               productId: item.productId,
-              locationId: order.locationId,
-              type: 'sale',
-              quantity: -item.quantity,
-              unitCost: item.unitPrice,
-              referenceType: 'order',
-              referenceId: order.id,
-              userId,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              modifierSelections: item.modifierSelections,
             },
           });
         }
@@ -874,12 +895,24 @@ export class OrdersService {
       orderBy: { createdAt: 'asc' },
     });
 
+    const allProductIds = [
+      ...new Set(
+        orders.flatMap((o) => o.items.map((i) => i.productId).filter(Boolean)),
+      ),
+    ];
+    const prepByProduct = await getPrepMinutesByProductIdsForLocation(
+      this.prisma,
+      allProductIds,
+      locationId,
+    );
+
     // Flatten product name into each item and group by status
     return orders.map((order) => {
       const flatItems = order.items.map((i) => ({
         ...i,
         productName: i.product?.name || 'Producto',
         productImage: i.product?.imageUrl || null,
+        prepTimeMinutes: prepByProduct.get(i.productId) ?? null,
       }));
 
       const pending = flatItems.filter((i) => i.status === 'pending');

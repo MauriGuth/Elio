@@ -13,6 +13,19 @@ export const recipesApi = {
 
   getById: (id: string) => api.get<any>(`/recipes/${id}`),
 
+  /** Receta activa del producto: grupos de variantes en ingredientes + filas para checklist POS. */
+  getPosContext: (productId: string) =>
+    api.get<{
+      recipeId: string | null
+      modifierGroupIds: string[]
+      ingredients: {
+        id: string
+        productId: string
+        name: string
+        modifierGroupId: string | null
+      }[]
+    }>(`/recipes/pos-context/${productId}`),
+
   create: (data: any) => api.post<any>('/recipes', data),
 
   update: (id: string, data: any) => api.patch<any>(`/recipes/${id}`, data),

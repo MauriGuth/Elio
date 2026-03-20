@@ -126,9 +126,20 @@ export class TablesService {
       throw new NotFoundException(`Table with ID "${id}" not found`);
     }
 
+    const openOrder = table.orders[0] ?? null;
+    const occupiedMinutes = openOrder
+      ? Math.floor(
+          (Date.now() - new Date(openOrder.openedAt).getTime()) / 60_000,
+        )
+      : 0;
+
+    // Misma forma que findAll: el POS usa currentOrderId para cargar el pedido.
     return {
       ...table,
-      currentOrder: table.orders[0] ?? null,
+      currentOrder: openOrder,
+      currentOrderId: openOrder?.id ?? null,
+      occupiedMinutes,
+      orders: undefined,
     };
   }
 

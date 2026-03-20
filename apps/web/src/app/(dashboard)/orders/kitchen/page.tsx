@@ -285,7 +285,7 @@ export default function KitchenPage() {
                               {item.name}
                             </span>
                             {item.notes && (
-                              <p className="mt-0.5 text-xs italic text-yellow-400/80">
+                              <p className="mt-1.5 rounded-lg border-l-4 border-yellow-400 bg-yellow-950/30 py-1.5 pl-2 pr-1 text-base font-bold leading-snug text-yellow-100 break-words">
                                 ⚠ {item.notes}
                               </p>
                             )}

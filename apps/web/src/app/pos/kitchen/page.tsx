@@ -5,6 +5,12 @@ import { ordersApi } from "@/lib/api/orders"
 import { authApi } from "@/lib/api/auth"
 import { getLocationKey } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import {
+  orderIsUrgent,
+  orderHasPendingOnBoard,
+  orderHasInProgressOnBoard,
+  type KdsBoardConfig,
+} from "@/lib/kitchen-display-urgency"
 import { unlockAudio, speakAnnouncement as speakAnnouncementChunked, cancelSpeech, speakShort } from "@/lib/speech"
 import {
   ChefHat,
@@ -212,7 +218,7 @@ function KitchenOrderCard({
                 {item.productName}
               </span>
               {item.notes && (
-                <p className="mt-0.5 text-xs italic text-amber-400/80">
+                <p className="mt-1.5 rounded-lg border-l-4 border-amber-400 bg-amber-950/35 py-1.5 pl-2 pr-1 text-base font-bold leading-snug text-amber-100 break-words">
                   {item.notes}
                 </p>
               )}
@@ -465,41 +471,22 @@ export default function KitchenPage() {
   }, [])
 
   /* ── helpers: solo cocina/delivery ── */
-  const filterItemsBySector = (order: any) => {
-    const kitchenItems = (order.items ?? []).filter((i: any) =>
-      KITCHEN_SECTORS.includes(i.sector)
-    )
-    if (sectorFilter === "all") return kitchenItems
-    return kitchenItems.filter((i: any) => i.sector === sectorFilter)
+  const boardCfg: KdsBoardConfig = {
+    allowedSectors: KITCHEN_SECTORS,
+    sectorFilter,
+    excludeSkipComanda: true,
   }
 
-  const hasItemsInStatus = (order: any, status: string) =>
-    filterItemsBySector(order).some((i: any) => i.status === status)
-
-  const hasPrepOverTime = (order: any, minutes: number) =>
-    filterItemsBySector(order).some(
-      (i: any) => i.status === "in_progress" && i.startedAt && minutesAgo(i.startedAt) >= minutes
-    )
-
-  const URGENT_PENDING_MIN = 10
-  const URGENT_PREP_MIN = 30
-
-  const urgentOrders = orders.filter((o) => {
-    const urgentPending = hasItemsInStatus(o, "pending") && minutesAgo(o.openedAt) >= URGENT_PENDING_MIN
-    const urgentPrep = hasPrepOverTime(o, URGENT_PREP_MIN)
-    return urgentPending || urgentPrep
-  })
+  const urgentOrders = orders.filter((o) => orderIsUrgent(o, boardCfg))
 
   const urgentIds = new Set(urgentOrders.map((o: any) => o.id))
 
   const pendingOrders = orders.filter(
-    (o) =>
-      !urgentIds.has(o.id) &&
-      hasItemsInStatus(o, "pending") && minutesAgo(o.openedAt) < URGENT_PENDING_MIN
+    (o) => !urgentIds.has(o.id) && orderHasPendingOnBoard(o, boardCfg)
   )
 
-  const inProgressOrders = orders.filter((o) =>
-    !urgentIds.has(o.id) && hasItemsInStatus(o, "in_progress")
+  const inProgressOrders = orders.filter(
+    (o) => !urgentIds.has(o.id) && orderHasInProgressOnBoard(o, boardCfg)
   )
 
   /* ── actions ── */

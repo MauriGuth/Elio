@@ -7,6 +7,13 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import {
+  CreateProductModifierGroupDto,
+  UpdateProductModifierGroupDto,
+  CreateProductModifierOptionDto,
+  UpdateProductModifierOptionDto,
+  ModifierStockLineInputDto,
+} from './dto/product-modifiers.dto';
 import { Prisma } from '../../generated/prisma';
 
 @Injectable()
@@ -362,6 +369,158 @@ export class ProductsService {
         location: true,
       },
       orderBy: { location: { name: 'asc' } },
+    });
+  }
+
+  async getProductModifiers(productId: string) {
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true },
+    });
+    if (!product) {
+      throw new NotFoundException(`Product with ID "${productId}" not found`);
+    }
+    return this.prisma.productModifierGroup.findMany({
+      where: { productId },
+      orderBy: { sortOrder: 'asc' },
+      include: {
+        options: {
+          orderBy: { sortOrder: 'asc' },
+          include: {
+            stockLines: {
+              include: {
+                product: { select: { id: true, name: true, sku: true, unit: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  async createModifierGroup(productId: string, dto: CreateProductModifierGroupDto) {
+    await this.findById(productId);
+    return this.prisma.productModifierGroup.create({
+      data: {
+        productId,
+        name: dto.name,
+        sortOrder: dto.sortOrder ?? 0,
+        required: dto.required ?? false,
+        minSelect: dto.minSelect ?? 0,
+        maxSelect: dto.maxSelect ?? 1,
+      },
+    });
+  }
+
+  async updateModifierGroup(groupId: string, dto: UpdateProductModifierGroupDto) {
+    const g = await this.prisma.productModifierGroup.findUnique({
+      where: { id: groupId },
+    });
+    if (!g) {
+      throw new NotFoundException(`Modifier group "${groupId}" not found`);
+    }
+    return this.prisma.productModifierGroup.update({
+      where: { id: groupId },
+      data: {
+        ...(dto.name !== undefined ? { name: dto.name } : {}),
+        ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+        ...(dto.required !== undefined ? { required: dto.required } : {}),
+        ...(dto.minSelect !== undefined ? { minSelect: dto.minSelect } : {}),
+        ...(dto.maxSelect !== undefined ? { maxSelect: dto.maxSelect } : {}),
+      },
+    });
+  }
+
+  async deleteModifierGroup(groupId: string) {
+    const g = await this.prisma.productModifierGroup.findUnique({
+      where: { id: groupId },
+    });
+    if (!g) {
+      throw new NotFoundException(`Modifier group "${groupId}" not found`);
+    }
+    await this.prisma.productModifierGroup.delete({ where: { id: groupId } });
+    return { success: true, id: groupId };
+  }
+
+  async createModifierOption(groupId: string, dto: CreateProductModifierOptionDto) {
+    const g = await this.prisma.productModifierGroup.findUnique({
+      where: { id: groupId },
+    });
+    if (!g) {
+      throw new NotFoundException(`Modifier group "${groupId}" not found`);
+    }
+    return this.prisma.productModifierOption.create({
+      data: {
+        groupId,
+        label: dto.label,
+        sortOrder: dto.sortOrder ?? 0,
+        priceDelta: dto.priceDelta ?? 0,
+      },
+    });
+  }
+
+  async updateModifierOption(optionId: string, dto: UpdateProductModifierOptionDto) {
+    const o = await this.prisma.productModifierOption.findUnique({
+      where: { id: optionId },
+    });
+    if (!o) {
+      throw new NotFoundException(`Modifier option "${optionId}" not found`);
+    }
+    return this.prisma.productModifierOption.update({
+      where: { id: optionId },
+      data: {
+        ...(dto.label !== undefined ? { label: dto.label } : {}),
+        ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
+        ...(dto.priceDelta !== undefined ? { priceDelta: dto.priceDelta } : {}),
+      },
+    });
+  }
+
+  async deleteModifierOption(optionId: string) {
+    const o = await this.prisma.productModifierOption.findUnique({
+      where: { id: optionId },
+    });
+    if (!o) {
+      throw new NotFoundException(`Modifier option "${optionId}" not found`);
+    }
+    await this.prisma.productModifierOption.delete({ where: { id: optionId } });
+    return { success: true, id: optionId };
+  }
+
+  async setModifierStockLines(optionId: string, lines: ModifierStockLineInputDto[]) {
+    const o = await this.prisma.productModifierOption.findUnique({
+      where: { id: optionId },
+    });
+    if (!o) {
+      throw new NotFoundException(`Modifier option "${optionId}" not found`);
+    }
+    const productIds = [...new Set(lines.map((l) => l.productId))];
+    if (productIds.length > 0) {
+      const found = await this.prisma.product.findMany({
+        where: { id: { in: productIds } },
+        select: { id: true },
+      });
+      if (found.length !== productIds.length) {
+        throw new NotFoundException('Uno o más productos (insumos) no existen');
+      }
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.productModifierStockLine.deleteMany({ where: { optionId } });
+      if (lines.length > 0) {
+        await tx.productModifierStockLine.createMany({
+          data: lines.map((l) => ({
+            optionId,
+            productId: l.productId,
+            quantity: l.quantity,
+          })),
+        });
+      }
+    });
+    return this.prisma.productModifierStockLine.findMany({
+      where: { optionId },
+      include: {
+        product: { select: { id: true, name: true, sku: true, unit: true } },
+      },
     });
   }
 }

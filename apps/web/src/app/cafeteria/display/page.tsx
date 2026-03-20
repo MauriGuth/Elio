@@ -6,6 +6,13 @@ import { ordersApi } from "@/lib/api/orders"
 import { authApi } from "@/lib/api/auth"
 import { api, getLocationKey } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import {
+  orderIsUrgent,
+  orderHasPendingOnBoard,
+  orderHasInProgressOnBoard,
+  urgentLeadMinutesForVoice,
+  type KdsBoardConfig,
+} from "@/lib/kitchen-display-urgency"
 import { unlockAudio, speakAnnouncement, cancelSpeech, speakShort } from "@/lib/speech"
 import {
   Coffee,
@@ -40,8 +47,6 @@ const SECTOR_LABELS: Record<string, string> = {
   bakery: "Panadería",
 }
 
-const URGENT_PENDING_MIN = 10
-const URGENT_PREP_MIN = 30
 const LEGACY_CAFETERIA_LOCATION_KEY = "elio_cafeteria_location"
 
 /* ── Helpers ── */
@@ -175,35 +180,40 @@ export default function CafeteriaDisplayPage() {
   const [, setTick] = useState(0)
   useEffect(() => { const id = setInterval(() => setTick((t) => t + 1), 3_000); return () => clearInterval(id) }, [])
 
-  const filterItems = (order: any) => {
-    const all = (order.items ?? []).filter((i: any) => CAFE_SECTORS.includes(i.sector))
-    if (sectorFilter === "all") return all
-    return all.filter((i: any) => i.sector === sectorFilter)
+  const boardCfg: KdsBoardConfig = {
+    allowedSectors: CAFE_SECTORS,
+    sectorFilter,
+    excludeSkipComanda: true,
   }
-  const hasItemsWithStatus = (order: any, status: string) => filterItems(order).some((i: any) => i.status === status)
-  const hasPrepOverTime = (order: any, minutes: number) => filterItems(order).some((i: any) => i.status === "in_progress" && i.startedAt && minutesAgo(i.startedAt) >= minutes)
 
-  const urgentOrders = orders.filter((o) => {
-    const urgentPending = hasItemsWithStatus(o, "pending") && minutesAgo(o.openedAt) >= URGENT_PENDING_MIN
-    const urgentPrep = hasPrepOverTime(o, URGENT_PREP_MIN)
-    return urgentPending || urgentPrep
-  })
+  const urgentOrders = orders.filter((o) => orderIsUrgent(o, boardCfg))
   const urgentIds = new Set(urgentOrders.map((o) => o.id))
-  const pendingOrders = orders.filter((o) => !urgentIds.has(o.id) && hasItemsWithStatus(o, "pending") && minutesAgo(o.openedAt) < URGENT_PENDING_MIN)
-  const inProgressOrders = orders.filter((o) => !urgentIds.has(o.id) && hasItemsWithStatus(o, "in_progress"))
+  const pendingOrders = orders.filter(
+    (o) => !urgentIds.has(o.id) && orderHasPendingOnBoard(o, boardCfg)
+  )
+  const inProgressOrders = orders.filter(
+    (o) => !urgentIds.has(o.id) && orderHasInProgressOnBoard(o, boardCfg)
+  )
 
   useEffect(() => {
     if (!voiceEnabled || urgentOrders.length === 0) return
+    const voiceCfg: KdsBoardConfig = {
+      allowedSectors: CAFE_SECTORS,
+      sectorFilter,
+      excludeSkipComanda: true,
+    }
     for (const order of urgentOrders) {
       if (!announcedUrgentRef.current.has(order.id)) {
         announcedUrgentRef.current.add(order.id)
         const tableName = order.tableName || order.table?.name || `Pedido ${order.orderNumber}`
-        const waitMin = minutesAgo(order.openedAt)
-        announcementQueueRef.current.push(`¡Atención cafetería! ${tableName} pasó a urgente. Lleva ${waitMin} minutos de demora.`)
+        const waitMin = urgentLeadMinutesForVoice(order, voiceCfg)
+        announcementQueueRef.current.push(
+          `¡Atención cafetería! ${tableName} pasó a urgente. Superó el tiempo de elaboración (unos ${waitMin} minutos).`
+        )
       }
     }
     if (announcementQueueRef.current.length > 0 && !isSpeakingRef.current) processQueue()
-  }, [urgentOrders, voiceEnabled, processQueue])
+  }, [urgentOrders, voiceEnabled, processQueue, sectorFilter])
 
   const handleStart = async (orderId: string, itemIds: string[]) => {
     setUpdating(orderId)
@@ -351,7 +361,11 @@ function CafeCard({ order, variant, sectorFilter, onStart, onReady, updating }: 
               <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-stone-700 text-xs font-bold text-white">{item.quantity}</span>
               <div className="min-w-0 flex-1">
                 <span className="text-sm font-semibold text-white">{item.productName}</span>
-                {item.notes && (<p className="mt-0.5 text-xs italic text-amber-400">Nota: {item.notes}</p>)}
+                {item.notes && (
+                  <p className="mt-1.5 rounded-lg border-l-4 border-amber-400 bg-amber-950/40 py-1.5 pl-2 pr-1 text-base font-bold leading-snug text-amber-100 break-words">
+                    {item.notes}
+                  </p>
+                )}
               </div>
               <span className={cn("shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium", item.sector === "coffee" ? "bg-amber-900/50 text-amber-300" : item.sector === "bar" ? "bg-purple-900/50 text-purple-300" : "bg-orange-900/50 text-orange-300")}>
                 {SECTOR_LABELS[item.sector] ?? item.sector}

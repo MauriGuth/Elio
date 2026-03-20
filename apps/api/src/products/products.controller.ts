@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Put,
   Delete,
   Param,
   Query,
@@ -18,6 +19,13 @@ import { extname } from 'path';
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import {
+  CreateProductModifierGroupDto,
+  UpdateProductModifierGroupDto,
+  CreateProductModifierOptionDto,
+  UpdateProductModifierOptionDto,
+  SetModifierStockLinesDto,
+} from './dto/product-modifiers.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 
 @Controller('products')
@@ -74,14 +82,69 @@ export class ProductsController {
     });
   }
 
+  @Get(':id/stock')
+  getStockByLocation(@Param('id') id: string) {
+    return this.productsService.getStockByLocation(id);
+  }
+
+  @Get(':id/modifiers')
+  getProductModifiers(@Param('id') id: string) {
+    return this.productsService.getProductModifiers(id);
+  }
+
   @Get(':id')
   findById(@Param('id') id: string) {
     return this.productsService.findById(id);
   }
 
-  @Get(':id/stock')
-  getStockByLocation(@Param('id') id: string) {
-    return this.productsService.getStockByLocation(id);
+  @Post(':id/modifier-groups')
+  createModifierGroup(
+    @Param('id') productId: string,
+    @Body() dto: CreateProductModifierGroupDto,
+  ) {
+    return this.productsService.createModifierGroup(productId, dto);
+  }
+
+  @Patch('modifier-groups/:groupId')
+  updateModifierGroup(
+    @Param('groupId') groupId: string,
+    @Body() dto: UpdateProductModifierGroupDto,
+  ) {
+    return this.productsService.updateModifierGroup(groupId, dto);
+  }
+
+  @Delete('modifier-groups/:groupId')
+  deleteModifierGroup(@Param('groupId') groupId: string) {
+    return this.productsService.deleteModifierGroup(groupId);
+  }
+
+  @Post('modifier-groups/:groupId/options')
+  createModifierOption(
+    @Param('groupId') groupId: string,
+    @Body() dto: CreateProductModifierOptionDto,
+  ) {
+    return this.productsService.createModifierOption(groupId, dto);
+  }
+
+  @Patch('modifier-options/:optionId')
+  updateModifierOption(
+    @Param('optionId') optionId: string,
+    @Body() dto: UpdateProductModifierOptionDto,
+  ) {
+    return this.productsService.updateModifierOption(optionId, dto);
+  }
+
+  @Delete('modifier-options/:optionId')
+  deleteModifierOption(@Param('optionId') optionId: string) {
+    return this.productsService.deleteModifierOption(optionId);
+  }
+
+  @Put('modifier-options/:optionId/stock-lines')
+  setModifierStockLines(
+    @Param('optionId') optionId: string,
+    @Body() dto: SetModifierStockLinesDto,
+  ) {
+    return this.productsService.setModifierStockLines(optionId, dto.lines);
   }
 
   @Post()

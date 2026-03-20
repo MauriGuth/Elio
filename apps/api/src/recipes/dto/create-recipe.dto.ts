@@ -34,6 +34,11 @@ export class CreateRecipeIngredientDto {
   @IsOptional()
   @IsInt()
   sortOrder?: number;
+
+  /** Grupo de opciones del producto de salida (ej. tipo de pan). El consumo base de esta fila no se suma; aplica stock por opción. */
+  @IsOptional()
+  @IsString()
+  modifierGroupId?: string | null;
 }
 
 export class CreateRecipeDto {

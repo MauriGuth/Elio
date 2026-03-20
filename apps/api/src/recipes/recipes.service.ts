@@ -1,13 +1,49 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRecipeDto } from './dto/create-recipe.dto';
 import { UpdateRecipeDto } from './dto/update-recipe.dto';
 import { CreateIngredientDto } from './dto/create-ingredient.dto';
 import { UpdateIngredientDto } from './dto/update-ingredient.dto';
+import { getRecipePosContext } from './recipes-pos.helper';
 
 @Injectable()
 export class RecipesService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /** Valida grupos de variantes en ingredientes: mismo producto de salida y sin duplicar grupo. */
+  private async validateIngredientModifierGroups(
+    outputProductId: string | null | undefined,
+    ingredients: Array<{ modifierGroupId?: string | null }>,
+  ) {
+    const groupIds = ingredients
+      .map((i) => i.modifierGroupId)
+      .filter((id): id is string => !!id);
+    if (groupIds.length === 0) return;
+    if (!outputProductId) {
+      throw new BadRequestException(
+        'Definí un producto de salida para poder vincular grupos de variantes en los ingredientes.',
+      );
+    }
+    const uniq = new Set(groupIds);
+    if (uniq.size !== groupIds.length) {
+      throw new BadRequestException(
+        'No podés usar el mismo grupo de variantes en más de un ingrediente.',
+      );
+    }
+    const groups = await this.prisma.productModifierGroup.findMany({
+      where: { id: { in: groupIds }, productId: outputProductId },
+      select: { id: true },
+    });
+    if (groups.length !== groupIds.length) {
+      throw new BadRequestException(
+        'Uno o más grupos de variantes no existen o no corresponden al producto de salida.',
+      );
+    }
+  }
 
   async findAll(filters: {
     search?: string;
@@ -87,6 +123,9 @@ export class RecipesService {
                 imageUrl: true,
               },
             },
+            modifierGroup: {
+              select: { id: true, name: true },
+            },
           },
           orderBy: { sortOrder: 'asc' },
         },
@@ -120,9 +159,19 @@ export class RecipesService {
     return recipe;
   }
 
+  /** Receta activa del producto: IDs de grupos de modificadores en ingredientes + filas para POS. */
+  findPosContextByProductId(productId: string) {
+    return getRecipePosContext(this.prisma, productId);
+  }
+
   async create(data: CreateRecipeDto, userId: string) {
     const { ingredients, locationIds = [], prepTimeByLocation = {}, ...recipeData } = data;
     const uniqueLocationIds = [...new Set((locationIds || []).filter(Boolean))];
+
+    await this.validateIngredientModifierGroups(
+      recipeData.productId ?? undefined,
+      ingredients ?? [],
+    );
 
     if (uniqueLocationIds.length > 0) {
       const locations = await this.prisma.location.findMany({
@@ -157,6 +206,7 @@ export class RecipesService {
                 isOptional: ing.isOptional ?? false,
                 notes: ing.notes,
                 sortOrder: ing.sortOrder ?? 0,
+                modifierGroupId: ing.modifierGroupId ?? null,
               })),
             }
           : undefined,
@@ -170,6 +220,7 @@ export class RecipesService {
             product: {
               select: { id: true, name: true, sku: true, unit: true },
             },
+            modifierGroup: { select: { id: true, name: true } },
           },
         },
         recipeLocations: {
@@ -185,8 +236,19 @@ export class RecipesService {
   }
 
   async update(id: string, data: UpdateRecipeDto) {
-    await this.findById(id);
+    const existing = await this.findById(id);
     const { ingredients, locationIds, prepTimeByLocation, ...recipeData } = data;
+
+    const outputPid =
+      recipeData.productId !== undefined
+        ? recipeData.productId
+        : existing.productId;
+    if (Array.isArray(ingredients)) {
+      await this.validateIngredientModifierGroups(
+        outputPid ?? undefined,
+        ingredients,
+      );
+    }
 
     const updateData: any = { ...recipeData };
     if (Array.isArray(ingredients)) {
@@ -199,6 +261,7 @@ export class RecipesService {
           isOptional: ing.isOptional ?? false,
           notes: ing.notes,
           sortOrder: ing.sortOrder ?? idx,
+          modifierGroupId: ing.modifierGroupId ?? null,
         })),
       };
     }
@@ -234,6 +297,7 @@ export class RecipesService {
             product: {
               select: { id: true, name: true, sku: true, unit: true },
             },
+            modifierGroup: { select: { id: true, name: true } },
           },
         },
         recipeLocations: {

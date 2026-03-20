@@ -18,9 +18,21 @@ import { recipesApi } from "@/lib/api/recipes"
 import { productsApi } from "@/lib/api/products"
 import { locationsApi } from "@/lib/api/locations"
 import { cn } from "@/lib/utils"
+import {
+  RecipeModifierStockBlock,
+  type ModifierStockRow,
+} from "./RecipeModifierStockBlock"
+import { ModifierGroupsManagerDialog } from "@/components/ModifierGroupsManagerDialog"
 
 type ProductOption = { id: string; name: string; sku: string; unit?: string }
-type IngredientRow = { productId: string; productQuery: string; qtyPerYield: number; unit: string }
+type IngredientRow = {
+  productId: string
+  productQuery: string
+  qtyPerYield: number
+  unit: string
+  /** Grupo de variantes del plato (producto de salida): consumo por opción, no por cantidad fija de esta fila */
+  modifierGroupId?: string
+}
 type FormState = {
   name: string
   yieldQty: number
@@ -63,6 +75,20 @@ export default function RecipesPage() {
   const [productOutputSearch, setProductOutputSearch] = useState("")
   const [productOutputDropdownOpen, setProductOutputDropdownOpen] = useState(false)
   const [openIngredientDropdownIndex, setOpenIngredientDropdownIndex] = useState<number | null>(null)
+  /** Modificadores del producto de salida: insumos por opción (misma API que Stock → modificadores) */
+  const [modifierGroupsData, setModifierGroupsData] = useState<any[]>([])
+  const [modifierLinesByOption, setModifierLinesByOption] = useState<
+    Record<string, ModifierStockRow[]>
+  >({})
+  const [modifiersLoading, setModifiersLoading] = useState(false)
+  const [openModifierStockDropdownKey, setOpenModifierStockDropdownKey] = useState<string | null>(
+    null,
+  )
+  const [optionPriceById, setOptionPriceById] = useState<Record<string, number>>({})
+  /** Borradores para crear grupo/variante desde la receta (clave = índice de fila) */
+  const [newOptionLabelByRow, setNewOptionLabelByRow] = useState<Record<string, string>>({})
+  const [newOptionPriceDeltaByRow, setNewOptionPriceDeltaByRow] = useState<Record<string, string>>({})
+  const [modifierMutating, setModifierMutating] = useState(false)
 
   const productLabel = useCallback((product: ProductOption) => {
     return product.sku ? `${product.name} (${product.sku})` : product.name
@@ -85,6 +111,99 @@ export default function RecipesPage() {
     }
     return map
   }, [productLabel, products])
+
+  const loadProductModifiers = useCallback(async () => {
+    if (!modalMode || !form.productId) return
+    setModifiersLoading(true)
+    try {
+      const data = await productsApi.getModifiers(form.productId)
+      const groups = Array.isArray(data) ? data : []
+      setModifierGroupsData(groups)
+      const map: Record<string, ModifierStockRow[]> = {}
+      for (const g of groups) {
+        for (const o of g.options || []) {
+          map[o.id] = (o.stockLines || []).map((sl: any) => ({
+            productId: sl.product.id,
+            productQuery: sl.product?.name
+              ? productLabel({
+                  id: sl.product.id,
+                  name: sl.product.name,
+                  sku: sl.product.sku ?? "",
+                  unit: sl.product.unit,
+                })
+              : "",
+            quantity: sl.quantity ?? 0,
+            unit: sl.product?.unit ?? "Und",
+          }))
+        }
+      }
+      setModifierLinesByOption(map)
+      const prices: Record<string, number> = {}
+      for (const gr of groups) {
+        for (const o of gr.options || []) {
+          prices[o.id] = Number(o.priceDelta) || 0
+        }
+      }
+      setOptionPriceById(prices)
+    } catch {
+      setModifierGroupsData([])
+      setModifierLinesByOption({})
+      setOptionPriceById({})
+    } finally {
+      setModifiersLoading(false)
+    }
+  }, [modalMode, form.productId, productLabel])
+
+  useEffect(() => {
+    if (!modalMode) {
+      setModifierGroupsData([])
+      setModifierLinesByOption({})
+      setOptionPriceById({})
+      setNewOptionLabelByRow({})
+      setNewOptionPriceDeltaByRow({})
+      return
+    }
+    if (!form.productId) {
+      setModifierGroupsData([])
+      setModifierLinesByOption({})
+      setOptionPriceById({})
+      return
+    }
+    void loadProductModifiers()
+  }, [modalMode, form.productId, loadProductModifiers])
+
+  const handleCreateModifierOptionFromRecipe = async (ingredientIndex: number) => {
+    const groupId = form.ingredients[ingredientIndex]?.modifierGroupId
+    if (!groupId) return
+    const label = (newOptionLabelByRow[String(ingredientIndex)] ?? "").trim()
+    if (!label) {
+      sileo.error({ title: "Ingresá el nombre de la variante (ej. Integral)" })
+      return
+    }
+    const raw = newOptionPriceDeltaByRow[String(ingredientIndex)]
+    const priceDelta =
+      raw === undefined || raw === "" ? 0 : Number.parseFloat(String(raw).replace(",", ".")) || 0
+    setModifierMutating(true)
+    try {
+      await productsApi.createModifierOption(groupId, { label, priceDelta })
+      setNewOptionLabelByRow((prev) => {
+        const next = { ...prev }
+        delete next[String(ingredientIndex)]
+        return next
+      })
+      setNewOptionPriceDeltaByRow((prev) => {
+        const next = { ...prev }
+        delete next[String(ingredientIndex)]
+        return next
+      })
+      await loadProductModifiers()
+      sileo.success({ title: "Variante agregada" })
+    } catch (e: any) {
+      sileo.error({ title: e?.message || "No se pudo agregar la variante" })
+    } finally {
+      setModifierMutating(false)
+    }
+  }
 
   const fetchRecipes = useCallback(async () => {
     setLoading(true)
@@ -169,6 +288,11 @@ export default function RecipesPage() {
     setFormError(null)
     setProductOutputSearch("")
     setProductOutputDropdownOpen(false)
+    setModifierGroupsData([])
+    setModifierLinesByOption({})
+    setOptionPriceById({})
+    setNewOptionLabelByRow({})
+    setNewOptionPriceDeltaByRow({})
   }
 
   const openEdit = async (recipe: any) => {
@@ -203,8 +327,11 @@ export default function RecipesPage() {
             : "",
           qtyPerYield: ing.qtyPerYield ?? 0,
           unit: ing.unit ?? ing.product?.unit ?? "Und",
+          modifierGroupId: ing.modifierGroupId ?? ing.modifierGroup?.id ?? "",
         })),
       })
+      setNewOptionLabelByRow({})
+      setNewOptionPriceDeltaByRow({})
       setModalMode("edit")
     } catch (err: any) {
       const msg = err.message || "Error al cargar la receta"
@@ -223,6 +350,12 @@ export default function RecipesPage() {
     setProductOutputSearch("")
     setProductOutputDropdownOpen(false)
     setOpenIngredientDropdownIndex(null)
+    setModifierGroupsData([])
+    setModifierLinesByOption({})
+    setOpenModifierStockDropdownKey(null)
+    setOptionPriceById({})
+    setNewOptionLabelByRow({})
+    setNewOptionPriceDeltaByRow({})
   }
 
   const addIngredient = () => {
@@ -230,10 +363,24 @@ export default function RecipesPage() {
       ...f,
       ingredients: [
         ...f.ingredients,
-        { productId: "", productQuery: "", qtyPerYield: 0, unit: "Und" },
+        { productId: "", productQuery: "", qtyPerYield: 0, unit: "Und", modifierGroupId: "" },
       ],
     }))
   }
+
+  const groupsAvailableForIngredientRow = useCallback(
+    (rowIndex: number) => {
+      const taken = new Set(
+        form.ingredients
+          .map((ing, i) => (i !== rowIndex ? ing.modifierGroupId : null))
+          .filter(Boolean) as string[],
+      )
+      return modifierGroupsData.filter(
+        (g) => !taken.has(g.id) || form.ingredients[rowIndex]?.modifierGroupId === g.id,
+      )
+    },
+    [form.ingredients, modifierGroupsData],
+  )
 
   const removeIngredient = (index: number) => {
     setForm((f) => ({
@@ -275,6 +422,88 @@ export default function RecipesPage() {
     })
   }
 
+  const addModifierStockRow = (optionId: string) => {
+    setModifierLinesByOption((prev) => ({
+      ...prev,
+      [optionId]: [
+        ...(prev[optionId] ?? []),
+        { productId: "", productQuery: "", quantity: 0, unit: "Und" },
+      ],
+    }))
+  }
+
+  const removeModifierStockRow = (optionId: string, index: number) => {
+    setModifierLinesByOption((prev) => {
+      const rows = [...(prev[optionId] ?? [])].filter((_, i) => i !== index)
+      return { ...prev, [optionId]: rows }
+    })
+  }
+
+  const updateModifierStockRow = (
+    optionId: string,
+    index: number,
+    field: keyof ModifierStockRow,
+    value: string | number,
+  ) => {
+    setModifierLinesByOption((prev) => {
+      const rows = [...(prev[optionId] ?? [])]
+      const row = { ...rows[index], [field]: value }
+      if (field === "productId") {
+        const prod = products.find((p) => p.id === value)
+        if (prod) {
+          row.unit = prod.unit ?? "Und"
+          row.productQuery = productLabel(prod)
+        }
+      }
+      rows[index] = row
+      return { ...prev, [optionId]: rows }
+    })
+  }
+
+  const updateModifierStockRowQuery = (optionId: string, index: number, query: string) => {
+    setModifierLinesByOption((prev) => {
+      const rows = [...(prev[optionId] ?? [])]
+      const current = rows[index]
+      const match = productsByQuery.get(query.trim().toLowerCase())
+      rows[index] = {
+        ...current,
+        productQuery: query,
+        productId: match?.id ?? "",
+        unit: match?.unit ?? current.unit,
+      }
+      return { ...prev, [optionId]: rows }
+    })
+  }
+
+  const persistModifierStockLines = async () => {
+    if (!form.productId) return
+    for (const g of modifierGroupsData) {
+      for (const o of g.options || []) {
+        const rows = modifierLinesByOption[o.id] ?? []
+        const merged = new Map<string, number>()
+        for (const r of rows) {
+          if (!r.productId) continue
+          merged.set(r.productId, (merged.get(r.productId) ?? 0) + r.quantity)
+        }
+        const lines = [...merged.entries()].map(([productId, quantity]) => ({
+          productId,
+          quantity,
+        }))
+        await productsApi.setModifierStockLines(o.id, lines)
+      }
+    }
+  }
+
+  const persistOptionPrices = async () => {
+    for (const g of modifierGroupsData) {
+      for (const o of g.options || []) {
+        const p = optionPriceById[o.id]
+        if (p === undefined) continue
+        await productsApi.updateModifierOption(o.id, { priceDelta: p })
+      }
+    }
+  }
+
   const saveForm = async () => {
     if (!form.name.trim()) {
       setFormError("El nombre de la receta es obligatorio.")
@@ -295,17 +524,30 @@ export default function RecipesPage() {
         prepTimeByLocation: form.prepTimeByLocation,
         productId: form.productId || undefined,
         ingredients: form.ingredients
-          .filter((i) => i.productId && i.qtyPerYield > 0)
+          .filter((i) => i.productId && (i.modifierGroupId || i.qtyPerYield > 0))
           .map((i) => ({
             productId: i.productId,
-            qtyPerYield: i.qtyPerYield,
+            qtyPerYield: i.modifierGroupId ? i.qtyPerYield || 0 : i.qtyPerYield,
             unit: i.unit || "Und",
+            modifierGroupId: i.modifierGroupId || undefined,
           })),
       }
       if (modalMode === "create") {
         await recipesApi.create(payload)
       } else if (editingRecipeId) {
         await recipesApi.update(editingRecipeId, payload)
+      }
+      if (form.productId) {
+        try {
+          await persistModifierStockLines()
+          await persistOptionPrices()
+        } catch (e: any) {
+          const msg = e?.message || "Error al guardar opciones de carta (insumos o precios)"
+          setFormError(msg)
+          sileo.error({ title: msg })
+          setFormLoading(false)
+          return
+        }
       }
       closeModal()
       fetchRecipes()
@@ -789,16 +1031,38 @@ export default function RecipesPage() {
               </div>
 
               <div>
-                <div className="mb-2 flex items-center justify-between">
-                  <label className="text-sm font-medium text-gray-700 dark:text-white">Ingredientes (cantidad por rendimiento)</label>
-                  <button
-                    type="button"
-                    onClick={addIngredient}
-                    className="inline-flex items-center gap-1 rounded border border-gray-300 dark:border-gray-600 px-2 py-1 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
-                  >
-                    <Plus className="h-3 w-3" />
-                    Agregar
-                  </button>
+                <div className="mb-2 flex flex-col gap-2">
+                  <div className="min-w-0">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-white">
+                      Ingredientes (cantidad por rendimiento)
+                    </label>
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      Podés vincular <strong>variantes</strong> (ej. tipo de pan) en cada fila. Con{" "}
+                      <strong>Ver variantes</strong> abrís el gestor completo (grupos, opciones, Δ precio)
+                      del producto de salida.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-end justify-end gap-2">
+                    {form.productId ? (
+                      <ModifierGroupsManagerDialog
+                        productId={form.productId}
+                        disabled={modifierMutating || modifiersLoading}
+                        onAfterChange={() => void loadProductModifiers()}
+                      />
+                    ) : (
+                      <p className="flex-1 text-right text-[11px] text-amber-800/90 dark:text-amber-200/80">
+                        Elegí producto de salida arriba para crear grupos de opciones.
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      onClick={addIngredient}
+                      className="inline-flex shrink-0 items-center gap-1 rounded border border-gray-300 dark:border-gray-600 px-2 py-1 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Agregar
+                    </button>
+                  </div>
                 </div>
                 <div className="space-y-2">
                   {form.ingredients.length === 0 ? (
@@ -819,8 +1083,12 @@ export default function RecipesPage() {
                       return (
                         <div
                           key={index}
-                          className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-700/50 p-2"
+                          className="space-y-2 rounded-lg border border-slate-300/80 dark:border-slate-600 bg-slate-50/70 dark:bg-slate-800/40 p-2"
                         >
+                          <div className="mb-1 inline-flex rounded-full border border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-700/70 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-200">
+                            Ingrediente base
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
                           <div className="relative min-w-[220px]">
                             <input
                               type="text"
@@ -897,12 +1165,130 @@ export default function RecipesPage() {
                           >
                             <Trash2 className="h-4 w-4" />
                           </button>
+                          </div>
+
+                          {form.productId ? (
+                            <div className="rounded-md border border-amber-300/70 dark:border-amber-700/60 bg-amber-50/50 dark:bg-amber-950/15 px-2 py-2">
+                              <div className="mb-1 inline-flex rounded-full border border-amber-300 dark:border-amber-700 bg-amber-100/80 dark:bg-amber-900/50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-100">
+                                Variantes (opcionales)
+                              </div>
+                              <label className="mb-1 block text-xs font-medium text-amber-900 dark:text-amber-100/90">
+                                Variantes del plato (grupo de opciones)
+                              </label>
+                              <select
+                                className="mb-2 w-full max-w-lg rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm text-gray-900 dark:text-white"
+                                value={row.modifierGroupId ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value
+                                  setForm((f) => {
+                                    const next = [...f.ingredients]
+                                    next[index] = {
+                                      ...next[index],
+                                      modifierGroupId: v || undefined,
+                                    }
+                                    return { ...f, ingredients: next }
+                                  })
+                                }}
+                              >
+                                <option value="">
+                                  Sin variantes — descuenta la cantidad de arriba al cerrar venta
+                                </option>
+                                {groupsAvailableForIngredientRow(index).map((g) => (
+                                  <option key={g.id} value={g.id}>
+                                    {g.name}
+                                  </option>
+                                ))}
+                              </select>
+
+                              {row.modifierGroupId ? (
+                                <>
+                                  <div className="mb-3 flex flex-wrap items-end gap-2 rounded-md border border-dashed border-gray-300 dark:border-gray-600 bg-white/50 dark:bg-gray-800/40 px-2 py-2">
+                                    <div className="min-w-[120px] flex-1">
+                                      <span className="mb-0.5 block text-[11px] font-medium text-gray-600 dark:text-gray-300">
+                                        Nueva variante (opción)
+                                      </span>
+                                      <input
+                                        type="text"
+                                        value={newOptionLabelByRow[String(index)] ?? ""}
+                                        onChange={(e) =>
+                                          setNewOptionLabelByRow((prev) => ({
+                                            ...prev,
+                                            [String(index)]: e.target.value,
+                                          }))
+                                        }
+                                        placeholder="Ej. Integral, sin gluten…"
+                                        disabled={modifierMutating || modifiersLoading}
+                                        className="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm text-gray-900 dark:text-white disabled:opacity-60"
+                                      />
+                                    </div>
+                                    <div className="w-24">
+                                      <span className="mb-0.5 block text-[11px] font-medium text-gray-600 dark:text-gray-300">
+                                        Δ precio
+                                      </span>
+                                      <input
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={newOptionPriceDeltaByRow[String(index)] ?? ""}
+                                        onChange={(e) =>
+                                          setNewOptionPriceDeltaByRow((prev) => ({
+                                            ...prev,
+                                            [String(index)]: e.target.value,
+                                          }))
+                                        }
+                                        placeholder="0"
+                                        disabled={modifierMutating || modifiersLoading}
+                                        className="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm tabular-nums text-gray-900 dark:text-white disabled:opacity-60"
+                                      />
+                                    </div>
+                                    <button
+                                      type="button"
+                                      disabled={modifierMutating || modifiersLoading}
+                                      onClick={() => handleCreateModifierOptionFromRecipe(index)}
+                                      className="inline-flex shrink-0 items-center rounded border border-gray-400 dark:border-gray-500 bg-white dark:bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-800 dark:text-gray-100 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50"
+                                    >
+                                      Agregar variante
+                                    </button>
+                                  </div>
+
+                                  <p className="mb-2 text-xs text-amber-900/90 dark:text-amber-100/80">
+                                    Precio de venta extra y stock por cada variante. Al cerrar la mesa no se
+                                    suma la cantidad fija de arriba para esta fila; solo lo que elijas acá
+                                    según la opción en el POS.
+                                  </p>
+                                  <RecipeModifierStockBlock
+                                    loading={modifiersLoading}
+                                    groups={modifierGroupsData.filter(
+                                      (g) => g.id === row.modifierGroupId,
+                                    )}
+                                    linesByOption={modifierLinesByOption}
+                                    products={products}
+                                    productsById={productsById}
+                                    productsByQuery={productsByQuery}
+                                    productLabel={productLabel}
+                                    openDropdownKey={openModifierStockDropdownKey}
+                                    setOpenDropdownKey={setOpenModifierStockDropdownKey}
+                                    addRow={addModifierStockRow}
+                                    removeRow={removeModifierStockRow}
+                                    updateRow={updateModifierStockRow}
+                                    updateRowQuery={updateModifierStockRowQuery}
+                                    dropdownKeyPrefix={`ing${index}-`}
+                                    optionPrices={optionPriceById}
+                                    onOptionPriceChange={(oid, p) =>
+                                      setOptionPriceById((s) => ({ ...s, [oid]: p }))
+                                    }
+                                    hideGroupTitles
+                                  />
+                                </>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </div>
                       )
                     })
                   )}
                 </div>
               </div>
+
             </div>
 
             <div className="sticky bottom-0 flex justify-end gap-2 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/80 px-6 py-4">

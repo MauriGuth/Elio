@@ -12,6 +12,32 @@ export const productsApi = {
 
   getStock: (id: string) => api.get<any[]>(`/products/${id}/stock`),
 
+  /** Grupos de modificadores + opciones + líneas de stock (insumos extra por opción). */
+  getModifiers: (id: string) => api.get<any[]>(`/products/${id}/modifiers`),
+
+  createModifierGroup: (productId: string, data: Record<string, unknown>) =>
+    api.post(`/products/${productId}/modifier-groups`, data),
+
+  updateModifierGroup: (groupId: string, data: Record<string, unknown>) =>
+    api.patch(`/products/modifier-groups/${groupId}`, data),
+
+  deleteModifierGroup: (groupId: string) =>
+    api.delete(`/products/modifier-groups/${groupId}`),
+
+  createModifierOption: (groupId: string, data: Record<string, unknown>) =>
+    api.post(`/products/modifier-groups/${groupId}/options`, data),
+
+  updateModifierOption: (optionId: string, data: Record<string, unknown>) =>
+    api.patch(`/products/modifier-options/${optionId}`, data),
+
+  deleteModifierOption: (optionId: string) =>
+    api.delete(`/products/modifier-options/${optionId}`),
+
+  setModifierStockLines: (
+    optionId: string,
+    lines: { productId: string; quantity: number }[],
+  ) => api.put(`/products/modifier-options/${optionId}/stock-lines`, { lines }),
+
   /** Sube la imagen pasando por la ruta del front (proxy) para evitar CORS y rutas incorrectas */
   uploadImage: async (file: File): Promise<{ url: string }> => {
     const form = new FormData();

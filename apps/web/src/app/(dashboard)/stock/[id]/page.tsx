@@ -1195,6 +1195,19 @@ export default function ProductDetailPage() {
         </div>
       )}
 
+      {product.isSellable ? (
+        <div className="mb-6 rounded-xl border border-amber-200/80 bg-amber-50/50 dark:border-amber-900/50 dark:bg-amber-950/20 px-4 py-3 text-sm text-amber-950 dark:text-amber-100/90">
+          <p className="font-medium">Modificadores de carta (opciones en el POS)</p>
+          <p className="mt-1 text-xs text-amber-900/90 dark:text-amber-100/75">
+            Los grupos y opciones del menú se configuran en{" "}
+            <Link href="/recipes" className="font-semibold underline hover:no-underline">
+              Recetas
+            </Link>
+            : abrí la receta de este producto y usá &quot;Ver variantes&quot; junto a ingredientes.
+          </p>
+        </div>
+      ) : null}
+
       {/* -------- Stock por Ubicación -------- */}
       <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6">
         <div className="mb-4 flex items-center gap-2">

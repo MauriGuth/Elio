@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation"
 import { tablesApi } from "@/lib/api/tables"
 import { ordersApi } from "@/lib/api/orders"
 import { productsApi } from "@/lib/api/products"
+import { recipesApi } from "@/lib/api/recipes"
 import { customersApi } from "@/lib/api/customers"
 import { runningAccountsApi } from "@/lib/api/running-accounts"
 import { authApi } from "@/lib/api/auth"
@@ -54,6 +55,132 @@ interface PendingItem {
   unitPrice: number
   sector: "kitchen" | "bar" | "coffee" | "bakery" | "delivery"
   notes: string
+  /** Claves = id de grupo Prisma; valor = optionId o lista (multi). */
+  modifierSelections?: Record<string, string | string[]>
+  /** Texto corto para comanda / lista (ej. "Integral · Dip hummus"). */
+  modifierSummary?: string
+  /** IDs de filas de `recipe_ingredients` que el cliente quitó del plato (POS). */
+  excludedRecipeIngredientIds?: string[]
+}
+
+function modifierSelectionsKey(s?: Record<string, string | string[]>): string {
+  if (!s || Object.keys(s).length === 0) return "{}"
+  const keys = Object.keys(s).sort()
+  const norm: Record<string, string[]> = {}
+  for (const k of keys) {
+    const v = s[k]
+    norm[k] = (Array.isArray(v) ? v : [v]).filter(Boolean).sort()
+  }
+  return JSON.stringify(norm)
+}
+
+function excludedIngredientKey(ids?: string[]): string {
+  if (!ids?.length) return "[]"
+  return JSON.stringify([...new Set(ids)].sort())
+}
+
+function pendingLineMatchKey(
+  i: Pick<PendingItem, "modifierSelections" | "excludedRecipeIngredientIds">
+): string {
+  return `${modifierSelectionsKey(i.modifierSelections)}|${excludedIngredientKey(i.excludedRecipeIngredientIds)}`
+}
+
+function filterModifierGroupsByRecipe(
+  groups: any[],
+  modifierGroupIds: string[]
+): any[] {
+  if (!modifierGroupIds?.length) return groups || []
+  const allowed = new Set(modifierGroupIds)
+  return (groups || []).filter((g) => allowed.has(g.id))
+}
+
+/** Grupos de modificadores ligados a un ingrediente de receta que el cliente quitó → no se muestran (ej. tipo de pan si no va pan). */
+function hiddenModifierGroupIdsFromExcludedIngredients(
+  recipeIngredients: { id: string; modifierGroupId?: string | null }[],
+  excludedIngredientIds: string[]
+): Set<string> {
+  const ex = new Set(excludedIngredientIds)
+  const hidden = new Set<string>()
+  for (const ing of recipeIngredients || []) {
+    if (ex.has(ing.id) && ing.modifierGroupId) {
+      hidden.add(ing.modifierGroupId)
+    }
+  }
+  return hidden
+}
+
+function visibleModifierGroupsForPosModal(
+  groups: any[],
+  recipeIngredients: { id: string; modifierGroupId?: string | null }[],
+  excludedIngredientIds: string[]
+): any[] {
+  const hidden = hiddenModifierGroupIdsFromExcludedIngredients(
+    recipeIngredients,
+    excludedIngredientIds
+  )
+  return (groups || []).filter((g) => !hidden.has(g.id))
+}
+
+function fullPosModifierSummary(
+  groups: any[],
+  selections: Record<string, string | string[]>,
+  recipeIngredients: { id: string; name: string }[],
+  excludedIngredientIds: string[]
+): string {
+  const opt = summaryFromSelections(groups, selections)
+  const excludedNames = recipeIngredients
+    .filter((r) => excludedIngredientIds.includes(r.id))
+    .map((r) => r.name)
+  const sin =
+    excludedNames.length > 0 ? `Sin: ${excludedNames.join(", ")}` : ""
+  return [opt, sin].filter(Boolean).join(" · ")
+}
+
+function defaultModifierSelections(groups: any[]): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = {}
+  for (const g of groups || []) {
+    const opts = g.options || []
+    if (!g.required || opts.length === 0) continue
+    const maxSel = g.maxSelect ?? 1
+    if (maxSel === 1) out[g.id] = opts[0].id
+    else out[g.id] = [opts[0].id]
+  }
+  return out
+}
+
+function extraPriceFromSelections(
+  groups: any[],
+  selections: Record<string, string | string[]>
+): number {
+  const deltaByOption = new Map<string, number>()
+  for (const g of groups || []) {
+    for (const o of g.options || []) {
+      deltaByOption.set(o.id, Number(o.priceDelta) || 0)
+    }
+  }
+  let extra = 0
+  for (const v of Object.values(selections)) {
+    const ids = Array.isArray(v) ? v : [v]
+    for (const id of ids) extra += deltaByOption.get(id) || 0
+  }
+  return Math.round(extra * 100) / 100
+}
+
+function summaryFromSelections(
+  groups: any[],
+  selections: Record<string, string | string[]>
+): string {
+  const parts: string[] = []
+  for (const g of groups || []) {
+    const sel = selections[g.id]
+    if (sel == null) continue
+    const ids = Array.isArray(sel) ? sel : [sel]
+    if (ids.length === 0) continue
+    const labelById = new Map((g.options || []).map((o: any) => [o.id, o.label]))
+    const labels = ids.map((id) => labelById.get(id)).filter(Boolean)
+    if (labels.length) parts.push(labels.join(" + "))
+  }
+  return parts.join(" · ")
 }
 
 /* ── Constants ── */
@@ -407,6 +534,44 @@ export default function TableOrderPage() {
 
   /* ── pending (local) items ── */
   const [pendingItems, setPendingItems] = useState<PendingItem[]>([])
+  /** Cache GET /products/:id/modifiers */
+  const modifiersCacheRef = useRef<Map<string, any[]>>(new Map())
+  /** Tras voz: platos pendientes de completar en el mismo modal (uno tras otro). */
+  const voiceModifierQueueRef = useRef<
+    Array<{
+      product: any
+      quantity: number
+      sector: PendingItem["sector"]
+      notes: string
+      groups: any[]
+      recipeIngredients: {
+        id: string
+        productId: string
+        name: string
+        modifierGroupId?: string | null
+      }[]
+    }>
+  >([])
+  /** Modal de opciones al tocar un plato con modificadores configurados */
+  const [modifierModal, setModifierModal] = useState<{
+    product: any
+    groups: any[]
+    selections: Record<string, string | string[]>
+    recipeIngredients: {
+      id: string
+      productId: string
+      name: string
+      modifierGroupId?: string | null
+    }[]
+    excludedIngredientIds: string[]
+    /** Si viene de comando de voz: cantidad, sector y notas del match. */
+    voiceMeta?: {
+      quantity: number
+      sector: PendingItem["sector"]
+      notes: string
+    }
+  } | null>(null)
+  const [modifierModalLoading, setModifierModalLoading] = useState(false)
 
   /* ── UI ── */
   const [loading, setLoading] = useState(true)
@@ -649,9 +814,60 @@ export default function TableOrderPage() {
     }
   }, [voiceTranscript, products])
 
-  const confirmVoiceItems = useCallback(() => {
+  const confirmVoiceItems = useCallback(async () => {
+    type Queued = (typeof voiceModifierQueueRef.current)[number]
+    const modalQueue: Queued[] = []
+    const directLabels: string[] = []
+
     for (const match of voiceMatches) {
-      const existing = !match.notes ? pendingItems.find((i) => i.productId === match.product.id) : null
+      let groups: any[] = []
+      try {
+        if (modifiersCacheRef.current.has(match.product.id)) {
+          groups = modifiersCacheRef.current.get(match.product.id) || []
+        } else {
+          const raw = await productsApi.getModifiers(match.product.id)
+          groups = Array.isArray(raw) ? raw : []
+          modifiersCacheRef.current.set(match.product.id, groups)
+        }
+      } catch {
+        groups = []
+      }
+      const posCtx = await recipesApi.getPosContext(match.product.id).catch(() => ({
+        modifierGroupIds: [] as string[],
+        ingredients: [] as {
+          id: string
+          productId: string
+          name: string
+          modifierGroupId?: string | null
+        }[],
+      }))
+      const groupsFiltered = filterModifierGroupsByRecipe(
+        groups,
+        posCtx.modifierGroupIds ?? []
+      )
+      const needsModifierModal =
+        groupsFiltered.length > 0 || (posCtx.ingredients?.length ?? 0) > 0
+
+      if (needsModifierModal) {
+        modalQueue.push({
+          product: match.product,
+          quantity: match.quantity,
+          sector: match.sector,
+          notes: match.notes || "",
+          groups: groupsFiltered,
+          recipeIngredients: posCtx.ingredients ?? [],
+        })
+        continue
+      }
+
+      const unitPrice = Number(match.product.salePrice) || 0
+      const emptyKey = pendingLineMatchKey({})
+      const existing = !match.notes
+        ? pendingItems.find(
+            (i) =>
+              i.productId === match.product.id && pendingLineMatchKey(i) === emptyKey
+          )
+        : null
       if (existing) {
         setPendingItems((prev) =>
           prev.map((i) =>
@@ -668,20 +884,50 @@ export default function TableOrderPage() {
             productId: match.product.id,
             productName: match.product.name,
             quantity: match.quantity,
-            unitPrice: match.product.salePrice,
+            unitPrice,
             sector: match.sector,
             notes: match.notes || "",
           },
         ])
       }
+      const base = `${match.quantity} ${match.product.name}`
+      directLabels.push(match.notes ? `${base} (${match.notes})` : base)
     }
-    // Voice confirmation
+
+    if (modalQueue.length > 0) {
+      voiceModifierQueueRef.current = modalQueue.slice(1)
+      const first = modalQueue[0]!
+      setModifierModal({
+        product: first.product,
+        groups: first.groups,
+        selections: defaultModifierSelections(first.groups),
+        recipeIngredients: first.recipeIngredients,
+        excludedIngredientIds: [],
+        voiceMeta: {
+          quantity: first.quantity,
+          sector: first.sector,
+          notes: first.notes,
+        },
+      })
+    }
+
     const synth = window.speechSynthesis
-    const itemNames = voiceMatches.map((m) => {
-      const base = `${m.quantity} ${m.product.name}`
-      return m.notes ? `${base} (${m.notes})` : base
-    }).join(", ")
-    const utt = new SpeechSynthesisUtterance(`Agregado: ${itemNames}`)
+    let phrase: string
+    if (modalQueue.length > 0) {
+      if (directLabels.length > 0) {
+        phrase = `Agregado: ${directLabels.join(", ")}. Completá opciones en pantalla.`
+      } else if (modalQueue.length === 1) {
+        phrase = "Elegí opciones del plato en pantalla."
+      } else {
+        phrase = `Hay ${modalQueue.length} platos. Elegí las opciones del primero en pantalla.`
+      }
+    } else {
+      phrase = `Agregado: ${voiceMatches.map((m) => {
+        const base = `${m.quantity} ${m.product.name}`
+        return m.notes ? `${base} (${m.notes})` : base
+      }).join(", ")}`
+    }
+    const utt = new SpeechSynthesisUtterance(phrase)
     utt.lang = "es-AR"
     utt.rate = 1.1
     synth.speak(utt)
@@ -746,6 +992,8 @@ export default function TableOrderPage() {
   const fetchData = useCallback(async () => {
     setLoading(true)
     setError("")
+    setTable(null)
+    setOrder(null)
     try {
       const tableData = await tablesApi.getById(tableId)
       setTable(tableData)
@@ -784,9 +1032,11 @@ export default function TableOrderPage() {
       }
 
       // load existing order (división de mesa viene del backend para mozo y cajero)
-      if (tableData.currentOrderId) {
+      const openOrderId =
+        tableData.currentOrderId ?? tableData.currentOrder?.id ?? null
+      if (openOrderId) {
         try {
-          const orderData = await ordersApi.getById(tableData.currentOrderId)
+          const orderData = await ordersApi.getById(openOrderId)
           setOrder(orderData)
           if (typeof orderData?.customerCount === "number" && orderData.customerCount >= 1)
             setCustomerCount(Math.min(orderData.customerCount, 20))
@@ -801,8 +1051,19 @@ export default function TableOrderPage() {
       } else {
         setOrder(null)
       }
-    } catch {
-      setError("Error al cargar datos de la mesa")
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Error al cargar datos de la mesa"
+      const notFound =
+        /not found|no encontrad|404/i.test(msg) ||
+        /Table with ID/i.test(msg)
+      setError(
+        notFound
+          ? "Esta mesa no existe en este local (enlace viejo, mesa eliminada u otro entorno)."
+          : msg
+      )
+      setTable(null)
+      setOrder(null)
       setProducts([])
     } finally {
       setLoading(false)
@@ -917,12 +1178,62 @@ export default function TableOrderPage() {
     order.items.every((i: any) => i.status === "served")
 
   /* ── add product ── */
-  const addProduct = (product: any) => {
+  const addProduct = async (product: any) => {
     if (locationId && !hasOpenShift) {
       sileo.warning({ title: "Abra un turno para cargar la mesa", description: "Vaya a Caja y abra el turno." })
       return
     }
-    const existing = pendingItems.find((i) => i.productId === product.id)
+    setModifierModalLoading(true)
+    try {
+      let groups: any[] = []
+      if (modifiersCacheRef.current.has(product.id)) {
+        groups = modifiersCacheRef.current.get(product.id) || []
+      } else {
+        try {
+          const raw = await productsApi.getModifiers(product.id)
+          groups = Array.isArray(raw) ? raw : []
+        } catch {
+          groups = []
+        }
+        modifiersCacheRef.current.set(product.id, groups)
+      }
+
+      const posCtx = await recipesApi.getPosContext(product.id).catch(() => ({
+        modifierGroupIds: [] as string[],
+        ingredients: [] as {
+          id: string
+          productId: string
+          name: string
+          modifierGroupId?: string | null
+        }[],
+      }))
+
+      const filtered = filterModifierGroupsByRecipe(
+        groups,
+        posCtx.modifierGroupIds ?? []
+      )
+      const openModal =
+        filtered.length > 0 || (posCtx.ingredients?.length ?? 0) > 0
+
+      if (openModal) {
+        voiceModifierQueueRef.current = []
+        setModifierModal({
+          product,
+          groups: filtered,
+          selections: defaultModifierSelections(filtered),
+          recipeIngredients: posCtx.ingredients ?? [],
+          excludedIngredientIds: [],
+        })
+        return
+      }
+    } finally {
+      setModifierModalLoading(false)
+    }
+
+    const emptyKey = pendingLineMatchKey({})
+    const existing = pendingItems.find(
+      (i) => i.productId === product.id && pendingLineMatchKey(i) === emptyKey
+    )
     if (existing) {
       setPendingItems((prev) =>
         prev.map((i) =>
@@ -943,6 +1254,155 @@ export default function TableOrderPage() {
         },
       ])
     }
+  }
+
+  const closeModifierModal = () => {
+    voiceModifierQueueRef.current = []
+    setModifierModal(null)
+  }
+
+  const openNextVoiceModifierFromQueue = () => {
+    const next = voiceModifierQueueRef.current.shift()
+    if (!next) {
+      setModifierModal(null)
+      return
+    }
+    setModifierModal({
+      product: next.product,
+      groups: next.groups,
+      selections: defaultModifierSelections(next.groups),
+      recipeIngredients: next.recipeIngredients,
+      excludedIngredientIds: [],
+      voiceMeta: {
+        quantity: next.quantity,
+        sector: next.sector,
+        notes: next.notes,
+      },
+    })
+  }
+
+  type ModifierModalState = NonNullable<typeof modifierModal>
+
+  const commitModifierModalState = (
+    m: ModifierModalState,
+    selections: Record<string, string | string[]>,
+    excludedIngredientIds: string[]
+  ) => {
+    const { product, groups, recipeIngredients, voiceMeta } = m
+    const visibleGroups = visibleModifierGroupsForPosModal(
+      groups,
+      recipeIngredients,
+      excludedIngredientIds
+    )
+    for (const g of visibleGroups) {
+      const sel = selections[g.id]
+      const n = Array.isArray(sel) ? sel.length : sel ? 1 : 0
+      if (g.required && n === 0) {
+        sileo.error({ title: "Faltan opciones", description: `Elegí opciones en "${g.name}".` })
+        return
+      }
+      if (g.minSelect > 0 && n < g.minSelect) {
+        sileo.error({
+          title: "Faltan opciones",
+          description: `En "${g.name}" necesitás al menos ${g.minSelect}.`,
+        })
+        return
+      }
+      if (n > 1) {
+        sileo.error({
+          title: "Una opción por grupo",
+          description: `En "${g.name}" solo podés elegir una opción.`,
+        })
+        return
+      }
+    }
+    const normalizedSelections: Record<string, string | string[]> = {}
+    for (const g of visibleGroups) {
+      const v = selections[g.id]
+      if (v == null) continue
+      const one = Array.isArray(v) ? v[0] : v
+      if (one) normalizedSelections[g.id] = one
+    }
+    const extra = extraPriceFromSelections(visibleGroups, normalizedSelections)
+    const unitPrice = Math.round(((Number(product.salePrice) || 0) + extra) * 100) / 100
+    const summary = fullPosModifierSummary(
+      visibleGroups,
+      normalizedSelections,
+      recipeIngredients,
+      excludedIngredientIds
+    )
+    const key = pendingLineMatchKey({
+      modifierSelections:
+        Object.keys(normalizedSelections).length > 0 ? normalizedSelections : undefined,
+      excludedRecipeIngredientIds:
+        excludedIngredientIds.length > 0 ? excludedIngredientIds : undefined,
+    })
+    const existing = pendingItems.find(
+      (i) => i.productId === product.id && pendingLineMatchKey(i) === key
+    )
+    const qtyAdd = voiceMeta?.quantity ?? 1
+    const sector = voiceMeta?.sector ?? detectSector(product)
+    const notes = voiceMeta?.notes?.trim() ?? ""
+    if (existing) {
+      setPendingItems((prev) =>
+        prev.map((i) =>
+          i.tempId === existing.tempId ? { ...i, quantity: i.quantity + qtyAdd } : i
+        )
+      )
+    } else {
+      setPendingItems((prev) => [
+        ...prev,
+        {
+          tempId: crypto.randomUUID(),
+          productId: product.id,
+          productName: product.name,
+          quantity: qtyAdd,
+          unitPrice,
+          sector,
+          notes,
+          modifierSelections:
+            Object.keys(normalizedSelections).length > 0
+              ? normalizedSelections
+              : undefined,
+          modifierSummary: summary || undefined,
+          excludedRecipeIngredientIds:
+            excludedIngredientIds.length > 0 ? [...excludedIngredientIds] : undefined,
+        },
+      ])
+    }
+    if (voiceModifierQueueRef.current.length > 0) {
+      openNextVoiceModifierFromQueue()
+    } else {
+      setModifierModal(null)
+    }
+  }
+
+  const confirmModifierModal = () => {
+    if (!modifierModal) return
+    commitModifierModalState(
+      modifierModal,
+      modifierModal.selections,
+      modifierModal.excludedIngredientIds
+    )
+  }
+
+  /** Voz: confirmar sin tocar — mismas reglas que al abrir (1ª opción en obligatorios, todo incluido). */
+  const confirmModifierModalVoiceDefaults = () => {
+    if (!modifierModal?.voiceMeta) return
+    const vis = visibleModifierGroupsForPosModal(
+      modifierModal.groups,
+      modifierModal.recipeIngredients,
+      [] // valores por defecto = todo incluido → todos los grupos visibles
+    )
+    const def = defaultModifierSelections(vis)
+    const asSingle: Record<string, string | string[]> = {}
+    for (const g of vis) {
+      const v = def[g.id]
+      if (v == null) continue
+      const one = Array.isArray(v) ? v[0] : v
+      if (one) asSingle[g.id] = one
+    }
+    commitModifierModalState(modifierModal, asSingle, [])
   }
 
   /* ── quantity helpers ── */
@@ -1024,13 +1484,24 @@ export default function TableOrderPage() {
     setSending(true)
     setError("")
     try {
-      const items = pendingItems.map((i) => ({
-        productId: i.productId,
-        quantity: i.quantity,
-        unitPrice: i.unitPrice,
-        sector: i.sector,
-        notes: i.notes || undefined,
-      }))
+      const items = pendingItems.map((i) => {
+        const noteParts = [i.notes?.trim(), i.modifierSummary?.trim()].filter(Boolean)
+        return {
+          productId: i.productId,
+          quantity: i.quantity,
+          unitPrice: i.unitPrice,
+          sector: i.sector,
+          notes: noteParts.length ? noteParts.join(" · ") : undefined,
+          modifierSelections:
+            i.modifierSelections && Object.keys(i.modifierSelections).length > 0
+              ? i.modifierSelections
+              : undefined,
+          excludedRecipeIngredientIds:
+            i.excludedRecipeIngredientIds && i.excludedRecipeIngredientIds.length > 0
+              ? i.excludedRecipeIngredientIds
+              : undefined,
+        }
+      })
 
       if (!order) {
         // Create new order
@@ -1177,13 +1648,20 @@ export default function TableOrderPage() {
 
   if (!table) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <div className="text-center">
+      <div className="flex h-full items-center justify-center px-4">
+        <div className="max-w-md text-center">
           <AlertCircle className="mx-auto h-8 w-8 text-red-400" />
-          <p className="mt-3 text-sm text-gray-500">Mesa no encontrada</p>
+          <p className="mt-3 text-sm font-medium text-gray-800">Mesa no encontrada</p>
+          {error ? (
+            <p className="mt-2 text-xs text-gray-500">{error}</p>
+          ) : (
+            <p className="mt-2 text-xs text-gray-500">
+              Abrí la mesa desde el mapa de Mesas para usar un enlace válido.
+            </p>
+          )}
           <button
             onClick={() => router.push("/pos/tables" + posStationSuffix())}
-            className="mt-3 text-sm text-amber-600 hover:underline"
+            className="mt-4 text-sm font-medium text-amber-600 hover:underline"
           >
             Volver a mesas
           </button>
@@ -1342,7 +1820,7 @@ export default function TableOrderPage() {
                             {ITEM_STATUS_LABELS[item.status] || item.status}
                           </span>
                         </div>
-                        <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
+                        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-gray-500">
                           <span className="text-gray-900 font-medium">x{item.quantity}</span>
                           <span className="text-gray-500">
                             {formatCurrency((item.unitPrice ?? item.totalPrice / (item.quantity || 1)))}{" "}
@@ -1358,12 +1836,15 @@ export default function TableOrderPage() {
                               {sectorInfo.label}
                             </span>
                           )}
-                          {item.notes && (
-                            <span className="italic text-gray-400 truncate max-w-[120px]">
-                              {item.notes}
-                            </span>
-                          )}
                         </div>
+                        {item.notes && (
+                          <p
+                            className="mt-2 rounded-lg border-l-4 border-orange-500 bg-orange-50/90 py-1.5 pl-2 pr-2 text-sm font-semibold leading-snug text-orange-950 break-words"
+                            title={item.notes}
+                          >
+                            {item.notes}
+                          </p>
+                        )}
                         {splitMode && (
                           <div className="mt-1.5 space-y-1">
                             {item.quantity === 1 ? (
@@ -1504,6 +1985,11 @@ export default function TableOrderPage() {
                           {formatCurrency(item.unitPrice * item.quantity)}
                         </span>
                       </div>
+                      {item.modifierSummary ? (
+                        <p className="mt-1.5 rounded-lg border-l-4 border-amber-500 bg-amber-100/90 py-1.5 pl-2 pr-2 text-sm font-semibold leading-snug text-amber-950 break-words">
+                          {item.modifierSummary}
+                        </p>
+                      ) : null}
                       <div className="mt-0.5 text-xs text-gray-500">
                         <span className="font-medium text-gray-900">x{item.quantity}</span>
                         {" · "}
@@ -1674,7 +2160,7 @@ export default function TableOrderPage() {
                       </div>
 
                       {item.notes && (
-                        <p className="mt-1.5 text-xs italic text-gray-400">
+                        <p className="mt-1.5 rounded-lg border-l-4 border-gray-400 bg-gray-100/80 py-1.5 pl-2 pr-2 text-sm font-semibold leading-snug text-gray-900 break-words">
                           Nota: {item.notes}
                         </p>
                       )}
@@ -1926,7 +2412,10 @@ export default function TableOrderPage() {
                           {m.product.name}
                         </span>
                         {m.notes && (
-                          <p className="mt-0.5 text-xs text-gray-500 truncate" title={m.notes}>
+                          <p
+                            className="mt-1 text-sm font-semibold leading-snug text-gray-800 break-words"
+                            title={m.notes}
+                          >
                             {m.notes}
                           </p>
                         )}
@@ -2015,14 +2504,14 @@ export default function TableOrderPage() {
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4">
               {filteredProducts.map((product) => {
-                const qty = pendingItems.find(
-                  (i) => i.productId === product.id
-                )?.quantity
+                const qty = pendingItems
+                  .filter((i) => i.productId === product.id)
+                  .reduce((s, i) => s + i.quantity, 0)
                 return (
                   <button
                     key={product.id}
-                    onClick={() => addProduct(product)}
-                    disabled={!hasOpenShift}
+                    onClick={() => void addProduct(product)}
+                    disabled={!hasOpenShift || modifierModalLoading}
                     className={cn(
                       "relative flex flex-col items-start rounded-xl border border-gray-200 bg-white p-3 text-left transition-all hover:border-amber-300 hover:shadow-sm active:scale-[0.97]",
                       !hasOpenShift && "cursor-not-allowed opacity-60"
@@ -2361,6 +2850,214 @@ export default function TableOrderPage() {
             </div>
           </div>
         </>
+      )}
+
+      {/* Modificadores de producto (pan, punto, dips, etc.) */}
+      {modifierModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
+            <h3 className="text-lg font-semibold text-gray-900">
+              {modifierModal.product.name}
+            </h3>
+            <p
+              className={cn(
+                "text-sm text-gray-500",
+                modifierModal.voiceMeta ? "mb-2" : "mb-4"
+              )}
+            >
+              Elegí las opciones del plato
+            </p>
+            {modifierModal.voiceMeta ? (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                <p className="font-semibold text-amber-900">Completando pedido por voz</p>
+                {modifierModal.voiceMeta.quantity > 1 ? (
+                  <p className="mt-0.5">Cantidad: {modifierModal.voiceMeta.quantity}</p>
+                ) : null}
+                {modifierModal.voiceMeta.notes ? (
+                  <p className="mt-0.5">Nota: {modifierModal.voiceMeta.notes}</p>
+                ) : null}
+                {voiceModifierQueueRef.current.length > 0 ? (
+                  <p className="mt-1.5 text-amber-800">
+                    Luego te pedimos las opciones de otros{" "}
+                    {voiceModifierQueueRef.current.length} ítem
+                    {voiceModifierQueueRef.current.length === 1 ? "" : "s"}.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="space-y-4">
+              {modifierModal.recipeIngredients.length > 0 ? (
+                <div className="rounded-xl border border-slate-600 bg-slate-900 p-4 text-slate-100 shadow-inner">
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-300">
+                    Incluye (desmarcá lo que no va)
+                  </p>
+                  <p className="mb-3 text-xs text-slate-400">
+                    Va a la comanda como &quot;Sin: …&quot; si quitás algo.
+                  </p>
+                  <ul className="space-y-2">
+                    {modifierModal.recipeIngredients.map((ing) => {
+                      const excluded = modifierModal.excludedIngredientIds.includes(
+                        ing.id
+                      )
+                      const checked = !excluded
+                      return (
+                        <li key={ing.id}>
+                          <label className="flex cursor-pointer items-center gap-3 rounded-lg px-1 py-1.5 hover:bg-slate-800/80">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() =>
+                                setModifierModal((m) => {
+                                  if (!m) return null
+                                  const has = m.excludedIngredientIds.includes(ing.id)
+                                  const nextExcluded = has
+                                    ? m.excludedIngredientIds.filter((x) => x !== ing.id)
+                                    : [...m.excludedIngredientIds, ing.id]
+                                  let nextSelections = { ...m.selections }
+                                  if (!has && ing.modifierGroupId) {
+                                    const gid = ing.modifierGroupId
+                                    const { [gid]: _removed, ...rest } = nextSelections
+                                    nextSelections = rest
+                                  }
+                                  if (has && ing.modifierGroupId) {
+                                    const g = m.groups.find(
+                                      (x: any) => x.id === ing.modifierGroupId
+                                    )
+                                    const opts = g?.options || []
+                                    if (g?.required && opts.length > 0) {
+                                      nextSelections = {
+                                        ...nextSelections,
+                                        [g.id]: opts[0].id,
+                                      }
+                                    }
+                                  }
+                                  return {
+                                    ...m,
+                                    excludedIngredientIds: nextExcluded,
+                                    selections: nextSelections,
+                                  }
+                                })
+                              }
+                              className="h-4 w-4 shrink-0 rounded border-slate-500 bg-slate-800 text-sky-500 focus:ring-sky-500"
+                            />
+                            <span className="text-sm text-slate-100">{ing.name}</span>
+                          </label>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              ) : null}
+
+              {visibleModifierGroupsForPosModal(
+                modifierModal.groups,
+                modifierModal.recipeIngredients,
+                modifierModal.excludedIngredientIds
+              ).map((g) => {
+                const sel = modifierModal.selections[g.id]
+                const checkedId = Array.isArray(sel) ? sel[0] : sel
+                return (
+                  <div key={g.id} className="rounded-xl border border-sky-900/30 bg-sky-50/40 p-3">
+                    <p className="mb-2 text-sm font-medium text-gray-800">
+                      {g.name}
+                      {g.required ? (
+                        <span className="ml-1 text-red-500" aria-hidden>
+                          *
+                        </span>
+                      ) : null}
+                    </p>
+                    <div className="space-y-1.5">
+                      {(g.options || []).map((o: any) => {
+                        const checked = checkedId === o.id
+                        return (
+                          <label
+                            key={o.id}
+                            className={cn(
+                              "flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors",
+                              checked
+                                ? "border-sky-500 bg-sky-100/80"
+                                : "border-gray-100 hover:bg-gray-50"
+                            )}
+                          >
+                            <input
+                              type="radio"
+                              name={`modifier-${g.id}`}
+                              checked={checked}
+                              onChange={() =>
+                                setModifierModal((m) =>
+                                  m
+                                    ? {
+                                        ...m,
+                                        selections: { ...m.selections, [g.id]: o.id },
+                                      }
+                                    : null
+                                )
+                              }
+                              className="text-sky-600"
+                            />
+                            <span className="flex-1">{o.label}</span>
+                            {Number(o.priceDelta) > 0 ? (
+                              <span className="text-xs text-gray-500">
+                                +{formatCurrency(o.priceDelta)}
+                              </span>
+                            ) : null}
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            <p className="mt-4 text-sm text-gray-600">
+              Precio unitario:{" "}
+              <span className="font-semibold text-gray-900">
+                {formatCurrency(
+                  (Number(modifierModal.product.salePrice) || 0) +
+                    extraPriceFromSelections(
+                      visibleModifierGroupsForPosModal(
+                        modifierModal.groups,
+                        modifierModal.recipeIngredients,
+                        modifierModal.excludedIngredientIds
+                      ),
+                      modifierModal.selections
+                    )
+                )}
+              </span>
+            </p>
+            {modifierModal.voiceMeta ? (
+              <div className="mt-4 space-y-2">
+                <button
+                  type="button"
+                  onClick={confirmModifierModalVoiceDefaults}
+                  className="w-full rounded-xl border-2 border-amber-400/80 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-950 hover:bg-amber-100"
+                >
+                  Valores por defecto
+                </button>
+                <p className="text-center text-xs text-gray-500">
+                  Primera opción en cada grupo obligatorio, grupos opcionales sin extra, todos
+                  los ingredientes incluidos.
+                </p>
+              </div>
+            ) : null}
+            <div className={cn("flex gap-2", modifierModal.voiceMeta ? "mt-3" : "mt-4")}>
+              <button
+                type="button"
+                onClick={closeModifierModal}
+                className="flex-1 rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmModifierModal}
+                className="flex-1 rounded-xl bg-amber-500 px-4 py-3 text-sm font-semibold text-white hover:bg-amber-600"
+              >
+                Agregar al pedido
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ═══════════════════════════════════

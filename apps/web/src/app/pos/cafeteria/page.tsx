@@ -5,6 +5,13 @@ import { ordersApi } from "@/lib/api/orders"
 import { authApi } from "@/lib/api/auth"
 import { getLocationKey } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import {
+  orderIsUrgent,
+  orderHasPendingOnBoard,
+  orderHasInProgressOnBoard,
+  urgentLeadMinutesForVoice,
+  type KdsBoardConfig,
+} from "@/lib/kitchen-display-urgency"
 import { unlockAudio, speakAnnouncement, cancelSpeech, speakShort } from "@/lib/speech"
 import {
   Coffee,
@@ -39,8 +46,6 @@ const SECTOR_LABELS: Record<string, string> = {
 }
 
 /* ── Thresholds ── */
-const URGENT_PENDING_MIN = 10
-const URGENT_PREP_MIN = 30
 
 /* ── Helpers ── */
 function minutesAgo(dateStr: string): number {
@@ -233,55 +238,45 @@ export default function PosCafeteriaPage() {
   }, [])
 
   /* ── classify orders — only café sectors ── */
-  const filterItems = (order: any) => {
-    const all = (order.items ?? []).filter((i: any) => CAFE_SECTORS.includes(i.sector))
-    if (sectorFilter === "all") return all
-    return all.filter((i: any) => i.sector === sectorFilter)
+  const boardCfg: KdsBoardConfig = {
+    allowedSectors: CAFE_SECTORS,
+    sectorFilter,
+    excludeSkipComanda: true,
   }
 
-  const hasItemsWithStatus = (order: any, status: string) =>
-    filterItems(order).some((i: any) => i.status === status)
-
-  const hasPrepOverTime = (order: any, minutes: number) =>
-    filterItems(order).some(
-      (i: any) => i.status === "in_progress" && i.startedAt && minutesAgo(i.startedAt) >= minutes
-    )
-
-  const urgentOrders = orders.filter((o) => {
-    const urgentPending = hasItemsWithStatus(o, "pending") && minutesAgo(o.openedAt) >= URGENT_PENDING_MIN
-    const urgentPrep = hasPrepOverTime(o, URGENT_PREP_MIN)
-    return urgentPending || urgentPrep
-  })
+  const urgentOrders = orders.filter((o) => orderIsUrgent(o, boardCfg))
 
   const urgentIds = new Set(urgentOrders.map((o) => o.id))
 
   const pendingOrders = orders.filter(
-    (o) =>
-      !urgentIds.has(o.id) &&
-      hasItemsWithStatus(o, "pending") &&
-      minutesAgo(o.openedAt) < URGENT_PENDING_MIN
+    (o) => !urgentIds.has(o.id) && orderHasPendingOnBoard(o, boardCfg)
   )
 
   const inProgressOrders = orders.filter(
-    (o) => !urgentIds.has(o.id) && hasItemsWithStatus(o, "in_progress")
+    (o) => !urgentIds.has(o.id) && orderHasInProgressOnBoard(o, boardCfg)
   )
 
   /* ── Detect newly urgent orders and announce ── */
   useEffect(() => {
     if (!voiceEnabled || urgentOrders.length === 0) return
+    const voiceCfg: KdsBoardConfig = {
+      allowedSectors: CAFE_SECTORS,
+      sectorFilter,
+      excludeSkipComanda: true,
+    }
     for (const order of urgentOrders) {
       if (!announcedUrgentRef.current.has(order.id)) {
         announcedUrgentRef.current.add(order.id)
         const tableName = order.tableName || order.table?.name || `Pedido ${order.orderNumber}`
-        const waitMin = minutesAgo(order.openedAt)
-        const text = `¡Atención cafetería! ${tableName} pasó a urgente. Lleva ${waitMin} minutos de demora.`
+        const waitMin = urgentLeadMinutesForVoice(order, voiceCfg)
+        const text = `¡Atención cafetería! ${tableName} pasó a urgente. Superó el tiempo de elaboración (unos ${waitMin} minutos).`
         announcementQueueRef.current.push(text)
       }
     }
     if (announcementQueueRef.current.length > 0 && !isSpeakingRef.current) {
       processQueue()
     }
-  }, [urgentOrders, voiceEnabled, processQueue])
+  }, [urgentOrders, voiceEnabled, processQueue, sectorFilter])
 
   /* ── actions ── */
   const handleStart = async (orderId: string, itemIds: string[]) => {
@@ -571,7 +566,9 @@ function CafeOrderCard({
               <div className="min-w-0 flex-1">
                 <span className="text-sm font-semibold text-white">{item.productName}</span>
                 {item.notes && (
-                  <p className="mt-0.5 text-xs italic text-amber-400">Nota: {item.notes}</p>
+                  <p className="mt-1.5 rounded-lg border-l-4 border-amber-400 bg-amber-950/40 py-1.5 pl-2 pr-1 text-base font-bold leading-snug text-amber-100 break-words">
+                    {item.notes}
+                  </p>
                 )}
               </div>
               <span

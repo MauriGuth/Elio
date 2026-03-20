@@ -47,6 +47,12 @@ export class RecipesController {
     });
   }
 
+  /** Contexto POS: grupos de variantes ligados a la receta e ingredientes para checklist. */
+  @Get('pos-context/:productId')
+  findPosContext(@Param('productId') productId: string) {
+    return this.recipesService.findPosContextByProductId(productId);
+  }
+
   @Get(':id')
   findById(@Param('id') id: string) {
     return this.recipesService.findById(id);

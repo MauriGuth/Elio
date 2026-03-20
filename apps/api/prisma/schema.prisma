@@ -227,12 +227,65 @@ model Product {
   productionBatches          ProductionBatch[]
   stockReconciliationItems   StockReconciliationItem[]
   purchaseOrderItems         PurchaseOrderItem[]
+  modifierGroups             ProductModifierGroup[]
+  modifierStockLines         ProductModifierStockLine[]
 
   @@index([categoryId])
   @@index([barcode])
   @@index([isActive])
   @@index([isSellable])
   @@map("products")
+}
+
+// ─── Modificadores de carta (opciones que impactan stock) ─────
+
+model ProductModifierGroup {
+  id        String   @id @default(cuid())
+  productId String   @map("product_id")
+  name      String
+  sortOrder Int      @default(0) @map("sort_order")
+  required  Boolean  @default(false)
+  /** Mínimo de opciones elegidas en este grupo (0 = sin mínimo explícito). */
+  minSelect Int      @default(0) @map("min_select")
+  /** Máximo de opciones; 1 = elección única (radio). 0 = sin tope (multi). */
+  maxSelect Int      @default(1) @map("max_select")
+
+  product               Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  options               ProductModifierOption[]
+  recipeIngredientLinks RecipeIngredient[]
+
+  @@index([productId])
+  @@map("product_modifier_groups")
+}
+
+model ProductModifierOption {
+  id         String   @id @default(cuid())
+  groupId    String   @map("group_id")
+  label      String
+  sortOrder  Int      @default(0) @map("sort_order")
+  /** Variación de precio unitario sugerida (el POS puede sumarla al cargar la línea). */
+  priceDelta Float    @default(0) @map("price_delta")
+
+  group      ProductModifierGroup       @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  stockLines ProductModifierStockLine[]
+
+  @@index([groupId])
+  @@map("product_modifier_options")
+}
+
+/** Delta de insumo por unidad vendida con esta opción (+ consume más, − consume menos, ej. sin ingrediente). */
+model ProductModifierStockLine {
+  id        String @id @default(cuid())
+  optionId  String @map("option_id")
+  productId String @map("product_id")
+  quantity  Float
+
+  option  ProductModifierOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  product Product               @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([optionId])
+  @@index([productId])
+  @@map("product_modifier_stock_lines")
 }
 
 // ─── Supplier ─────────────────────────────────────────────────
@@ -658,13 +711,17 @@ model RecipeIngredient {
   isOptional  Boolean @default(false) @map("is_optional")
   notes       String?
   sortOrder   Int     @default(0) @map("sort_order")
+  /** Si está definido, el consumo de este insumo base no se suma en cierre: aplica solo lo configurado por opción del grupo (variantes). */
+  modifierGroupId String? @map("modifier_group_id")
 
   // Relations
-  recipe  Recipe  @relation(fields: [recipeId], references: [id], onDelete: Cascade)
-  product Product @relation(fields: [productId], references: [id])
+  recipe          Recipe                 @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  product         Product                @relation(fields: [productId], references: [id])
+  modifierGroup   ProductModifierGroup?  @relation(fields: [modifierGroupId], references: [id], onDelete: SetNull)
 
   @@index([recipeId])
   @@index([productId])
+  @@index([modifierGroupId])
   @@map("recipe_ingredients")
 }
 
@@ -931,6 +988,8 @@ model OrderItem {
   readyAt      DateTime? @map("ready_at")
   servedAt     DateTime? @map("served_at")
   preparedById String?   @map("prepared_by_id")
+  /** { "groupId": "optionId" } o { "groupId": ["opt1","opt2"] } para multi. */
+  modifierSelections Json? @map("modifier_selections")
   createdAt    DateTime  @default(now()) @map("created_at")
 
   // Relations

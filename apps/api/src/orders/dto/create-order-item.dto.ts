@@ -4,6 +4,8 @@ import {
   IsNumber,
   IsOptional,
   Min,
+  IsObject,
+  IsArray,
 } from 'class-validator';
 
 export class CreateOrderItemDto {
@@ -24,4 +26,15 @@ export class CreateOrderItemDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  /** { groupId: optionId } o { groupId: [optionId, ...] } */
+  @IsOptional()
+  @IsObject()
+  modifierSelections?: Record<string, string | string[]>;
+
+  /** IDs de filas recipe_ingredients que el cliente quitó en el POS (afecta validación de grupos ligados). */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  excludedRecipeIngredientIds?: string[];
 }
