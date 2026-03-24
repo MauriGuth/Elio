@@ -166,44 +166,52 @@ function getPrepOptionStockLinesForChecklist(opt: any): Array<{ id: string; labe
   return out
 }
 
-/** Texto compacto de insumos por venta (libro amarillo en carta) para listar bajo cada opción en el POS. */
-function formatModifierOptionStockLinesSummary(opt: any): string | null {
-  const lines = opt?.stockLines || []
-  if (!lines.length) return null
-  const parts: string[] = []
-  for (const sl of lines) {
-    const name = (sl?.product?.name as string)?.trim() || "Insumo"
-    const q = Number(sl?.quantity)
-    if (Number.isFinite(q) && q !== 1 && q !== 0) {
-      const qStr = Number.isInteger(q) ? String(q) : String(Math.round(q * 1000) / 1000)
-      parts.push(`${name} ×${qStr}`)
-    } else {
-      parts.push(name)
+function collectModifierStockLineIdsFromSelections(
+  groups: any[],
+  selections: Record<string, string | string[]>
+): Set<string> {
+  const ids = new Set<string>()
+  for (const g of groups || []) {
+    const sel = selections[g.id]
+    const optId = Array.isArray(sel) ? sel[0] : sel
+    if (!optId) continue
+    const opt = (g.options || []).find((o: any) => o.id === optId)
+    for (const sl of opt?.stockLines || []) {
+      if (sl?.id) ids.add(sl.id as string)
     }
   }
-  return parts.length ? parts.join(" · ") : null
+  return ids
 }
 
-/** Texto «Sin: …» para líneas de stock de preparación desmarcadas. */
-function summaryExcludedPrepStockLines(
+function sanitizeExcludedModifierStockLineIds(
+  groups: any[],
+  selections: Record<string, string | string[]>,
+  excluded: string[]
+): string[] {
+  const valid = collectModifierStockLineIdsFromSelections(groups, selections)
+  return excluded.filter((id) => valid.has(id))
+}
+
+/** Texto «Sin: …» para líneas de insumo por opción desmarcadas (cualquier grupo con stockLines). */
+function summaryExcludedModifierStockLines(
   groups: any[],
   selections: Record<string, string | string[]>,
   excludedLineIds: string[]
 ): string {
   if (!excludedLineIds.length) return ""
-  const prepG = groups.find((g) => isPreparationModifierGroupPos(g))
-  if (!prepG) return ""
-  const sel = selections[prepG.id]
-  const optId = Array.isArray(sel) ? sel[0] : sel
-  if (!optId) return ""
-  const opt = (prepG.options || []).find((o: any) => o.id === optId)
-  const lines = opt?.stockLines || []
-  const names: string[] = []
-  for (const lid of excludedLineIds) {
-    const sl = lines.find((l: any) => l.id === lid)
-    const nm = sl?.product?.name
-    if (nm) names.push(nm)
+  const nameByLineId = new Map<string, string>()
+  for (const g of groups || []) {
+    const sel = selections[g.id]
+    const optId = Array.isArray(sel) ? sel[0] : sel
+    if (!optId) continue
+    const opt = (g.options || []).find((o: any) => o.id === optId)
+    for (const sl of opt?.stockLines || []) {
+      if (sl?.id && sl?.product?.name) nameByLineId.set(sl.id as string, String(sl.product.name))
+    }
   }
+  const names = excludedLineIds
+    .map((id) => nameByLineId.get(id))
+    .filter((n): n is string => Boolean(n))
   if (!names.length) return ""
   return `Sin: ${names.join(", ")}`
 }
@@ -1702,13 +1710,13 @@ export default function TableOrderPage() {
       recipeIngredients,
       excludedIngredientIds
     )
-    const prepSin = summaryExcludedPrepStockLines(
+    const modStockSin = summaryExcludedModifierStockLines(
       groups,
       normalizedSelections,
       excludedModifierStockLineIds
     )
-    if (prepSin) {
-      summary = summary ? `${summary} · ${prepSin}` : prepSin
+    if (modStockSin) {
+      summary = summary ? `${summary} · ${modStockSin}` : modStockSin
     }
     const key = pendingLineMatchKey({
       modifierSelections:
@@ -3410,7 +3418,6 @@ export default function TableOrderPage() {
                     <div className="space-y-1.5">
                       {(g.options || []).map((o: any) => {
                         const checked = checkedId === o.id
-                        const stockSummary = formatModifierOptionStockLinesSummary(o)
                         return (
                           <label
                             key={o.id}
@@ -3455,25 +3462,35 @@ export default function TableOrderPage() {
                                           ...m,
                                           selections: nextSel,
                                           excludedModifierStockLineIds:
-                                            m.excludedModifierStockLineIds ?? [],
+                                            sanitizeExcludedModifierStockLineIds(
+                                              m.groups,
+                                              nextSel,
+                                              m.excludedModifierStockLineIds ?? [],
+                                            ),
                                         }
                                       }
                                     }
+                                    const nextSelections = reconcileModifierSelectionsAfterChange(
+                                      m.product,
+                                      m.groups,
+                                      m.recipeIngredients,
+                                      m.excludedIngredientIds,
+                                      m.selections,
+                                      g.id,
+                                      o.id
+                                    )
+                                    const baseExcluded = isPreparationModifierGroupPos(g)
+                                      ? []
+                                      : (m.excludedModifierStockLineIds ?? [])
                                     return {
                                       ...m,
-                                      selections: reconcileModifierSelectionsAfterChange(
-                                        m.product,
-                                        m.groups,
-                                        m.recipeIngredients,
-                                        m.excludedIngredientIds,
-                                        m.selections,
-                                        g.id,
-                                        o.id
-                                      ),
+                                      selections: nextSelections,
                                       excludedModifierStockLineIds:
-                                        isPreparationModifierGroupPos(g)
-                                          ? []
-                                          : (m.excludedModifierStockLineIds ?? []),
+                                        sanitizeExcludedModifierStockLineIds(
+                                          m.groups,
+                                          nextSelections,
+                                          baseExcluded,
+                                        ),
                                     }
                                   })
                                 }
@@ -3486,69 +3503,63 @@ export default function TableOrderPage() {
                                 </span>
                               ) : null}
                             </div>
-                            {stockSummary ? (
-                              <p
-                                className="mt-1 ml-7 text-xs leading-snug text-gray-500 line-clamp-4"
-                                title={stockSummary}
-                              >
-                                {stockSummary}
-                              </p>
-                            ) : null}
                           </label>
                         )
                       })}
                     </div>
-                    {isPreparationModifierGroupPos(g) && checkedId ? (
-                      (() => {
-                        const opt = (g.options || []).find((x: any) => x.id === checkedId)
-                        const stockLines = getPrepOptionStockLinesForChecklist(opt)
-                        if (stockLines.length === 0) return null
-                        return (
-                          <div className="mt-3 rounded-lg border border-slate-600 bg-slate-900 p-3 text-slate-100">
-                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-300">
-                              Receta de esta preparación
-                            </p>
-                            <p className="mb-2 text-xs text-slate-400">
-                              Desmarcá lo que el cliente no quiere. En comanda: &quot;Sin: …&quot;.
-                            </p>
-                            <ul className="space-y-2">
-                              {stockLines.map((line) => {
-                                const excluded = (
-                                  modifierModal.excludedModifierStockLineIds || []
-                                ).includes(line.id)
-                                const lineChecked = !excluded
-                                return (
-                                  <li key={line.id}>
-                                    <label className="flex cursor-pointer items-center gap-3 rounded-lg px-1 py-1 hover:bg-slate-800/80">
-                                      <input
-                                        type="checkbox"
-                                        checked={lineChecked}
-                                        onChange={() =>
-                                          setModifierModal((m) => {
-                                            if (!m) return null
-                                            const cur = m.excludedModifierStockLineIds ?? []
-                                            const has = cur.includes(line.id)
-                                            const next = has
-                                              ? cur.filter((x) => x !== line.id)
-                                              : [...cur, line.id]
-                                            return {
-                                              ...m,
-                                              excludedModifierStockLineIds: next,
-                                            }
-                                          })
-                                        }
-                                        className="h-4 w-4 shrink-0 rounded border-slate-500 bg-slate-800 text-sky-500 focus:ring-sky-500"
-                                      />
-                                      <span className="text-sm">{line.label}</span>
-                                    </label>
-                                  </li>
-                                )
-                              })}
-                            </ul>
-                          </div>
-                        )
-                      })()
-                    ) : null}
+                    {checkedId
+                      ? (() => {
+                          const opt = (g.options || []).find((x: any) => x.id === checkedId)
+                          const stockLines = getPrepOptionStockLinesForChecklist(opt)
+                          if (stockLines.length === 0) return null
+                          return (
+                            <div className="mt-3 rounded-xl border border-slate-600 bg-slate-900 p-4 text-slate-100 shadow-inner">
+                              <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-300">
+                                Incluye (desmarcá lo que no va)
+                              </p>
+                              <p className="mb-3 text-xs text-slate-400">
+                                Va a la comanda como &quot;Sin: …&quot; si quitás algo.
+                              </p>
+                              <ul className="space-y-2">
+                                {stockLines.map((line) => {
+                                  const excluded = (
+                                    modifierModal.excludedModifierStockLineIds || []
+                                  ).includes(line.id)
+                                  const lineChecked = !excluded
+                                  return (
+                                    <li key={line.id}>
+                                      <label className="flex cursor-pointer items-center gap-3 rounded-lg px-1 py-1.5 hover:bg-slate-800/80">
+                                        <input
+                                          type="checkbox"
+                                          checked={lineChecked}
+                                          onChange={() =>
+                                            setModifierModal((m) => {
+                                              if (!m) return null
+                                              const cur = m.excludedModifierStockLineIds ?? []
+                                              const has = cur.includes(line.id)
+                                              const next = has
+                                                ? cur.filter((x) => x !== line.id)
+                                                : [...cur, line.id]
+                                              return {
+                                                ...m,
+                                                excludedModifierStockLineIds: next,
+                                              }
+                                            })
+                                          }
+                                          className="h-4 w-4 shrink-0 rounded border-slate-500 bg-slate-800 text-sky-500 focus:ring-sky-500"
+                                        />
+                                        <span className="text-sm text-slate-100">
+                                          {line.label}
+                                        </span>
+                                      </label>
+                                    </li>
+                                  )
+                                })}
+                              </ul>
+                            </div>
+                          )
+                        })()
+                      : null}
                   </div>
                 )
               })}
