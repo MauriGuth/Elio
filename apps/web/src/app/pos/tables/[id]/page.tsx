@@ -223,11 +223,16 @@ function sortModifierOptionsPos(opts: any[]): any[] {
   )
 }
 
-/** Grupos «Café de especialidad» del clásico: default distinto al primer sortOrder. */
+/**
+ * Grupos de variedad de café en carta/POS: default Brasil Santos Bourbon
+ * (no el primer sortOrder). Incluye títulos legacy y el grupo «GRANO».
+ */
 function isSpecialtyCoffeeModifierGroupPos(g: { name?: string }): boolean {
   const n = normalizeModifierLabelPos(g.name || "")
   return (
-    n.includes("cafe de especialidad") || n.includes("tipo de cafe")
+    n.includes("cafe de especialidad") ||
+    n.includes("tipo de cafe") ||
+    /^grano\b/.test(n)
   )
 }
 

@@ -468,6 +468,28 @@ export default function ProductDetailPage() {
     [categories]
   )
 
+  /** Mismo criterio que alta de producto: solo tipos PRODUCTO / INSUMO / RECETA (slug tipo-*). */
+  const tipoCategories = useMemo(
+    () =>
+      categories
+        .filter((c) => c.slug.startsWith("tipo-"))
+        .sort((a, b) =>
+          getCategoryDisplayName(a.name).localeCompare(getCategoryDisplayName(b.name), "es", {
+            sensitivity: "base",
+          })
+        ),
+    [categories]
+  )
+
+  /** Si el producto tenía otra categoría (legacy), mostrarla al final para no perder el valor. */
+  const tipoCategoriesForEdit = useMemo(() => {
+    const id = editForm.categoryId
+    if (!id || tipoCategories.some((c) => c.id === id)) return tipoCategories
+    const orphan = categories.find((c) => c.id === id)
+    if (!orphan) return tipoCategories
+    return [...tipoCategories, orphan]
+  }, [tipoCategories, categories, editForm.categoryId])
+
   const fetchData = useCallback(async (forceRefresh?: boolean) => {
     setLoading(true)
     setError(null)
@@ -928,9 +950,10 @@ export default function ProductDetailPage() {
                   aria-label="Categoría del producto"
                 >
                   <option value="">Seleccionar categoría</option>
-                  {categories.map((c) => (
+                  {tipoCategoriesForEdit.map((c) => (
                     <option key={c.id} value={c.id}>
                       {getCategoryDisplayName(c.name)}
+                      {!c.slug.startsWith("tipo-") ? " (reasignar a tipo)" : ""}
                     </option>
                   ))}
                 </select>

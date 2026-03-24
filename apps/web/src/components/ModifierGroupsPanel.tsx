@@ -727,7 +727,11 @@ export function ModifierGroupsPanel({
                 )}
               </div>
               <ul className="mt-3 space-y-2">
-                {(g.options || []).map((o) => (
+                {[...(g.options || [])]
+                  .sort((a, b) =>
+                    a.label.localeCompare(b.label, "es", { sensitivity: "base" })
+                  )
+                  .map((o) => (
                   <li
                     key={o.id}
                     className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/60 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800"
