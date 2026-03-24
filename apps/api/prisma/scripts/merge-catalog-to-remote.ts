@@ -41,7 +41,13 @@ if (!sourceUrl) {
   process.exit(1);
 }
 if (!targetUrl) {
-  console.error('❌ Falta DATABASE_URL_REMOTE (destino: remoto).');
+  console.error('❌ Falta DATABASE_URL_REMOTE (PostgreSQL del servidor remoto).');
+  console.error('   Opción 1 — en apps/api/.env:');
+  console.error('   DATABASE_URL_REMOTE="postgresql://usuario:clave@host:5432/base"');
+  console.error('   Opción 2 — en la misma línea del comando:');
+  console.error(
+    '   DATABASE_URL_REMOTE="postgresql://..." MERGE_CATALOG_TO_REMOTE_CONFIRM=YES npm run prisma:merge-catalog-to-remote',
+  );
   process.exit(1);
 }
 
@@ -332,13 +338,14 @@ async function main() {
   if (!fallbackRemoteUser) {
     throw new Error('No hay usuarios en REMOTO (hace falta para Recipe.createdById).');
   }
+  const fallbackRemoteUserId = fallbackRemoteUser.id;
   const userMap = new Map<string, string>();
 
   async function mapUser(localUserId: string): Promise<string> {
     const c = userMap.get(localUserId);
     if (c) return c;
     const lu = await sourcePrisma.user.findUnique({ where: { id: localUserId } });
-    let rid = fallbackRemoteUser.id;
+    let rid = fallbackRemoteUserId;
     if (lu?.email) {
       const m = await targetPrisma.user.findFirst({ where: { email: lu.email } });
       if (m) rid = m.id;
