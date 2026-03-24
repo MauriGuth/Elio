@@ -166,6 +166,24 @@ function getPrepOptionStockLinesForChecklist(opt: any): Array<{ id: string; labe
   return out
 }
 
+/** Texto compacto de insumos por venta (libro amarillo en carta) para listar bajo cada opción en el POS. */
+function formatModifierOptionStockLinesSummary(opt: any): string | null {
+  const lines = opt?.stockLines || []
+  if (!lines.length) return null
+  const parts: string[] = []
+  for (const sl of lines) {
+    const name = (sl?.product?.name as string)?.trim() || "Insumo"
+    const q = Number(sl?.quantity)
+    if (Number.isFinite(q) && q !== 1 && q !== 0) {
+      const qStr = Number.isInteger(q) ? String(q) : String(Math.round(q * 1000) / 1000)
+      parts.push(`${name} ×${qStr}`)
+    } else {
+      parts.push(name)
+    }
+  }
+  return parts.length ? parts.join(" · ") : null
+}
+
 /** Texto «Sin: …» para líneas de stock de preparación desmarcadas. */
 function summaryExcludedPrepStockLines(
   groups: any[],
@@ -858,8 +876,6 @@ export default function TableOrderPage() {
 
   /* ── pending (local) items ── */
   const [pendingItems, setPendingItems] = useState<PendingItem[]>([])
-  /** Cache GET /products/:id/modifiers */
-  const modifiersCacheRef = useRef<Map<string, any[]>>(new Map())
   /** Tras voz: platos pendientes de completar en el mismo modal (uno tras otro). */
   const voiceModifierQueueRef = useRef<
     Array<{
@@ -1148,13 +1164,8 @@ export default function TableOrderPage() {
     for (const match of voiceMatches) {
       let groups: any[] = []
       try {
-        if (modifiersCacheRef.current.has(match.product.id)) {
-          groups = modifiersCacheRef.current.get(match.product.id) || []
-        } else {
-          const raw = await productsApi.getModifiers(match.product.id)
-          groups = Array.isArray(raw) ? raw : []
-          modifiersCacheRef.current.set(match.product.id, groups)
-        }
+        const raw = await productsApi.getModifiers(match.product.id, true)
+        groups = Array.isArray(raw) ? raw : []
       } catch {
         groups = []
       }
@@ -1526,16 +1537,11 @@ export default function TableOrderPage() {
     setModifierModalLoading(true)
     try {
       let groups: any[] = []
-      if (modifiersCacheRef.current.has(product.id)) {
-        groups = modifiersCacheRef.current.get(product.id) || []
-      } else {
-        try {
-          const raw = await productsApi.getModifiers(product.id)
-          groups = Array.isArray(raw) ? raw : []
-        } catch {
-          groups = []
-        }
-        modifiersCacheRef.current.set(product.id, groups)
+      try {
+        const raw = await productsApi.getModifiers(product.id, true)
+        groups = Array.isArray(raw) ? raw : []
+      } catch {
+        groups = []
       }
 
       const posCtx = await recipesApi.getPosContext(product.id).catch(() => ({
@@ -3404,78 +3410,89 @@ export default function TableOrderPage() {
                     <div className="space-y-1.5">
                       {(g.options || []).map((o: any) => {
                         const checked = checkedId === o.id
+                        const stockSummary = formatModifierOptionStockLinesSummary(o)
                         return (
                           <label
                             key={o.id}
                             className={cn(
-                              "flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors",
+                              "block cursor-pointer rounded-lg border px-3 py-2 text-sm transition-colors",
                               checked
                                 ? "border-sky-500 bg-sky-100/80"
                                 : "border-gray-100 hover:bg-gray-50"
                             )}
                           >
-                            <input
-                              type="radio"
-                              name={`modifier-${g.id}`}
-                              checked={checked}
-                              onChange={() =>
-                                setModifierModal((m) => {
-                                  if (!m) return null
-                                  const sku = m.product?.sku
-                                  if (sku && LICUADO_450_SKUS.has(sku)) {
-                                    const vis = visibleModifierGroupsForPosModal(
-                                      m.groups,
-                                      m.recipeIngredients,
-                                      m.excludedIngredientIds
-                                    )
-                                    const sorted = [...vis].sort(
-                                      (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
-                                    )
-                                    const [gTipo, gLiq] = sorted
-                                    if (sorted.length >= 2 && g.id === gTipo?.id && gLiq) {
-                                      const nextSel = { ...m.selections, [g.id]: o.id }
-                                      const oTipo = gTipo.options || []
-                                      const oLiq = gLiq.options || []
-                                      const tipoIdx = oTipo.findIndex((x: any) => x.id === o.id)
-                                      let start = 0
-                                      if (tipoIdx === 0) start = 0
-                                      else if (tipoIdx === 1) start = 3
-                                      else start = 6
-                                      const firstLiq = oLiq[start]
-                                      if (firstLiq) nextSel[gLiq.id] = firstLiq.id
-                                      return {
-                                        ...m,
-                                        selections: nextSel,
-                                        excludedModifierStockLineIds:
-                                          m.excludedModifierStockLineIds ?? [],
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="radio"
+                                name={`modifier-${g.id}`}
+                                checked={checked}
+                                onChange={() =>
+                                  setModifierModal((m) => {
+                                    if (!m) return null
+                                    const sku = m.product?.sku
+                                    if (sku && LICUADO_450_SKUS.has(sku)) {
+                                      const vis = visibleModifierGroupsForPosModal(
+                                        m.groups,
+                                        m.recipeIngredients,
+                                        m.excludedIngredientIds
+                                      )
+                                      const sorted = [...vis].sort(
+                                        (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+                                      )
+                                      const [gTipo, gLiq] = sorted
+                                      if (sorted.length >= 2 && g.id === gTipo?.id && gLiq) {
+                                        const nextSel = { ...m.selections, [g.id]: o.id }
+                                        const oTipo = gTipo.options || []
+                                        const oLiq = gLiq.options || []
+                                        const tipoIdx = oTipo.findIndex((x: any) => x.id === o.id)
+                                        let start = 0
+                                        if (tipoIdx === 0) start = 0
+                                        else if (tipoIdx === 1) start = 3
+                                        else start = 6
+                                        const firstLiq = oLiq[start]
+                                        if (firstLiq) nextSel[gLiq.id] = firstLiq.id
+                                        return {
+                                          ...m,
+                                          selections: nextSel,
+                                          excludedModifierStockLineIds:
+                                            m.excludedModifierStockLineIds ?? [],
+                                        }
                                       }
                                     }
-                                  }
-                                  return {
-                                    ...m,
-                                    selections: reconcileModifierSelectionsAfterChange(
-                                      m.product,
-                                      m.groups,
-                                      m.recipeIngredients,
-                                      m.excludedIngredientIds,
-                                      m.selections,
-                                      g.id,
-                                      o.id
-                                    ),
-                                    excludedModifierStockLineIds:
-                                      isPreparationModifierGroupPos(g)
-                                        ? []
-                                        : (m.excludedModifierStockLineIds ?? []),
-                                  }
-                                })
-                              }
-                              className="text-sky-600"
-                            />
-                            <span className="flex-1">{o.label}</span>
-                            {Number(o.priceDelta) > 0 ? (
-                              <span className="text-xs text-gray-500">
-                                +{formatCurrency(o.priceDelta)}
-                              </span>
+                                    return {
+                                      ...m,
+                                      selections: reconcileModifierSelectionsAfterChange(
+                                        m.product,
+                                        m.groups,
+                                        m.recipeIngredients,
+                                        m.excludedIngredientIds,
+                                        m.selections,
+                                        g.id,
+                                        o.id
+                                      ),
+                                      excludedModifierStockLineIds:
+                                        isPreparationModifierGroupPos(g)
+                                          ? []
+                                          : (m.excludedModifierStockLineIds ?? []),
+                                    }
+                                  })
+                                }
+                                className="text-sky-600"
+                              />
+                              <span className="flex-1">{o.label}</span>
+                              {Number(o.priceDelta) > 0 ? (
+                                <span className="text-xs text-gray-500">
+                                  +{formatCurrency(o.priceDelta)}
+                                </span>
+                              ) : null}
+                            </div>
+                            {stockSummary ? (
+                              <p
+                                className="mt-1 ml-7 text-xs leading-snug text-gray-500 line-clamp-4"
+                                title={stockSummary}
+                              >
+                                {stockSummary}
+                              </p>
                             ) : null}
                           </label>
                         )

@@ -436,8 +436,12 @@ export function ModifierGroupsPanel({
         Con el ícono <strong className="inline-flex items-center gap-0.5">
           <BookOpen className="inline h-3 w-3 text-amber-600" aria-hidden />
         </strong>{" "}
-        podés definir los <strong>insumos por venta</strong> de cada opción (café solo, cortado, etc.).
-        También podés cargarlos desde Recetas → ingrediente → variante del plato.
+        podés definir los <strong>insumos por venta</strong> de cada opción (café solo, cortado, etc.), o
+        usar <strong>Desde receta existente</strong> al añadir opción para copiar los insumos base de una
+        receta. Eso es lo que el <strong>POS</strong> muestra como &quot;receta&quot; bajo cada opción al
+        cargar el plato (cada vez que abrís el modal se pide la carta actualizada). Si más adelante
+        cambiás ingredientes solo en el módulo Recetas, abrí de nuevo el libro de esa opción y guardá, o
+        reemplazá la opción.
       </p>
       {showRecipesLink ? (
         <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">

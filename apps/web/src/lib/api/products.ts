@@ -13,7 +13,11 @@ export const productsApi = {
   getStock: (id: string) => api.get<any[]>(`/products/${id}/stock`),
 
   /** Grupos de modificadores + opciones + líneas de stock (insumos extra por opción). */
-  getModifiers: (id: string) => api.get<any[]>(`/products/${id}/modifiers`),
+  getModifiers: (id: string, bustCache?: boolean) =>
+    api.get<any[]>(
+      `/products/${id}/modifiers`,
+      bustCache ? { _refresh: Date.now() } : undefined,
+    ),
 
   createModifierGroup: (productId: string, data: Record<string, unknown>) =>
     api.post(`/products/${productId}/modifier-groups`, data),
