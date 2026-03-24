@@ -109,9 +109,10 @@ function filterModifierGroupsByRecipe(
   modifierGroupIds: string[]
 ): any[] {
   if (!modifierGroupIds?.length) return []
-  const allowed = new Set(modifierGroupIds)
-  const filtered = (groups || []).filter((g) => allowed.has(g.id))
-  return filtered.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+  const byId = new Map((groups || []).map((g) => [g.id, g]))
+  return modifierGroupIds
+    .map((id) => byId.get(id))
+    .filter((g): g is NonNullable<typeof g> => Boolean(g))
 }
 
 /** Grupos de modificadores ligados a un ingrediente de receta que el cliente quitó → no se muestran (ej. tipo de pan si no va pan). */
@@ -264,11 +265,11 @@ function computeVisibleModifierGroupIdsForPos(
   for (const [k, v] of Object.entries(selections)) {
     sel[k] = Array.isArray(v) ? v : v ? [v as string] : []
   }
-  const sorted = [...(groups || [])].sort(
+  const sortedForRule = [...(groups || [])].sort(
     (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
   )
   const visible: string[] = []
-  for (const g of sorted) {
+  for (const g of groups || []) {
     if (g.visibilityRule == null) {
       visible.push(g.id)
       continue
@@ -294,13 +295,13 @@ function computeVisibleModifierGroupIdsForPos(
     const priors =
       priorIds.length > 0
         ? priorIds
-            .map((id) => sorted.find((x) => x.id === id))
+            .map((id) => sortedForRule.find((x) => x.id === id))
             .filter((x): x is any => Boolean(x))
         : [
             typeof rule.whenPriorGroupId === "string" && rule.whenPriorGroupId
-              ? sorted.find((x) => x.id === rule.whenPriorGroupId) ??
-                sorted.find((x) => x.sortOrder === rule.whenPriorGroupSortOrder)
-              : sorted.find((x) => x.sortOrder === rule.whenPriorGroupSortOrder),
+              ? sortedForRule.find((x) => x.id === rule.whenPriorGroupId) ??
+                sortedForRule.find((x) => x.sortOrder === rule.whenPriorGroupSortOrder)
+              : sortedForRule.find((x) => x.sortOrder === rule.whenPriorGroupSortOrder),
           ].filter((x): x is any => Boolean(x))
     if (priors.length === 0) {
       visible.push(g.id)
@@ -338,6 +339,7 @@ function applyLicuado450LiquidOptionFilter(
   selections: Record<string, string | string[]>
 ): any[] {
   if (!productSku || !LICUADO_450_SKUS.has(productSku)) return visibleGroups
+  const orderIds = visibleGroups.map((g) => g.id)
   const sorted = [...visibleGroups].sort(
     (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
   )
@@ -366,7 +368,11 @@ function applyLicuado450LiquidOptionFilter(
   }
 
   const liquidSlice = oLiq.slice(start, end)
-  return sorted.map((g) => (g.id === gLiq.id ? { ...g, options: liquidSlice } : g))
+  const patched = sorted.map((g) =>
+    g.id === gLiq.id ? { ...g, options: liquidSlice } : g
+  )
+  const byId = new Map(patched.map((g) => [g.id, g]))
+  return orderIds.map((id) => byId.get(id)).filter((g): g is any => Boolean(g))
 }
 
 function effectiveModifierGroupsForPosModal(
@@ -381,11 +387,9 @@ function effectiveModifierGroupsForPosModal(
     recipeIngredients,
     excludedIngredientIds
   )
-  const sorted = [...vis].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-  const visIds = new Set(
-    computeVisibleModifierGroupIdsForPos(sorted, selections)
-  )
-  const afterRule = sorted.filter((g) => visIds.has(g.id))
+  const visibleIdList = computeVisibleModifierGroupIdsForPos(vis, selections)
+  const visIdSet = new Set(visibleIdList)
+  const afterRule = vis.filter((g) => visIdSet.has(g.id))
   return applyLicuado450LiquidOptionFilter(product?.sku, afterRule, selections)
 }
 
@@ -411,11 +415,9 @@ function buildInitialModifierSelections(
   recipeIngredients: { id: string; modifierGroupId?: string | null }[],
   excludedIngredientIds: string[]
 ): Record<string, string | string[]> {
-  const sorted = [...(groups || [])].sort(
-    (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
-  )
+  const ordered = groups || []
   const sel: Record<string, string | string[]> = {}
-  for (const g of sorted) {
+  for (const g of ordered) {
     if (g.visibilityRule != null) continue
     const opts = g.options || []
     if (!g.required || opts.length === 0) continue
@@ -464,8 +466,7 @@ function reconcileModifierSelectionsAfterChange(
     recipeIngredients,
     excludedIngredientIds
   )
-  const sorted = [...vis].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
-  const effIds = new Set(computeVisibleModifierGroupIdsForPos(sorted, next))
+  const effIds = new Set(computeVisibleModifierGroupIdsForPos(vis, next))
   const cleaned: Record<string, string | string[]> = {}
   for (const k of Object.keys(next)) {
     if (effIds.has(k)) cleaned[k] = next[k]!

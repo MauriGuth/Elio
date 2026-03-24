@@ -20,7 +20,8 @@ export function normalizeModifierLabel(s: string): string {
 }
 
 /**
- * Grupos visibles en el POS según `visibilityRule` y la elección en el grupo anterior (por sortOrder).
+ * Grupos visibles según `visibilityRule`. El array devuelto respeta el orden de entrada de `groups`
+ * (p. ej. orden de la receta); la resolución de «grupo previo» usa sortOrder del catálogo.
  */
 export function computeVisibleModifierGroupIds(
   groups: Array<{
@@ -32,11 +33,11 @@ export function computeVisibleModifierGroupIds(
   selections: Record<string, string[]> | null | undefined,
 ): string[] {
   const sel = selections ?? {};
-  const sorted = [...groups].sort(
+  const sortedForRule = [...groups].sort(
     (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
   );
   const visible: string[] = [];
-  for (const g of sorted) {
+  for (const g of groups) {
     if (g.visibilityRule == null) {
       visible.push(g.id);
       continue;
@@ -58,14 +59,18 @@ export function computeVisibleModifierGroupIds(
     const priors =
       priorIds.length > 0
         ? priorIds
-            .map((id) => sorted.find((x) => x.id === id))
-            .filter((x): x is (typeof sorted)[number] => Boolean(x))
+            .map((id) => sortedForRule.find((x) => x.id === id))
+            .filter((x): x is (typeof sortedForRule)[number] => Boolean(x))
         : [
             typeof r.whenPriorGroupId === 'string' && r.whenPriorGroupId
-              ? sorted.find((x) => x.id === r.whenPriorGroupId) ??
-                sorted.find((x) => x.sortOrder === rule.whenPriorGroupSortOrder)
-              : sorted.find((x) => x.sortOrder === rule.whenPriorGroupSortOrder),
-          ].filter((x): x is (typeof sorted)[number] => Boolean(x));
+              ? sortedForRule.find((x) => x.id === r.whenPriorGroupId) ??
+                sortedForRule.find(
+                  (x) => x.sortOrder === rule.whenPriorGroupSortOrder,
+                )
+              : sortedForRule.find(
+                  (x) => x.sortOrder === rule.whenPriorGroupSortOrder,
+                ),
+          ].filter((x): x is (typeof sortedForRule)[number] => Boolean(x));
     if (priors.length === 0) {
       visible.push(g.id);
       continue;

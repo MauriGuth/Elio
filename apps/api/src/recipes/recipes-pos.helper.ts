@@ -62,13 +62,16 @@ export async function getRecipePosContext(
     product: { name: string } | null;
   }>;
 
-  const modifierGroupIds: string[] = [
-    ...new Set(
-      ingredientsRows
-        .map((r) => r.modifierGroupId)
-        .filter((id): id is string => typeof id === 'string' && id.length > 0),
-    ),
-  ];
+  /** Orden = primera aparición en ingredientes (sortOrder asc), no sortOrder del grupo en catálogo. */
+  const modifierGroupIds: string[] = [];
+  const seenGroup = new Set<string>();
+  for (const row of ingredientsRows) {
+    const id = row.modifierGroupId;
+    if (typeof id === 'string' && id.length > 0 && !seenGroup.has(id)) {
+      seenGroup.add(id);
+      modifierGroupIds.push(id);
+    }
+  }
 
   const ingredients: RecipePosIngredientRow[] = ingredientsRows.map((r) => ({
     id: r.id,
@@ -197,16 +200,19 @@ export async function getOrderItemRecipeModifierGroupIdsToValidate(
 
   const ingredients = (await prisma.recipeIngredient.findMany({
     where: { recipeId },
+    orderBy: { sortOrder: 'asc' },
     select: { id: true, modifierGroupId: true },
   })) as Array<{ id: string; modifierGroupId: string | null }>;
 
-  const baseIds = [
-    ...new Set(
-      ingredients
-        .map((r) => r.modifierGroupId)
-        .filter((id): id is string => typeof id === 'string' && id.length > 0),
-    ),
-  ];
+  const baseIds: string[] = [];
+  const seen = new Set<string>();
+  for (const ing of ingredients) {
+    const id = ing.modifierGroupId;
+    if (typeof id === 'string' && id.length > 0 && !seen.has(id)) {
+      seen.add(id);
+      baseIds.push(id);
+    }
+  }
   if (baseIds.length === 0) {
     return undefined;
   }

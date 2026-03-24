@@ -67,9 +67,14 @@ export async function validateModifierSelections(
   const allowed =
     restrict !== undefined ? new Set(restrict) : null;
 
-  const groups = allowed
-    ? groupsAll.filter((g) => allowed.has(g.id))
-    : groupsAll;
+  /** Con receta: mismo orden que ingredientes (`restrict`); sin receta: sortOrder del catálogo. */
+  const byGroupId = new Map(groupsAll.map((g) => [g.id, g]));
+  const groups =
+    restrict != null && restrict.length > 0
+      ? restrict
+          .map((id) => byGroupId.get(id))
+          .filter((g): g is (typeof groupsAll)[number] => Boolean(g))
+      : groupsAll;
 
   if (allowed && normalized) {
     for (const key of Object.keys(normalized)) {
