@@ -18,6 +18,7 @@
     "prisma:delete-products-sku-substring": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/delete-products-by-sku-substring.ts",
     "prisma:sync-products-from-remote": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/sync-products-from-remote.ts",
     "prisma:sync-catalog-to-remote": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/sync-catalog-to-remote.ts",
+    "prisma:merge-catalog-to-remote": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/merge-catalog-to-remote.ts",
     "prisma:reload-clasico-combo": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/reload-clasico-combo-modifiers.ts",
     "prisma:reload-carta-salon": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/reload-carta-salon-bundles.ts",
     "prisma:load-articulos": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/load-articulos-carta.ts",
