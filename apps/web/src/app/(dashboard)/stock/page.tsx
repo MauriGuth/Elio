@@ -595,10 +595,13 @@ export default function StockPage() {
 
   // Client-side filters (status, location — not supported as API params)
   const filteredProducts = useMemo(() => {
+    const searchActive = Boolean(debouncedSearch?.trim())
     return products.filter((product) => {
       if (selectedStatus && product.worstStatus !== selectedStatus) return false
+      // Con búsqueda por texto: no filtrar por local (si no, artículos sin fila en ese depósito no aparecen)
       if (
         selectedLocation &&
+        !searchActive &&
         !product.stockByLocation.some(
           (s) => s.locationId === selectedLocation
         )
@@ -607,7 +610,7 @@ export default function StockPage() {
       }
       return true
     })
-  }, [products, selectedStatus, selectedLocation])
+  }, [products, selectedStatus, selectedLocation, debouncedSearch])
 
   const displayedProductsTotal =
     selectedStatus || selectedLocation ? filteredProducts.length : productsTotal

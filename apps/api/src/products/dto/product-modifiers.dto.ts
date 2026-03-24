@@ -6,10 +6,40 @@ import {
   IsNumber,
   IsArray,
   ValidateNested,
+  ValidateIf,
   Min,
   Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+
+/** Regla POS: mostrar grupo solo si la opción del grupo con `whenPriorGroupSortOrder` coincide en `label`. */
+export type ModifierVisibilityRuleDto = {
+  whenPriorGroupSortOrder: number;
+  whenSelectedOptionLabels: string[];
+  whenPriorGroupId?: string;
+  whenPriorGroupIds?: string[];
+};
+
+/** Clase anidada requerida por ValidationPipe (whitelist + transform) para que `visibilityRule` no se pierda. */
+export class ModifierVisibilityRuleBodyDto implements ModifierVisibilityRuleDto {
+  @IsInt()
+  whenPriorGroupSortOrder!: number;
+
+  /** Si varios grupos comparten `sortOrder`, el POS/API usan este id para no confundir el grupo «padre». */
+  @IsOptional()
+  @IsString()
+  whenPriorGroupId?: string;
+
+  /** Múltiples grupos de referencia (OR): visible si coincide con cualquiera. */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  whenPriorGroupIds?: string[];
+
+  @IsArray()
+  @IsString({ each: true })
+  whenSelectedOptionLabels!: string[];
+}
 
 export class CreateProductModifierGroupDto {
   @IsString()
@@ -32,6 +62,11 @@ export class CreateProductModifierGroupDto {
   @IsInt()
   @Min(0)
   maxSelect?: number;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ModifierVisibilityRuleBodyDto)
+  visibilityRule?: ModifierVisibilityRuleBodyDto;
 }
 
 export class UpdateProductModifierGroupDto {
@@ -56,6 +91,13 @@ export class UpdateProductModifierGroupDto {
   @IsInt()
   @Min(0)
   maxSelect?: number;
+
+  /** null = quitar regla. Objeto = regla POS (requiere clase anidada para que pase el ValidationPipe). */
+  @IsOptional()
+  @ValidateIf((_o, v) => v != null)
+  @ValidateNested()
+  @Type(() => ModifierVisibilityRuleBodyDto)
+  visibilityRule?: ModifierVisibilityRuleBodyDto | null;
 }
 
 export class CreateProductModifierOptionDto {

@@ -75,6 +75,7 @@ export default function RecipesPage() {
   const [productOutputSearch, setProductOutputSearch] = useState("")
   const [productOutputDropdownOpen, setProductOutputDropdownOpen] = useState(false)
   const [openIngredientDropdownIndex, setOpenIngredientDropdownIndex] = useState<number | null>(null)
+  const [openModifierGroupDropdownIndex, setOpenModifierGroupDropdownIndex] = useState<number | null>(null)
   /** Modificadores del producto de salida: insumos por opción (misma API que Stock → modificadores) */
   const [modifierGroupsData, setModifierGroupsData] = useState<any[]>([])
   const [modifierLinesByOption, setModifierLinesByOption] = useState<
@@ -88,6 +89,7 @@ export default function RecipesPage() {
   /** Borradores para crear grupo/variante desde la receta (clave = índice de fila) */
   const [newOptionLabelByRow, setNewOptionLabelByRow] = useState<Record<string, string>>({})
   const [newOptionPriceDeltaByRow, setNewOptionPriceDeltaByRow] = useState<Record<string, string>>({})
+  const [modifierGroupQueryByRow, setModifierGroupQueryByRow] = useState<Record<string, string>>({})
   const [modifierMutating, setModifierMutating] = useState(false)
 
   const productLabel = useCallback((product: ProductOption) => {
@@ -161,6 +163,7 @@ export default function RecipesPage() {
       setOptionPriceById({})
       setNewOptionLabelByRow({})
       setNewOptionPriceDeltaByRow({})
+      setModifierGroupQueryByRow({})
       return
     }
     if (!form.productId) {
@@ -1175,30 +1178,124 @@ export default function RecipesPage() {
                               <label className="mb-1 block text-xs font-medium text-amber-900 dark:text-amber-100/90">
                                 Variantes del plato (grupo de opciones)
                               </label>
-                              <select
-                                className="mb-2 w-full max-w-lg rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm text-gray-900 dark:text-white"
-                                value={row.modifierGroupId ?? ""}
-                                onChange={(e) => {
-                                  const v = e.target.value
-                                  setForm((f) => {
-                                    const next = [...f.ingredients]
-                                    next[index] = {
-                                      ...next[index],
-                                      modifierGroupId: v || undefined,
-                                    }
-                                    return { ...f, ingredients: next }
-                                  })
-                                }}
-                              >
-                                <option value="">
-                                  Sin variantes — descuenta la cantidad de arriba al cerrar venta
-                                </option>
-                                {groupsAvailableForIngredientRow(index).map((g) => (
-                                  <option key={g.id} value={g.id}>
-                                    {g.name}
-                                  </option>
-                                ))}
-                              </select>
+                              <div className="relative mb-2 w-full max-w-lg">
+                                {(() => {
+                                  const selectedGroup = groupsAvailableForIngredientRow(index).find(
+                                    (g) => g.id === row.modifierGroupId
+                                  )
+                                  const hasCustomQuery = Object.prototype.hasOwnProperty.call(
+                                    modifierGroupQueryByRow,
+                                    String(index)
+                                  )
+                                  const query = hasCustomQuery
+                                    ? modifierGroupQueryByRow[String(index)] ?? ""
+                                    : selectedGroup?.name ?? ""
+                                  const filteredGroups = groupsAvailableForIngredientRow(index).filter((g) =>
+                                    g.name.toLowerCase().includes(query.trim().toLowerCase())
+                                  )
+                                  return (
+                                    <>
+                                      <input
+                                        type="text"
+                                        value={query}
+                                        onChange={(e) => {
+                                          const v = e.target.value
+                                          setModifierGroupQueryByRow((prev) => ({
+                                            ...prev,
+                                            [String(index)]: v,
+                                          }))
+                                          setOpenModifierGroupDropdownIndex(index)
+                                        }}
+                                        onFocus={() => setOpenModifierGroupDropdownIndex(index)}
+                                        onBlur={() =>
+                                          setTimeout(
+                                            () => setOpenModifierGroupDropdownIndex(null),
+                                            150
+                                          )
+                                        }
+                                        placeholder="Escribí para buscar o seleccionar grupo..."
+                                        aria-autocomplete="list"
+                                        aria-expanded={openModifierGroupDropdownIndex === index}
+                                        role="combobox"
+                                        className="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 pr-8 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                      />
+                                      <ChevronDown className="absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 pointer-events-none text-gray-400" />
+                                      {openModifierGroupDropdownIndex === index && (
+                                        <ul
+                                          className="absolute z-20 mt-1 max-h-48 w-full overflow-auto rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 py-1 shadow-lg"
+                                          role="listbox"
+                                        >
+                                          <li
+                                            role="option"
+                                            aria-selected={!row.modifierGroupId}
+                                            className={cn(
+                                              "cursor-pointer px-3 py-2 text-sm",
+                                              !row.modifierGroupId
+                                                ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-200"
+                                                : "text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                                            )}
+                                            onMouseDown={(e) => {
+                                              e.preventDefault()
+                                              setForm((f) => {
+                                                const next = [...f.ingredients]
+                                                next[index] = {
+                                                  ...next[index],
+                                                  modifierGroupId: undefined,
+                                                }
+                                                return { ...f, ingredients: next }
+                                              })
+                                              setModifierGroupQueryByRow((prev) => ({
+                                                ...prev,
+                                                [String(index)]:
+                                                  "Sin variantes — descuenta la cantidad de arriba al cerrar venta",
+                                              }))
+                                              setOpenModifierGroupDropdownIndex(null)
+                                            }}
+                                          >
+                                            Sin variantes — descuenta la cantidad de arriba al cerrar venta
+                                          </li>
+                                          {filteredGroups.map((g) => (
+                                            <li
+                                              key={g.id}
+                                              role="option"
+                                              aria-selected={row.modifierGroupId === g.id}
+                                              className={cn(
+                                                "cursor-pointer px-3 py-2 text-sm",
+                                                row.modifierGroupId === g.id
+                                                  ? "bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-200"
+                                                  : "text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                                              )}
+                                              onMouseDown={(e) => {
+                                                e.preventDefault()
+                                                setForm((f) => {
+                                                  const next = [...f.ingredients]
+                                                  next[index] = {
+                                                    ...next[index],
+                                                    modifierGroupId: g.id,
+                                                  }
+                                                  return { ...f, ingredients: next }
+                                                })
+                                                setModifierGroupQueryByRow((prev) => ({
+                                                  ...prev,
+                                                  [String(index)]: g.name,
+                                                }))
+                                                setOpenModifierGroupDropdownIndex(null)
+                                              }}
+                                            >
+                                              {g.name}
+                                            </li>
+                                          ))}
+                                          {query.trim() && filteredGroups.length === 0 && (
+                                            <li className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
+                                              No hay grupos que coincidan
+                                            </li>
+                                          )}
+                                        </ul>
+                                      )}
+                                    </>
+                                  )
+                                })()}
+                              </div>
 
                               {row.modifierGroupId ? (
                                 <>

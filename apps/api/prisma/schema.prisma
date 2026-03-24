@@ -207,6 +207,8 @@ model Product {
   isIngredient Boolean  @default(true) @map("is_ingredient")
   isProduced   Boolean  @default(false) @map("is_produced")
   isPerishable Boolean  @default(false) @map("is_perishable")
+  /** Si true, al cerrar la venta se descuentan insumos de la receta activa (no el producto terminado). Café/bar elaborado al momento. */
+  consumeRecipeOnSale Boolean @default(false) @map("consume_recipe_on_sale")
   isActive     Boolean  @default(true) @map("is_active")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
@@ -250,6 +252,12 @@ model ProductModifierGroup {
   minSelect Int      @default(0) @map("min_select")
   /** Máximo de opciones; 1 = elección única (radio). 0 = sin tope (multi). */
   maxSelect Int      @default(1) @map("max_select")
+  /**
+   * Regla POS: mostrar este grupo solo si en el grupo con `whenPriorGroupSortOrder`
+   * la opción elegida tiene `label` incluido en `whenSelectedOptionLabels`.
+   * Ej. tipo de leche debajo de preparación con leche.
+   */
+  visibilityRule Json? @map("visibility_rule")
 
   product               Product?             @relation(fields: [productId], references: [id], onDelete: Cascade)
   options               ProductModifierOption[]
@@ -991,6 +999,10 @@ model OrderItem {
   preparedById String?   @map("prepared_by_id")
   /** { "groupId": "optionId" } o { "groupId": ["opt1","opt2"] } para multi. */
   modifierSelections Json? @map("modifier_selections")
+  /** IDs de filas recipe_ingredients excluidas en el POS ("sin X"); afecta descuento de stock si consumeRecipeOnSale. */
+  excludedRecipeIngredientIds Json? @map("excluded_recipe_ingredient_ids")
+  /** IDs de `product_modifier_stock_line` excluidas (p. ej. insumo de la opción «Preparación» que el cliente no quiere). */
+  excludedModifierStockLineIds Json? @map("excluded_modifier_stock_line_ids")
   createdAt    DateTime  @default(now()) @map("created_at")
 
   // Relations

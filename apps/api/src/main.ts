@@ -60,7 +60,8 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api');
 
-  const port = process.env.PORT || 3001;
+  /** Mismo default que `NEXT_PUBLIC_API_URL` en web (`localhost:4010/api`) y CONEXION.md */
+  const port = process.env.PORT || 4010;
   await app.listen(port);
   console.log(`🚀 Nova API running on http://localhost:${port}/api`);
 }

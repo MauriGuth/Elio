@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { Prisma } from '../../generated/prisma';
+import { computeVisibleModifierGroupIds } from './modifier-visibility.helper';
 
 export function normalizeModifierSelections(
   raw: unknown,
@@ -47,7 +48,10 @@ export async function validateModifierSelections(
             OR: [{ productId }, { productId: null }],
           },
     include: {
-      options: { orderBy: { sortOrder: 'asc' }, select: { id: true } },
+      options: {
+        orderBy: { sortOrder: 'asc' },
+        select: { id: true, label: true },
+      },
     },
     orderBy: { sortOrder: 'asc' },
   });
@@ -77,16 +81,30 @@ export async function validateModifierSelections(
     }
   }
 
+  const visibleIds = new Set(
+    computeVisibleModifierGroupIds(
+      groups.map((g) => ({
+        id: g.id,
+        sortOrder: g.sortOrder,
+        visibilityRule: g.visibilityRule,
+        options: g.options,
+      })),
+      normalized ?? {},
+    ),
+  );
+
   const selections: Record<string, string[]> = {};
   if (normalized) {
     for (const [k, v] of Object.entries(normalized)) {
       if (!allowed || allowed.has(k)) {
-        selections[k] = v;
+        if (visibleIds.has(k)) selections[k] = v;
       }
     }
   }
 
-  for (const g of groups) {
+  const groupsActive = groups.filter((g) => visibleIds.has(g.id));
+
+  for (const g of groupsActive) {
     const selected = selections[g.id] ?? [];
     const optionIdSet = new Set(g.options.map((o) => o.id));
 

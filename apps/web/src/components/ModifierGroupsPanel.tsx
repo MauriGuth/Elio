@@ -1,11 +1,15 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
-import { Loader2, Pencil, Plus, Trash2, Layers } from "lucide-react"
+import { Loader2, Pencil, Plus, Trash2, Layers, Search, X, BookOpen } from "lucide-react"
 import { sileo } from "sileo"
 import { productsApi } from "@/lib/api/products"
 import { CreateModifierGroupPopover } from "@/components/CreateModifierGroupPopover"
+import {
+  ModifierOptionRecipeDialog,
+  type StockLineFromApi,
+} from "@/components/ModifierOptionRecipeDialog"
 
 export type ModifierGroup = {
   id: string
@@ -14,11 +18,18 @@ export type ModifierGroup = {
   required: boolean
   minSelect: number
   maxSelect: number
+  /** Si existe, el POS puede mostrar u ocultar el grupo según otra elección (ej. tipo de leche). */
+  visibilityRule?: unknown | null
   options: Array<{
     id: string
     label: string
     sortOrder: number
     priceDelta: number
+    stockLines?: Array<{
+      id: string
+      quantity: number
+      product: { id: string; name: string; sku: string; unit?: string }
+    }>
   }>
 }
 
@@ -39,6 +50,16 @@ export function ModifierGroupsPanel({
 }: Props) {
   const [groups, setGroups] = useState<ModifierGroup[]>([])
   const [loading, setLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState("")
+
+  const filteredGroups = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return groups
+    return groups.filter((g) => {
+      if (g.name.toLowerCase().includes(q)) return true
+      return (g.options || []).some((o) => o.label.toLowerCase().includes(q))
+    })
+  }, [groups, searchQuery])
 
   const [optGroupId, setOptGroupId] = useState<string | null>(null)
   const [optLabel, setOptLabel] = useState("")
@@ -53,6 +74,19 @@ export function ModifierGroupsPanel({
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null)
   const [editGroupName, setEditGroupName] = useState("")
   const [savingGroupEdit, setSavingGroupEdit] = useState(false)
+  /** Regla POS: mostrar este grupo solo si en otro grupo se eligió una de estas etiquetas. */
+  const [editUseVisibility, setEditUseVisibility] = useState(false)
+  const [editPriorGroupIds, setEditPriorGroupIds] = useState<string[]>([])
+  const [editPriorGroupQuery, setEditPriorGroupQuery] = useState("")
+  const [editVisibilityLabels, setEditVisibilityLabels] = useState("")
+
+  const [recipeDialog, setRecipeDialog] = useState<{
+    optionId: string
+    optionLabel: string
+    lines: StockLineFromApi[]
+    groupName: string
+    visibilityRule: unknown | null | undefined
+  } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -74,6 +108,10 @@ export function ModifierGroupsPanel({
   const cancelEditGroup = () => {
     setEditingGroupId(null)
     setEditGroupName("")
+    setEditUseVisibility(false)
+    setEditPriorGroupIds([])
+    setEditPriorGroupQuery("")
+    setEditVisibilityLabels("")
   }
 
   const handleDeleteGroup = async (groupId: string) => {
@@ -95,6 +133,43 @@ export function ModifierGroupsPanel({
     cancelEditOption()
     setEditingGroupId(g.id)
     setEditGroupName(g.name)
+    const rule = g.visibilityRule as
+      | { whenPriorGroupSortOrder?: unknown; whenSelectedOptionLabels?: unknown }
+      | null
+      | undefined
+    const ok =
+      rule &&
+      typeof rule.whenPriorGroupSortOrder === "number" &&
+      Array.isArray(rule.whenSelectedOptionLabels)
+    if (ok) {
+      setEditUseVisibility(true)
+      const r = rule as {
+        whenPriorGroupId?: string
+        whenPriorGroupIds?: string[]
+      }
+      const fromRule = Array.isArray(r.whenPriorGroupIds)
+        ? r.whenPriorGroupIds
+        : typeof r.whenPriorGroupId === "string" && r.whenPriorGroupId
+          ? [r.whenPriorGroupId]
+          : []
+      const valid = fromRule.filter((id) => groups.some((x) => x.id === id))
+      if (valid.length > 0) {
+        setEditPriorGroupIds(valid)
+      } else {
+        const prior = groups.find(
+          (x) => x.sortOrder === rule.whenPriorGroupSortOrder
+        )
+        setEditPriorGroupIds(prior?.id ? [prior.id] : [])
+      }
+      setEditVisibilityLabels(
+        (rule.whenSelectedOptionLabels as string[]).join("\n")
+      )
+    } else {
+      setEditUseVisibility(false)
+      setEditPriorGroupIds([])
+      setEditPriorGroupQuery("")
+      setEditVisibilityLabels("")
+    }
   }
 
   const handleUpdateGroup = async () => {
@@ -104,9 +179,42 @@ export function ModifierGroupsPanel({
       sileo.warning({ title: "Ingresá un nombre para el grupo" })
       return
     }
+    let visibilityRule: Record<string, unknown> | null = null
+    if (editUseVisibility) {
+      if (!editPriorGroupIds.length) {
+        sileo.warning({
+          title: "Elegí al menos un grupo de referencia (ej. Preparación)",
+        })
+        return
+      }
+      const priors = groups.filter((x) => editPriorGroupIds.includes(x.id))
+      if (!priors.length) {
+        sileo.warning({ title: "Grupo de referencia inválido" })
+        return
+      }
+      const labels = editVisibilityLabels
+        .split(/[\n,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+      if (labels.length === 0) {
+        sileo.warning({
+          title: "Indicá al menos una etiqueta de opción (ej. LATTE SABORIZADO DOBLE)",
+        })
+        return
+      }
+      visibilityRule = {
+        whenPriorGroupSortOrder: priors[0]!.sortOrder,
+        whenPriorGroupId: priors[0]!.id,
+        whenPriorGroupIds: priors.map((p) => p.id),
+        whenSelectedOptionLabels: labels,
+      }
+    }
     setSavingGroupEdit(true)
     try {
-      await productsApi.updateModifierGroup(editingGroupId, { name })
+      await productsApi.updateModifierGroup(editingGroupId, {
+        name,
+        visibilityRule,
+      })
       await load()
       cancelEditGroup()
       sileo.success({ title: "Grupo actualizado" })
@@ -157,7 +265,7 @@ export function ModifierGroupsPanel({
     }
   }
 
-  const startEditOption = (o: { id: string; label: string; priceDelta: number }) => {
+  const startEditOption = (o: ModifierGroup["options"][number]) => {
     cancelEditGroup()
     setOptGroupId(null)
     setOptLabel("")
@@ -250,8 +358,11 @@ export function ModifierGroupsPanel({
         El catálogo de grupos es <strong>global</strong>: lo que crees acá aparece en <strong>todas</strong>{" "}
         las recetas al elegir &quot;Grupo de modificadores&quot; en un ingrediente. Definí grupos con{" "}
         <strong>Crear grupo</strong> (nombre, obligatorio, máx. opciones) y añadí opciones con Δ precio.
-        Los <strong>insumos que se descuentan del stock</strong> por cada opción cargalos en cada receta →
-        ingrediente → variante del plato.
+        Con el ícono <strong className="inline-flex items-center gap-0.5">
+          <BookOpen className="inline h-3 w-3 text-amber-600" aria-hidden />
+        </strong>{" "}
+        podés definir los <strong>insumos por venta</strong> de cada opción (café solo, cortado, etc.).
+        También podés cargarlos desde Recetas → ingrediente → variante del plato.
       </p>
       {showRecipesLink ? (
         <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">
@@ -264,6 +375,47 @@ export function ModifierGroupsPanel({
         </p>
       ) : null}
 
+      {!loading && groups.length > 0 ? (
+        <div className="mb-4 flex flex-col gap-1.5">
+          <label htmlFor="modifier-groups-search" className="sr-only">
+            Buscar grupo u opción
+          </label>
+          <div className="relative flex items-center">
+            <Search
+              className="pointer-events-none absolute left-3 h-4 w-4 text-gray-400"
+              aria-hidden
+            />
+            <input
+              id="modifier-groups-search"
+              type="text"
+              role="searchbox"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Buscar grupo u opción…"
+              autoComplete="off"
+              className="w-full rounded-lg border border-gray-200 bg-gray-50 py-2.5 pl-9 pr-10 text-sm text-gray-900 placeholder:text-gray-400 focus:border-amber-500 focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-500 dark:border-gray-600 dark:bg-gray-900/50 dark:text-white dark:placeholder:text-gray-500 dark:focus:bg-gray-900"
+            />
+            {searchQuery.trim() ? (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 rounded p-1 text-gray-500 hover:bg-gray-200 hover:text-gray-800 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+                aria-label="Limpiar búsqueda"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            ) : null}
+          </div>
+          {searchQuery.trim() ? (
+            <p className="text-[11px] text-gray-500 dark:text-gray-400">
+              {filteredGroups.length === groups.length
+                ? `${groups.length} grupos`
+                : `${filteredGroups.length} de ${groups.length} grupos`}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {loading ? (
         <div className="flex justify-center py-8">
           <Loader2 className="h-8 w-8 animate-spin text-gray-300" />
@@ -272,44 +424,154 @@ export function ModifierGroupsPanel({
         <p className="py-4 text-center text-sm text-gray-400">
           Sin grupos. Los platos sin modificadores se cargan directo en el POS.
         </p>
+      ) : filteredGroups.length === 0 ? (
+        <p className="py-6 text-center text-sm text-gray-500 dark:text-gray-400">
+          Ningún grupo u opción coincide con &quot;{searchQuery.trim()}&quot;. Probá otra palabra o{" "}
+          <button
+            type="button"
+            onClick={() => setSearchQuery("")}
+            className="font-medium text-amber-700 underline hover:text-amber-800 dark:text-amber-400"
+          >
+            limpiá la búsqueda
+          </button>
+          .
+        </p>
       ) : (
         <div className="space-y-4">
-          {groups.map((g) => (
+          {filteredGroups.map((g) => (
             <div
               key={g.id}
               className="rounded-lg border border-gray-100 dark:border-gray-600 bg-gray-50/80 dark:bg-gray-900/40 p-4"
             >
               <div className="flex flex-wrap items-start justify-between gap-2">
                 {editingGroupId === g.id ? (
-                  <div className="flex w-full flex-wrap items-end gap-2">
-                    <div className="min-w-0 flex-1">
-                      <label className="mb-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
-                        Nombre del grupo
-                      </label>
-                      <input
-                        value={editGroupName}
-                        onChange={(e) => setEditGroupName(e.target.value)}
-                        className="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm font-medium text-gray-900 dark:text-white"
-                        autoFocus
-                      />
+                  <div className="flex w-full flex-col gap-3">
+                    <div className="flex w-full flex-wrap items-end gap-2">
+                      <div className="min-w-0 flex-1">
+                        <label className="mb-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
+                          Nombre del grupo
+                        </label>
+                        <input
+                          value={editGroupName}
+                          onChange={(e) => setEditGroupName(e.target.value)}
+                          className="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm font-medium text-gray-900 dark:text-white"
+                          autoFocus
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        disabled={savingGroupEdit}
+                        onClick={() => void handleUpdateGroup()}
+                        className="inline-flex items-center gap-1 rounded bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 disabled:opacity-50"
+                      >
+                        {savingGroupEdit ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : null}
+                        Guardar
+                      </button>
+                      <button
+                        type="button"
+                        disabled={savingGroupEdit}
+                        onClick={cancelEditGroup}
+                        className="text-xs text-gray-500 hover:underline"
+                      >
+                        Cancelar
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      disabled={savingGroupEdit}
-                      onClick={() => void handleUpdateGroup()}
-                      className="inline-flex items-center gap-1 rounded bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 disabled:opacity-50"
-                    >
-                      {savingGroupEdit ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                      Guardar
-                    </button>
-                    <button
-                      type="button"
-                      disabled={savingGroupEdit}
-                      onClick={cancelEditGroup}
-                      className="text-xs text-gray-500 hover:underline"
-                    >
-                      Cancelar
-                    </button>
+                    <div className="rounded-md border border-amber-200/80 bg-amber-50/90 p-3 dark:border-amber-900/50 dark:bg-amber-950/30">
+                      <label className="flex cursor-pointer items-center gap-2 text-sm text-gray-800 dark:text-gray-200">
+                        <input
+                          type="checkbox"
+                          checked={editUseVisibility}
+                          onChange={(e) => setEditUseVisibility(e.target.checked)}
+                          className="rounded border-gray-400"
+                        />
+                        Mostrar este grupo en el POS solo si en otro grupo se elige…
+                      </label>
+                      <p className="mt-1 text-[11px] text-gray-600 dark:text-gray-400">
+                        Útil para syrup solo en lattes saborizados. Las etiquetas deben coincidir
+                        con el nombre de la opción (sin importar mayúsculas o tildes).
+                      </p>
+                      {editUseVisibility ? (
+                        <div className="mt-2 space-y-2">
+                          <div>
+                            <label className="mb-0.5 block text-[11px] font-medium text-gray-600 dark:text-gray-400">
+                              Grupos de referencia (podés elegir más de uno)
+                            </label>
+                            <input
+                              type="text"
+                              value={editPriorGroupQuery}
+                              onChange={(e) => setEditPriorGroupQuery(e.target.value)}
+                              placeholder="Buscar grupo por nombre..."
+                              className="mb-2 w-full max-w-md rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm text-gray-900 dark:text-white"
+                            />
+                            <div className="w-full max-w-md rounded border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 p-2 max-h-[160px] overflow-auto space-y-1">
+                              {groups
+                                .filter((x) => x.id !== g.id)
+                                .filter((x) =>
+                                  x.name
+                                    .toLowerCase()
+                                    .includes(editPriorGroupQuery.trim().toLowerCase())
+                                )
+                                .sort((a, b) => a.sortOrder - b.sortOrder)
+                                .map((x) => {
+                                  const checked = editPriorGroupIds.includes(x.id)
+                                  return (
+                                    <label
+                                      key={x.id}
+                                      className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-gray-800 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        onChange={(e) =>
+                                          setEditPriorGroupIds((prev) =>
+                                            e.target.checked
+                                              ? [...prev, x.id]
+                                              : prev.filter((id) => id !== x.id)
+                                          )
+                                        }
+                                        className="h-4 w-4 rounded border-gray-400"
+                                      />
+                                      <span>
+                                        {x.name} (orden {x.sortOrder})
+                                      </span>
+                                    </label>
+                                  )
+                                })}
+                              {groups
+                                .filter((x) => x.id !== g.id)
+                                .filter((x) =>
+                                  x.name
+                                    .toLowerCase()
+                                    .includes(editPriorGroupQuery.trim().toLowerCase())
+                                ).length === 0 ? (
+                                <p className="px-2 py-1 text-xs text-gray-500 dark:text-gray-400">
+                                  No hay grupos que coincidan.
+                                </p>
+                              ) : null}
+                            </div>
+                            <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                              Podés seleccionar varios grupos.
+                            </p>
+                          </div>
+                          <div>
+                            <label className="mb-0.5 block text-[11px] font-medium text-gray-600 dark:text-gray-400">
+                              Etiquetas de opción que muestran este grupo (una por línea)
+                            </label>
+                            <textarea
+                              value={editVisibilityLabels}
+                              onChange={(e) => setEditVisibilityLabels(e.target.value)}
+                              rows={4}
+                              placeholder={
+                                "LATTE SABORIZADO TAZON\nLATTE SABORIZADO DOBLE"
+                              }
+                              className="w-full max-w-md rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 font-mono text-xs"
+                            />
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 ) : (
                   <>
@@ -317,8 +579,50 @@ export function ModifierGroupsPanel({
                       <p className="font-medium text-gray-900 dark:text-white">{g.name}</p>
                       <p className="text-xs text-gray-500">
                         {g.required ? "Obligatorio" : "Opcional"} · max {g.maxSelect} · min{" "}
-                        {g.minSelect}
+                        {g.minSelect} · orden {g.sortOrder}
                       </p>
+                      {(() => {
+                        const rule = g.visibilityRule as
+                          | {
+                              whenPriorGroupSortOrder?: number
+                              whenSelectedOptionLabels?: string[]
+                              whenPriorGroupId?: string
+                              whenPriorGroupIds?: string[]
+                            }
+                          | null
+                          | undefined
+                        if (
+                          !rule ||
+                          typeof rule.whenPriorGroupSortOrder !== "number" ||
+                          !Array.isArray(rule.whenSelectedOptionLabels)
+                        )
+                          return null
+                        const pids = Array.isArray(rule.whenPriorGroupIds)
+                          ? rule.whenPriorGroupIds
+                          : rule.whenPriorGroupId
+                            ? [rule.whenPriorGroupId]
+                            : []
+                        const priors =
+                          pids.length > 0
+                            ? pids
+                                .map((id) => groups.find((x) => x.id === id))
+                                .filter((x): x is ModifierGroup => Boolean(x))
+                            : [
+                                groups.find(
+                                  (x) => x.sortOrder === rule.whenPriorGroupSortOrder
+                                ),
+                              ].filter((x): x is ModifierGroup => Boolean(x))
+                        return (
+                          <p className="mt-1 text-[11px] text-amber-800 dark:text-amber-200/90">
+                            POS: visible si en{" "}
+                            {priors.length > 0
+                              ? priors.map((p) => `"${p.name}"`).join(" o ")
+                              : '"?"'}{" "}
+                            elegís:{" "}
+                            {rule.whenSelectedOptionLabels.join(" · ")}
+                          </p>
+                        )
+                      })()}
                     </div>
                     {!readOnly && (
                       <div className="flex shrink-0 items-center gap-0.5">
@@ -401,9 +705,29 @@ export function ModifierGroupsPanel({
                           <div className="flex shrink-0 items-center gap-0.5">
                             <button
                               type="button"
+                              onClick={() =>
+                                setRecipeDialog({
+                                  optionId: o.id,
+                                  optionLabel: o.label,
+                                  lines: (o.stockLines || []).map((sl) => ({
+                                    id: sl.id,
+                                    quantity: sl.quantity,
+                                    product: sl.product,
+                                  })),
+                                  groupName: g.name,
+                                  visibilityRule: g.visibilityRule,
+                                })
+                              }
+                              className="rounded p-1 text-amber-700 hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-950/40"
+                              title="Insumos / receta por venta"
+                            >
+                              <BookOpen className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => startEditOption(o)}
                               className="rounded p-1 text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/40"
-                              title="Editar opción"
+                              title="Editar nombre y Δ precio"
                             >
                               <Pencil className="h-3.5 w-3.5" />
                             </button>
@@ -478,6 +802,21 @@ export function ModifierGroupsPanel({
           ))}
         </div>
       )}
+
+      {recipeDialog ? (
+        <ModifierOptionRecipeDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setRecipeDialog(null)
+          }}
+          optionId={recipeDialog.optionId}
+          optionLabel={recipeDialog.optionLabel}
+          initialLines={recipeDialog.lines}
+          groupName={recipeDialog.groupName}
+          visibilityRule={recipeDialog.visibilityRule}
+          onSaved={() => void load()}
+        />
+      ) : null}
     </div>
   )
 }

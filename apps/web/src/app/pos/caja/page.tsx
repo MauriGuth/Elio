@@ -515,17 +515,14 @@ export default function PosCajaPage() {
             const stockForLocation = Array.isArray(p.stockLevels)
               ? p.stockLevels.find((level: any) => level.locationId === locationId)
               : null
-
-            if (!stockForLocation) return null
-
             return {
               id: p.id,
               sku: p.sku,
               name: p.name,
               unit: p.unit,
               avgCost: p.avgCost ?? 0,
-              salePrice: stockForLocation.salePrice ?? p.salePrice ?? 0,
-              stockQuantity: stockForLocation.quantity ?? 0,
+              salePrice: stockForLocation?.salePrice ?? p.salePrice ?? 0,
+              stockQuantity: stockForLocation?.quantity ?? 0,
               imageUrl: p.imageUrl ?? null,
               category: p.category ?? {
                 id: "",
@@ -535,7 +532,6 @@ export default function PosCajaPage() {
               },
             }
           })
-          .filter(Boolean)
       )
     } catch {
       setProducts([])

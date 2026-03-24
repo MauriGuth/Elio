@@ -76,6 +76,11 @@ export class CreateProductDto {
   @IsBoolean()
   isPerishable?: boolean;
 
+  /** Al vender, descontar insumos de la receta (café/bar al momento) en lugar del producto terminado. */
+  @IsOptional()
+  @IsBoolean()
+  consumeRecipeOnSale?: boolean;
+
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;

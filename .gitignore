@@ -23,3 +23,7 @@ apps/api/generated/
 .vscode/
 *.swp
 *.swo
+
+# Dumps de base (no versionar)
+*.dump
+nova_remote.dump

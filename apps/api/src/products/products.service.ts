@@ -408,6 +408,9 @@ export class ProductsService {
         required: dto.required ?? false,
         minSelect: dto.minSelect ?? 0,
         maxSelect: dto.maxSelect ?? 1,
+        ...(dto.visibilityRule !== undefined
+          ? { visibilityRule: dto.visibilityRule as object }
+          : {}),
       },
     });
   }
@@ -427,6 +430,14 @@ export class ProductsService {
         ...(dto.required !== undefined ? { required: dto.required } : {}),
         ...(dto.minSelect !== undefined ? { minSelect: dto.minSelect } : {}),
         ...(dto.maxSelect !== undefined ? { maxSelect: dto.maxSelect } : {}),
+        ...(dto.visibilityRule !== undefined
+          ? {
+              visibilityRule:
+                dto.visibilityRule === null
+                  ? Prisma.DbNull
+                  : (dto.visibilityRule as object),
+            }
+          : {}),
       },
     });
   }

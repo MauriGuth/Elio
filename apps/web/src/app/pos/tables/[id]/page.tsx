@@ -11,6 +11,7 @@ import { runningAccountsApi } from "@/lib/api/running-accounts"
 import { authApi } from "@/lib/api/auth"
 import { cashRegistersApi } from "@/lib/api/cash-registers"
 import { getLocationKey, posStationSuffix } from "@/lib/api"
+import { isBaristaTakeProductSku } from "@/lib/barista-take-products"
 import { aiEventsApi } from "@/lib/api/ai-events"
 import { sileo } from "sileo"
 import { cn, formatCurrency } from "@/lib/utils"
@@ -50,6 +51,8 @@ import {
 interface PendingItem {
   tempId: string
   productId: string
+  /** Para leyendas POS (ej. posavasos BARISTA-TAKE). */
+  productSku?: string
   productName: string
   quantity: number
   unitPrice: number
@@ -61,6 +64,8 @@ interface PendingItem {
   modifierSummary?: string
   /** IDs de filas de `recipe_ingredients` que el cliente quitó del plato (POS). */
   excludedRecipeIngredientIds?: string[]
+  /** IDs de `product_modifier_stock_line` quitadas (insumos de la preparación elegida). */
+  excludedModifierStockLineIds?: string[]
 }
 
 function modifierSelectionsKey(s?: Record<string, string | string[]>): string {
@@ -79,19 +84,34 @@ function excludedIngredientKey(ids?: string[]): string {
   return JSON.stringify([...new Set(ids)].sort())
 }
 
-function pendingLineMatchKey(
-  i: Pick<PendingItem, "modifierSelections" | "excludedRecipeIngredientIds">
-): string {
-  return `${modifierSelectionsKey(i.modifierSelections)}|${excludedIngredientKey(i.excludedRecipeIngredientIds)}`
+function excludedModStockLinesKey(ids?: string[]): string {
+  if (!ids?.length) return "[]"
+  return JSON.stringify([...new Set(ids)].sort())
 }
 
+function pendingLineMatchKey(
+  i: Pick<
+    PendingItem,
+    | "modifierSelections"
+    | "excludedRecipeIngredientIds"
+    | "excludedModifierStockLineIds"
+  >
+): string {
+  return `${modifierSelectionsKey(i.modifierSelections)}|${excludedIngredientKey(i.excludedRecipeIngredientIds)}|${excludedModStockLinesKey(i.excludedModifierStockLineIds)}`
+}
+
+/**
+ * Solo grupos ligados a la receta activa del producto (ingredientes con `modifierGroupId`).
+ * Si la receta no usa ningún grupo, no mostrar el catálogo global completo en el POS.
+ */
 function filterModifierGroupsByRecipe(
   groups: any[],
   modifierGroupIds: string[]
 ): any[] {
-  if (!modifierGroupIds?.length) return groups || []
+  if (!modifierGroupIds?.length) return []
   const allowed = new Set(modifierGroupIds)
-  return (groups || []).filter((g) => allowed.has(g.id))
+  const filtered = (groups || []).filter((g) => allowed.has(g.id))
+  return filtered.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
 }
 
 /** Grupos de modificadores ligados a un ingrediente de receta que el cliente quitó → no se muestran (ej. tipo de pan si no va pan). */
@@ -121,31 +141,327 @@ function visibleModifierGroupsForPosModal(
   return (groups || []).filter((g) => !hidden.has(g.id))
 }
 
+function normalizeModifierLabelPos(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+}
+
+/** Grupo «Preparación — …» (insumos por opción en `stockLines`). */
+function isPreparationModifierGroupPos(g: { name?: string }): boolean {
+  return normalizeModifierLabelPos(g.name || "").includes("preparacion")
+}
+
+function getPrepOptionStockLinesForChecklist(opt: any): Array<{ id: string; label: string }> {
+  const lines = opt?.stockLines || []
+  const out: Array<{ id: string; label: string }> = []
+  for (const sl of lines) {
+    if (!sl?.id) continue
+    const name = (sl.product?.name as string) || "Insumo"
+    out.push({ id: sl.id as string, label: name })
+  }
+  return out
+}
+
+/** Texto «Sin: …» para líneas de stock de preparación desmarcadas. */
+function summaryExcludedPrepStockLines(
+  groups: any[],
+  selections: Record<string, string | string[]>,
+  excludedLineIds: string[]
+): string {
+  if (!excludedLineIds.length) return ""
+  const prepG = groups.find((g) => isPreparationModifierGroupPos(g))
+  if (!prepG) return ""
+  const sel = selections[prepG.id]
+  const optId = Array.isArray(sel) ? sel[0] : sel
+  if (!optId) return ""
+  const opt = (prepG.options || []).find((o: any) => o.id === optId)
+  const lines = opt?.stockLines || []
+  const names: string[] = []
+  for (const lid of excludedLineIds) {
+    const sl = lines.find((l: any) => l.id === lid)
+    const nm = sl?.product?.name
+    if (nm) names.push(nm)
+  }
+  if (!names.length) return ""
+  return `Sin: ${names.join(", ")}`
+}
+
+function sortModifierOptionsPos(opts: any[]): any[] {
+  return [...(opts || [])].sort(
+    (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+  )
+}
+
+/** Grupos «Café de especialidad» del clásico: default distinto al primer sortOrder. */
+function isSpecialtyCoffeeModifierGroupPos(g: { name?: string }): boolean {
+  const n = normalizeModifierLabelPos(g.name || "")
+  return (
+    n.includes("cafe de especialidad") || n.includes("tipo de cafe")
+  )
+}
+
+/** Variedad que más se vende — selección inicial en POS (no cambia el orden visual de la lista). */
+const DEFAULT_SPECIALTY_COFFEE_OPTION_NORM = normalizeModifierLabelPos(
+  "Brasil Santos Bourbon"
+)
+
+function pickDefaultOptionIdForGroupPos(
+  g: any,
+  rawOpts: any[]
+): string | undefined {
+  const opts = sortModifierOptionsPos(rawOpts)
+  if (opts.length === 0) return undefined
+  if (isSpecialtyCoffeeModifierGroupPos(g)) {
+    const preferred = opts.find(
+      (o) =>
+        normalizeModifierLabelPos(String(o.label ?? "")) ===
+        DEFAULT_SPECIALTY_COFFEE_OPTION_NORM
+    )
+    if (preferred?.id) return preferred.id as string
+  }
+  return opts[0].id as string
+}
+
+/**
+ * Grupos visibles según `visibilityRule` (ej. tipo de leche solo si la preparación lleva leche).
+ * Debe coincidir con `computeVisibleModifierGroupIds` en el API.
+ */
+function computeVisibleModifierGroupIdsForPos(
+  groups: any[],
+  selections: Record<string, string | string[]>
+): string[] {
+  const sel: Record<string, string[]> = {}
+  for (const [k, v] of Object.entries(selections)) {
+    sel[k] = Array.isArray(v) ? v : v ? [v as string] : []
+  }
+  const sorted = [...(groups || [])].sort(
+    (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+  )
+  const visible: string[] = []
+  for (const g of sorted) {
+    if (g.visibilityRule == null) {
+      visible.push(g.id)
+      continue
+    }
+    const rule = g.visibilityRule as {
+      whenPriorGroupSortOrder: number
+      whenSelectedOptionLabels: string[]
+      whenPriorGroupId?: string
+      whenPriorGroupIds?: string[]
+    }
+    if (
+      typeof rule.whenPriorGroupSortOrder !== "number" ||
+      !Array.isArray(rule.whenSelectedOptionLabels)
+    ) {
+      visible.push(g.id)
+      continue
+    }
+    const priorIds = Array.isArray(rule.whenPriorGroupIds)
+      ? rule.whenPriorGroupIds.filter(
+          (id): id is string => typeof id === "string" && id.length > 0
+        )
+      : []
+    const priors =
+      priorIds.length > 0
+        ? priorIds
+            .map((id) => sorted.find((x) => x.id === id))
+            .filter((x): x is any => Boolean(x))
+        : [
+            typeof rule.whenPriorGroupId === "string" && rule.whenPriorGroupId
+              ? sorted.find((x) => x.id === rule.whenPriorGroupId) ??
+                sorted.find((x) => x.sortOrder === rule.whenPriorGroupSortOrder)
+              : sorted.find((x) => x.sortOrder === rule.whenPriorGroupSortOrder),
+          ].filter((x): x is any => Boolean(x))
+    if (priors.length === 0) {
+      visible.push(g.id)
+      continue
+    }
+    let ok = false
+    for (const prior of priors) {
+      const picked = sel[prior.id]?.[0]
+      if (!picked) continue
+      const opt = (prior.options || []).find((o: any) => o.id === picked)
+      const label = opt?.label ?? ""
+      const labelNorm = normalizeModifierLabelPos(label)
+      if (
+        rule.whenSelectedOptionLabels.some(
+          (allowed: string) => normalizeModifierLabelPos(allowed) === labelNorm
+        )
+      ) {
+        ok = true
+        break
+      }
+    }
+    if (ok) {
+      visible.push(g.id)
+    }
+  }
+  return visible
+}
+
+/** Licuado 450: 6 tipos + 9 líquidos en DB; el POS muestra 3 radios según el tipo (como smoothie). */
+const LICUADO_450_SKUS = new Set(["CARTA-LICUADO-SALON-450", "CARTA-LICUADO-TAKE-450"])
+
+function applyLicuado450LiquidOptionFilter(
+  productSku: string | undefined,
+  visibleGroups: any[],
+  selections: Record<string, string | string[]>
+): any[] {
+  if (!productSku || !LICUADO_450_SKUS.has(productSku)) return visibleGroups
+  const sorted = [...visibleGroups].sort(
+    (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+  )
+  if (sorted.length < 2) return visibleGroups
+  const [gTipo, gLiq] = sorted
+  const oTipo = gTipo.options || []
+  const oLiq = gLiq.options || []
+  if (oTipo.length !== 6 || oLiq.length !== 9) return visibleGroups
+
+  const selT = selections[gTipo.id]
+  const idT = Array.isArray(selT) ? selT[0] : selT
+  let tipoIdx = oTipo.findIndex((o: any) => o.id === idT)
+  if (tipoIdx < 0) tipoIdx = 0
+
+  let start = 0
+  let end = 3
+  if (tipoIdx === 0) {
+    start = 0
+    end = 3
+  } else if (tipoIdx === 1) {
+    start = 3
+    end = 6
+  } else {
+    start = 6
+    end = 9
+  }
+
+  const liquidSlice = oLiq.slice(start, end)
+  return sorted.map((g) => (g.id === gLiq.id ? { ...g, options: liquidSlice } : g))
+}
+
+function effectiveModifierGroupsForPosModal(
+  product: { sku?: string },
+  groups: any[],
+  recipeIngredients: { id: string; modifierGroupId?: string | null }[],
+  excludedIngredientIds: string[],
+  selections: Record<string, string | string[]>
+): any[] {
+  const vis = visibleModifierGroupsForPosModal(
+    groups,
+    recipeIngredients,
+    excludedIngredientIds
+  )
+  const sorted = [...vis].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+  const visIds = new Set(
+    computeVisibleModifierGroupIdsForPos(sorted, selections)
+  )
+  const afterRule = sorted.filter((g) => visIds.has(g.id))
+  return applyLicuado450LiquidOptionFilter(product?.sku, afterRule, selections)
+}
+
 function fullPosModifierSummary(
   groups: any[],
   selections: Record<string, string | string[]>,
-  recipeIngredients: { id: string; name: string }[],
+  recipeIngredients: { id: string; name: string; modifierGroupId?: string | null }[],
   excludedIngredientIds: string[]
 ): string {
   const opt = summaryFromSelections(groups, selections)
   const excludedNames = recipeIngredients
-    .filter((r) => excludedIngredientIds.includes(r.id))
+    .filter((r) => !r.modifierGroupId && excludedIngredientIds.includes(r.id))
     .map((r) => r.name)
   const sin =
     excludedNames.length > 0 ? `Sin: ${excludedNames.join(", ")}` : ""
   return [opt, sin].filter(Boolean).join(" · ")
 }
 
-function defaultModifierSelections(groups: any[]): Record<string, string | string[]> {
-  const out: Record<string, string | string[]> = {}
-  for (const g of groups || []) {
+/** Primera opción en preparación; el grupo "tipo de leche" se rellena al elegir prep. con leche. */
+function buildInitialModifierSelections(
+  product: { sku?: string },
+  groups: any[],
+  recipeIngredients: { id: string; modifierGroupId?: string | null }[],
+  excludedIngredientIds: string[]
+): Record<string, string | string[]> {
+  const sorted = [...(groups || [])].sort(
+    (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+  )
+  const sel: Record<string, string | string[]> = {}
+  for (const g of sorted) {
+    if (g.visibilityRule != null) continue
     const opts = g.options || []
     if (!g.required || opts.length === 0) continue
+    const defId = pickDefaultOptionIdForGroupPos(g, opts)
+    if (!defId) continue
     const maxSel = g.maxSelect ?? 1
-    if (maxSel === 1) out[g.id] = opts[0].id
-    else out[g.id] = [opts[0].id]
+    if (maxSel === 1) sel[g.id] = defId
+    else sel[g.id] = [defId]
   }
-  return out
+  const eff = effectiveModifierGroupsForPosModal(
+    product,
+    groups,
+    recipeIngredients,
+    excludedIngredientIds,
+    sel
+  )
+  const next = { ...sel }
+  for (const g of eff) {
+    const opts = g.options || []
+    if (!g.required || opts.length === 0) continue
+    if (next[g.id] != null) continue
+    const defId = pickDefaultOptionIdForGroupPos(g, opts)
+    if (!defId) continue
+    const maxSel = g.maxSelect ?? 1
+    if (maxSel === 1) next[g.id] = defId
+    else next[g.id] = [defId]
+  }
+  return next
+}
+
+function reconcileModifierSelectionsAfterChange(
+  product: { sku?: string },
+  groups: any[],
+  recipeIngredients: { id: string; modifierGroupId?: string | null }[],
+  excludedIngredientIds: string[],
+  prev: Record<string, string | string[]>,
+  changedGroupId: string,
+  newOptionId: string
+): Record<string, string | string[]> {
+  const next: Record<string, string | string[]> = {
+    ...prev,
+    [changedGroupId]: newOptionId,
+  }
+  const vis = visibleModifierGroupsForPosModal(
+    groups,
+    recipeIngredients,
+    excludedIngredientIds
+  )
+  const sorted = [...vis].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+  const effIds = new Set(computeVisibleModifierGroupIdsForPos(sorted, next))
+  const cleaned: Record<string, string | string[]> = {}
+  for (const k of Object.keys(next)) {
+    if (effIds.has(k)) cleaned[k] = next[k]!
+  }
+  const eff = effectiveModifierGroupsForPosModal(
+    product,
+    groups,
+    recipeIngredients,
+    excludedIngredientIds,
+    cleaned
+  )
+  for (const g of eff) {
+    const opts = g.options || []
+    if (!g.required || opts.length === 0) continue
+    if (cleaned[g.id] != null) continue
+    const defId = pickDefaultOptionIdForGroupPos(g, opts)
+    if (!defId) continue
+    const maxSel = g.maxSelect ?? 1
+    if (maxSel === 1) cleaned[g.id] = defId
+    else cleaned[g.id] = [defId]
+  }
+  return cleaned
 }
 
 function extraPriceFromSelections(
@@ -378,6 +694,14 @@ function splitProductAndNotes(productText: string): { productPart: string; notes
   return { productPart: productText.trim(), notesPart: "" }
 }
 
+/** Búsqueda en POS: minúsculas + sin tildes para acertar "cafe" / "Café" / categorías */
+function foldForPosSearch(s: string): string {
+  return (s ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+}
+
 function parseVoiceCommand(
   transcript: string,
   products: any[]
@@ -564,6 +888,8 @@ export default function TableOrderPage() {
       modifierGroupId?: string | null
     }[]
     excludedIngredientIds: string[]
+    /** Líneas `product_modifier_stock_line` de la preparación que el cliente quitó. */
+    excludedModifierStockLineIds: string[]
     /** Si viene de comando de voz: cantidad, sector y notas del match. */
     voiceMeta?: {
       quantity: number
@@ -882,6 +1208,7 @@ export default function TableOrderPage() {
           {
             tempId: crypto.randomUUID(),
             productId: match.product.id,
+            productSku: match.product.sku ?? undefined,
             productName: match.product.name,
             quantity: match.quantity,
             unitPrice,
@@ -900,9 +1227,15 @@ export default function TableOrderPage() {
       setModifierModal({
         product: first.product,
         groups: first.groups,
-        selections: defaultModifierSelections(first.groups),
+        selections: buildInitialModifierSelections(
+          first.product,
+          first.groups,
+          first.recipeIngredients,
+          []
+        ),
         recipeIngredients: first.recipeIngredients,
         excludedIngredientIds: [],
+        excludedModifierStockLineIds: [],
         voiceMeta: {
           quantity: first.quantity,
           sector: first.sector,
@@ -1011,20 +1344,17 @@ export default function TableOrderPage() {
           _refresh: Date.now(),
         })
         const rawProducts = productsData?.data ?? productsData ?? []
-        const scopedProducts = rawProducts
-          .map((product: any) => {
-            const stockForLocation = Array.isArray(product.stockLevels)
-              ? product.stockLevels.find((level: any) => level.locationId === effectiveLocationId)
-              : null
-
-            if (!stockForLocation) return null
-
-            return {
-              ...product,
-              salePrice: stockForLocation.salePrice ?? product.salePrice ?? 0,
-            }
-          })
-          .filter(Boolean)
+        const scopedProducts = rawProducts.map((product: any) => {
+          const stockForLocation = Array.isArray(product.stockLevels)
+            ? product.stockLevels.find((level: any) => level.locationId === effectiveLocationId)
+            : null
+          // Antes se excluían productos sin stock_levels en este local → no aparecían en mesas
+          // (p. ej. carta recién sembrada o local nuevo). Mostrarlos igual; precio desde producto si hace falta.
+          return {
+            ...product,
+            salePrice: stockForLocation?.salePrice ?? product.salePrice ?? 0,
+          }
+        })
 
         setProducts(scopedProducts)
       } else {
@@ -1109,13 +1439,18 @@ export default function TableOrderPage() {
 
   /* ── derived: categories ── */
   const categories = useMemo(() => {
-    const cats = new Map<string, { id: string; name: string; icon: string; color: string }>()
+    const cats = new Map<
+      string,
+      { id: string; name: string; icon: string; color: string; sortOrder?: number }
+    >()
     products.forEach((p) => {
       if (p.category && !cats.has(p.category.id)) {
         cats.set(p.category.id, p.category)
       }
     })
-    return Array.from(cats.values())
+    return Array.from(cats.values()).sort(
+      (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+    )
   }, [products])
 
   /* ── derived: filtered products ── */
@@ -1125,8 +1460,13 @@ export default function TableOrderPage() {
       list = list.filter((p) => p.category?.id === activeCategory)
     }
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase()
-      list = list.filter((p) => p.name.toLowerCase().includes(q))
+      const q = foldForPosSearch(searchQuery.trim())
+      list = list.filter((p) => {
+        const name = foldForPosSearch(String(p.name ?? ""))
+        const cat = foldForPosSearch(String(p.category?.name ?? ""))
+        const sku = foldForPosSearch(String(p.sku ?? ""))
+        return name.includes(q) || cat.includes(q) || sku.includes(q)
+      })
     }
     return list
   }, [products, activeCategory, searchQuery])
@@ -1220,9 +1560,15 @@ export default function TableOrderPage() {
         setModifierModal({
           product,
           groups: filtered,
-          selections: defaultModifierSelections(filtered),
+          selections: buildInitialModifierSelections(
+            product,
+            filtered,
+            posCtx.ingredients ?? [],
+            []
+          ),
           recipeIngredients: posCtx.ingredients ?? [],
           excludedIngredientIds: [],
+          excludedModifierStockLineIds: [],
         })
         return
       }
@@ -1246,6 +1592,7 @@ export default function TableOrderPage() {
         {
           tempId: crypto.randomUUID(),
           productId: product.id,
+          productSku: product.sku ?? undefined,
           productName: product.name,
           quantity: 1,
           unitPrice: product.salePrice,
@@ -1270,9 +1617,15 @@ export default function TableOrderPage() {
     setModifierModal({
       product: next.product,
       groups: next.groups,
-      selections: defaultModifierSelections(next.groups),
+      selections: buildInitialModifierSelections(
+        next.product,
+        next.groups,
+        next.recipeIngredients,
+        []
+      ),
       recipeIngredients: next.recipeIngredients,
       excludedIngredientIds: [],
+      excludedModifierStockLineIds: [],
       voiceMeta: {
         quantity: next.quantity,
         sector: next.sector,
@@ -1285,18 +1638,30 @@ export default function TableOrderPage() {
 
   const commitModifierModalState = (
     m: ModifierModalState,
-    selections: Record<string, string | string[]>,
-    excludedIngredientIds: string[]
+    selections: Record<string, string | string[]>
   ) => {
     const { product, groups, recipeIngredients, voiceMeta } = m
-    const visibleGroups = visibleModifierGroupsForPosModal(
+    const excludedIngredientIds = m.excludedIngredientIds
+    const excludedModifierStockLineIds = m.excludedModifierStockLineIds ?? []
+    const visibleGroups = effectiveModifierGroupsForPosModal(
+      product,
       groups,
       recipeIngredients,
-      excludedIngredientIds
+      excludedIngredientIds,
+      selections
     )
+    const sel: Record<string, string | string[]> = { ...selections }
     for (const g of visibleGroups) {
-      const sel = selections[g.id]
-      const n = Array.isArray(sel) ? sel.length : sel ? 1 : 0
+      const v = sel[g.id]
+      const one = Array.isArray(v) ? v[0] : v
+      if (one && !(g.options || []).some((o: any) => o.id === one)) {
+        const defId = pickDefaultOptionIdForGroupPos(g, g.options || [])
+        if (defId) sel[g.id] = defId
+      }
+    }
+    for (const g of visibleGroups) {
+      const s = sel[g.id]
+      const n = Array.isArray(s) ? s.length : s ? 1 : 0
       if (g.required && n === 0) {
         sileo.error({ title: "Faltan opciones", description: `Elegí opciones en "${g.name}".` })
         return
@@ -1318,24 +1683,36 @@ export default function TableOrderPage() {
     }
     const normalizedSelections: Record<string, string | string[]> = {}
     for (const g of visibleGroups) {
-      const v = selections[g.id]
+      const v = sel[g.id]
       if (v == null) continue
       const one = Array.isArray(v) ? v[0] : v
       if (one) normalizedSelections[g.id] = one
     }
     const extra = extraPriceFromSelections(visibleGroups, normalizedSelections)
     const unitPrice = Math.round(((Number(product.salePrice) || 0) + extra) * 100) / 100
-    const summary = fullPosModifierSummary(
+    let summary = fullPosModifierSummary(
       visibleGroups,
       normalizedSelections,
       recipeIngredients,
       excludedIngredientIds
     )
+    const prepSin = summaryExcludedPrepStockLines(
+      groups,
+      normalizedSelections,
+      excludedModifierStockLineIds
+    )
+    if (prepSin) {
+      summary = summary ? `${summary} · ${prepSin}` : prepSin
+    }
     const key = pendingLineMatchKey({
       modifierSelections:
         Object.keys(normalizedSelections).length > 0 ? normalizedSelections : undefined,
       excludedRecipeIngredientIds:
         excludedIngredientIds.length > 0 ? excludedIngredientIds : undefined,
+      excludedModifierStockLineIds:
+        excludedModifierStockLineIds.length > 0
+          ? excludedModifierStockLineIds
+          : undefined,
     })
     const existing = pendingItems.find(
       (i) => i.productId === product.id && pendingLineMatchKey(i) === key
@@ -1355,6 +1732,7 @@ export default function TableOrderPage() {
         {
           tempId: crypto.randomUUID(),
           productId: product.id,
+          productSku: product.sku ?? undefined,
           productName: product.name,
           quantity: qtyAdd,
           unitPrice,
@@ -1367,6 +1745,10 @@ export default function TableOrderPage() {
           modifierSummary: summary || undefined,
           excludedRecipeIngredientIds:
             excludedIngredientIds.length > 0 ? [...excludedIngredientIds] : undefined,
+          excludedModifierStockLineIds:
+            excludedModifierStockLineIds.length > 0
+              ? [...excludedModifierStockLineIds]
+              : undefined,
         },
       ])
     }
@@ -1379,30 +1761,46 @@ export default function TableOrderPage() {
 
   const confirmModifierModal = () => {
     if (!modifierModal) return
-    commitModifierModalState(
-      modifierModal,
-      modifierModal.selections,
-      modifierModal.excludedIngredientIds
-    )
+    commitModifierModalState(modifierModal, modifierModal.selections)
   }
 
   /** Voz: confirmar sin tocar — mismas reglas que al abrir (1ª opción en obligatorios, todo incluido). */
   const confirmModifierModalVoiceDefaults = () => {
     if (!modifierModal?.voiceMeta) return
-    const vis = visibleModifierGroupsForPosModal(
+    const asSingle = buildInitialModifierSelections(
+      modifierModal.product,
       modifierModal.groups,
       modifierModal.recipeIngredients,
-      [] // valores por defecto = todo incluido → todos los grupos visibles
+      []
     )
-    const def = defaultModifierSelections(vis)
-    const asSingle: Record<string, string | string[]> = {}
-    for (const g of vis) {
-      const v = def[g.id]
-      if (v == null) continue
-      const one = Array.isArray(v) ? v[0] : v
-      if (one) asSingle[g.id] = one
+    if (modifierModal.product?.sku && LICUADO_450_SKUS.has(modifierModal.product.sku)) {
+      const eff = effectiveModifierGroupsForPosModal(
+        modifierModal.product,
+        modifierModal.groups,
+        modifierModal.recipeIngredients,
+        [],
+        asSingle
+      )
+      const sorted = [...eff].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+      if (sorted.length >= 2) {
+        const gLiq = sorted[1]
+        const optIds = new Set((gLiq.options || []).map((o: any) => o.id))
+        const cur = asSingle[gLiq.id]
+        const curOne = Array.isArray(cur) ? cur[0] : cur
+        if (curOne && !optIds.has(curOne)) {
+          const first = gLiq.options?.[0]
+          if (first?.id) asSingle[gLiq.id] = first.id
+        }
+      }
     }
-    commitModifierModalState(modifierModal, asSingle, [])
+    commitModifierModalState(
+      {
+        ...modifierModal,
+        excludedIngredientIds: [],
+        excludedModifierStockLineIds: [],
+      },
+      asSingle
+    )
   }
 
   /* ── quantity helpers ── */
@@ -1499,6 +1897,10 @@ export default function TableOrderPage() {
           excludedRecipeIngredientIds:
             i.excludedRecipeIngredientIds && i.excludedRecipeIngredientIds.length > 0
               ? i.excludedRecipeIngredientIds
+              : undefined,
+          excludedModifierStockLineIds:
+            i.excludedModifierStockLineIds && i.excludedModifierStockLineIds.length > 0
+              ? i.excludedModifierStockLineIds
               : undefined,
         }
       })
@@ -1988,6 +2390,16 @@ export default function TableOrderPage() {
                       {item.modifierSummary ? (
                         <p className="mt-1.5 rounded-lg border-l-4 border-blue-500 bg-blue-100/90 py-1.5 pl-2 pr-2 text-sm font-semibold leading-snug text-blue-950 break-words">
                           {item.modifierSummary}
+                        </p>
+                      ) : null}
+                      {isBaristaTakeProductSku(item.productSku) ? (
+                        <p className="mt-1.5 rounded-md border border-amber-200/90 bg-amber-50/95 px-2 py-1.5 text-[11px] leading-snug text-amber-950">
+                          <span className="font-semibold">Posavasos</span>
+                          {" · "}
+                          Al cerrar cuenta: descuenta{" "}
+                          <span className="font-medium">1 posavaso (stock) cada 2 take</span> en el
+                          pedido. Este producto suma take; el pack/collar de la preparación va aparte en
+                          la receta.
                         </p>
                       ) : null}
                       <div className="mt-0.5 text-xs text-gray-500">
@@ -2855,18 +3267,31 @@ export default function TableOrderPage() {
       {/* Modificadores de producto (pan, punto, dips, etc.) */}
       {modifierModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl">
-            <h3 className="text-lg font-semibold text-gray-900">
-              {modifierModal.product.name}
-            </h3>
-            <p
-              className={cn(
-                "text-sm text-gray-500",
-                modifierModal.voiceMeta ? "mb-2" : "mb-4"
-              )}
-            >
-              Elegí las opciones del plato
-            </p>
+          <div className="flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-gray-100 px-5 pt-5 pb-3">
+              <div className="min-w-0 flex-1">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {modifierModal.product.name}
+                </h3>
+                <p
+                  className={cn(
+                    "text-sm text-gray-500",
+                    modifierModal.voiceMeta ? "mt-0.5" : "mt-1"
+                  )}
+                >
+                  Elegí las opciones del plato
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeModifierModal}
+                className="shrink-0 rounded-lg p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
+                aria-label="Cerrar"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
             {modifierModal.voiceMeta ? (
               <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-950">
                 <p className="font-semibold text-blue-900">Completando pedido por voz</p>
@@ -2886,7 +3311,7 @@ export default function TableOrderPage() {
               </div>
             ) : null}
             <div className="space-y-4">
-              {modifierModal.recipeIngredients.length > 0 ? (
+              {modifierModal.recipeIngredients.some((ing) => !ing.modifierGroupId) ? (
                 <div className="rounded-xl border border-slate-600 bg-slate-900 p-4 text-slate-100 shadow-inner">
                   <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-300">
                     Incluye (desmarcá lo que no va)
@@ -2895,7 +3320,9 @@ export default function TableOrderPage() {
                     Va a la comanda como &quot;Sin: …&quot; si quitás algo.
                   </p>
                   <ul className="space-y-2">
-                    {modifierModal.recipeIngredients.map((ing) => {
+                    {modifierModal.recipeIngredients
+                      .filter((ing) => !ing.modifierGroupId)
+                      .map((ing) => {
                       const excluded = modifierModal.excludedIngredientIds.includes(
                         ing.id
                       )
@@ -2925,9 +3352,15 @@ export default function TableOrderPage() {
                                     )
                                     const opts = g?.options || []
                                     if (g?.required && opts.length > 0) {
-                                      nextSelections = {
-                                        ...nextSelections,
-                                        [g.id]: opts[0].id,
+                                      const defId = pickDefaultOptionIdForGroupPos(
+                                        g,
+                                        opts
+                                      )
+                                      if (defId) {
+                                        nextSelections = {
+                                          ...nextSelections,
+                                          [g.id]: defId,
+                                        }
                                       }
                                     }
                                   }
@@ -2949,10 +3382,12 @@ export default function TableOrderPage() {
                 </div>
               ) : null}
 
-              {visibleModifierGroupsForPosModal(
+              {effectiveModifierGroupsForPosModal(
+                modifierModal.product,
                 modifierModal.groups,
                 modifierModal.recipeIngredients,
-                modifierModal.excludedIngredientIds
+                modifierModal.excludedIngredientIds,
+                modifierModal.selections
               ).map((g) => {
                 const sel = modifierModal.selections[g.id]
                 const checkedId = Array.isArray(sel) ? sel[0] : sel
@@ -2984,14 +3419,55 @@ export default function TableOrderPage() {
                               name={`modifier-${g.id}`}
                               checked={checked}
                               onChange={() =>
-                                setModifierModal((m) =>
-                                  m
-                                    ? {
+                                setModifierModal((m) => {
+                                  if (!m) return null
+                                  const sku = m.product?.sku
+                                  if (sku && LICUADO_450_SKUS.has(sku)) {
+                                    const vis = visibleModifierGroupsForPosModal(
+                                      m.groups,
+                                      m.recipeIngredients,
+                                      m.excludedIngredientIds
+                                    )
+                                    const sorted = [...vis].sort(
+                                      (a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)
+                                    )
+                                    const [gTipo, gLiq] = sorted
+                                    if (sorted.length >= 2 && g.id === gTipo?.id && gLiq) {
+                                      const nextSel = { ...m.selections, [g.id]: o.id }
+                                      const oTipo = gTipo.options || []
+                                      const oLiq = gLiq.options || []
+                                      const tipoIdx = oTipo.findIndex((x: any) => x.id === o.id)
+                                      let start = 0
+                                      if (tipoIdx === 0) start = 0
+                                      else if (tipoIdx === 1) start = 3
+                                      else start = 6
+                                      const firstLiq = oLiq[start]
+                                      if (firstLiq) nextSel[gLiq.id] = firstLiq.id
+                                      return {
                                         ...m,
-                                        selections: { ...m.selections, [g.id]: o.id },
+                                        selections: nextSel,
+                                        excludedModifierStockLineIds:
+                                          m.excludedModifierStockLineIds ?? [],
                                       }
-                                    : null
-                                )
+                                    }
+                                  }
+                                  return {
+                                    ...m,
+                                    selections: reconcileModifierSelectionsAfterChange(
+                                      m.product,
+                                      m.groups,
+                                      m.recipeIngredients,
+                                      m.excludedIngredientIds,
+                                      m.selections,
+                                      g.id,
+                                      o.id
+                                    ),
+                                    excludedModifierStockLineIds:
+                                      isPreparationModifierGroupPos(g)
+                                        ? []
+                                        : (m.excludedModifierStockLineIds ?? []),
+                                  }
+                                })
                               }
                               className="text-sky-600"
                             />
@@ -3005,20 +3481,76 @@ export default function TableOrderPage() {
                         )
                       })}
                     </div>
+                    {isPreparationModifierGroupPos(g) && checkedId ? (
+                      (() => {
+                        const opt = (g.options || []).find((x: any) => x.id === checkedId)
+                        const stockLines = getPrepOptionStockLinesForChecklist(opt)
+                        if (stockLines.length === 0) return null
+                        return (
+                          <div className="mt-3 rounded-lg border border-slate-600 bg-slate-900 p-3 text-slate-100">
+                            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-300">
+                              Receta de esta preparación
+                            </p>
+                            <p className="mb-2 text-xs text-slate-400">
+                              Desmarcá lo que el cliente no quiere. En comanda: &quot;Sin: …&quot;.
+                            </p>
+                            <ul className="space-y-2">
+                              {stockLines.map((line) => {
+                                const excluded = (
+                                  modifierModal.excludedModifierStockLineIds || []
+                                ).includes(line.id)
+                                const lineChecked = !excluded
+                                return (
+                                  <li key={line.id}>
+                                    <label className="flex cursor-pointer items-center gap-3 rounded-lg px-1 py-1 hover:bg-slate-800/80">
+                                      <input
+                                        type="checkbox"
+                                        checked={lineChecked}
+                                        onChange={() =>
+                                          setModifierModal((m) => {
+                                            if (!m) return null
+                                            const cur = m.excludedModifierStockLineIds ?? []
+                                            const has = cur.includes(line.id)
+                                            const next = has
+                                              ? cur.filter((x) => x !== line.id)
+                                              : [...cur, line.id]
+                                            return {
+                                              ...m,
+                                              excludedModifierStockLineIds: next,
+                                            }
+                                          })
+                                        }
+                                        className="h-4 w-4 shrink-0 rounded border-slate-500 bg-slate-800 text-sky-500 focus:ring-sky-500"
+                                      />
+                                      <span className="text-sm">{line.label}</span>
+                                    </label>
+                                  </li>
+                                )
+                              })}
+                            </ul>
+                          </div>
+                        )
+                      })()
+                    ) : null}
                   </div>
                 )
               })}
             </div>
-            <p className="mt-4 text-sm text-gray-600">
+            </div>
+
+            <div className="shrink-0 border-t border-gray-100 bg-white px-5 pb-5 pt-4">
+            <p className="text-sm text-gray-600">
               Precio unitario:{" "}
               <span className="font-semibold text-gray-900">
                 {formatCurrency(
                   (Number(modifierModal.product.salePrice) || 0) +
                     extraPriceFromSelections(
-                      visibleModifierGroupsForPosModal(
+                      effectiveModifierGroupsForPosModal(
+                        modifierModal.product,
                         modifierModal.groups,
                         modifierModal.recipeIngredients,
-                        modifierModal.excludedIngredientIds
+                        modifierModal.excludedIngredientIds,
+                        modifierModal.selections
                       ),
                       modifierModal.selections
                     )
@@ -3055,6 +3587,7 @@ export default function TableOrderPage() {
               >
                 Agregar al pedido
               </button>
+            </div>
             </div>
           </div>
         </div>

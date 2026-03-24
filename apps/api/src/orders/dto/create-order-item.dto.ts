@@ -37,4 +37,10 @@ export class CreateOrderItemDto {
   @IsArray()
   @IsString({ each: true })
   excludedRecipeIngredientIds?: string[];
+
+  /** IDs de `product_modifier_stock_line` excluidas (insumos de la preparación elegida). */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  excludedModifierStockLineIds?: string[];
 }

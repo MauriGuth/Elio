@@ -160,6 +160,7 @@ interface ApiProduct {
   isIngredient: boolean
   isProduced: boolean
   isPerishable: boolean
+  consumeRecipeOnSale?: boolean
   isActive: boolean
   category: {
     id: string
@@ -213,6 +214,7 @@ interface ProcessedProduct {
   isSellable: boolean
   isIngredient: boolean
   isPerishable: boolean
+  consumeRecipeOnSale: boolean
   category: {
     id: string
     name: string
@@ -289,6 +291,7 @@ function processProduct(p: ApiProduct): ProcessedProduct {
     isSellable: p.isSellable ?? false,
     isIngredient: p.isIngredient ?? false,
     isPerishable: p.isPerishable ?? false,
+    consumeRecipeOnSale: p.consumeRecipeOnSale ?? false,
     category: p.category,
     stockByLocation,
     totalStock,
@@ -438,6 +441,7 @@ export default function ProductDetailPage() {
     isSellable: false,
     isIngredient: false,
     isPerishable: false,
+    consumeRecipeOnSale: false,
   })
   const [editImageFile, setEditImageFile] = useState<File | null>(null)
   const [editImageUploading, setEditImageUploading] = useState(false)
@@ -551,6 +555,7 @@ export default function ProductDetailPage() {
       isSellable: product.isSellable,
       isIngredient: product.isIngredient,
       isPerishable: product.isPerishable,
+      consumeRecipeOnSale: product.consumeRecipeOnSale ?? false,
     })
     setEditImageFile(null)
     setEditError(null)
@@ -593,6 +598,7 @@ export default function ProductDetailPage() {
         isSellable: editForm.isSellable,
         isIngredient: editForm.isIngredient,
         isPerishable: editForm.isPerishable,
+        consumeRecipeOnSale: editForm.consumeRecipeOnSale,
       })
       setShowEditModal(false)
       await fetchData(true)
@@ -1131,6 +1137,23 @@ export default function ProductDetailPage() {
                     className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
                   />
                   <span className="text-sm text-gray-700 dark:text-white">Perecedero</span>
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={editForm.consumeRecipeOnSale}
+                    onChange={(e) =>
+                      setEditForm((f) => ({
+                        ...f,
+                        consumeRecipeOnSale: e.target.checked,
+                      }))
+                    }
+                    className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-gray-700 dark:text-white">Descontar insumos al vender</span>
+                  <span className="text-xs text-gray-500 dark:text-gray-400">
+                    (receta activa; café/bar elaborado al momento — no descuenta el producto terminado)
+                  </span>
                 </label>
               </div>
             </div>

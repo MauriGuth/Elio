@@ -13,10 +13,12 @@ import { UpdateOrderSplitDto } from './dto/update-order-split.dto';
 import { ArcaFiscalService } from '../arca/arca.fiscal.service';
 import { validateModifierSelections } from './order-modifiers.helper';
 import { applyOrderItemSaleStock } from './order-item-sale-stock.helper';
+import { applyTakeCoasterStock } from './order-take-coasters.helper';
 import {
   getPrepMinutesByProductIdsForLocation,
   getOrderItemRecipeModifierGroupIdsToValidate,
 } from '../recipes/recipes-pos.helper';
+import { Prisma } from '../../generated/prisma';
 
 @Injectable()
 export class OrdersService {
@@ -212,6 +214,14 @@ export class OrdersService {
               notes: item.notes,
               modifierSelections:
                 sel && Object.keys(sel).length > 0 ? sel : undefined,
+              excludedRecipeIngredientIds:
+                item.excludedRecipeIngredientIds?.length
+                  ? (item.excludedRecipeIngredientIds as Prisma.InputJsonValue)
+                  : undefined,
+              excludedModifierStockLineIds:
+                item.excludedModifierStockLineIds?.length
+                  ? (item.excludedModifierStockLineIds as Prisma.InputJsonValue)
+                  : undefined,
             })),
           },
         },
@@ -283,6 +293,14 @@ export class OrdersService {
           notes: data.notes,
           modifierSelections:
             sel && Object.keys(sel).length > 0 ? sel : undefined,
+          excludedRecipeIngredientIds:
+            data.excludedRecipeIngredientIds?.length
+              ? (data.excludedRecipeIngredientIds as Prisma.InputJsonValue)
+              : undefined,
+          excludedModifierStockLineIds:
+            data.excludedModifierStockLineIds?.length
+              ? (data.excludedModifierStockLineIds as Prisma.InputJsonValue)
+              : undefined,
         },
         include: {
           product: {
@@ -522,9 +540,23 @@ export class OrdersService {
               quantity: item.quantity,
               unitPrice: item.unitPrice,
               modifierSelections: item.modifierSelections,
+              excludedRecipeIngredientIds: item.excludedRecipeIngredientIds,
+              excludedModifierStockLineIds: item.excludedModifierStockLineIds,
             },
           });
         }
+        await applyTakeCoasterStock(tx, {
+          locationId: order.locationId,
+          orderId: order.id,
+          userId,
+          items: order.items.map((it) => ({
+            productId: it.productId,
+            quantity: it.quantity,
+            modifierSelections: it.modifierSelections,
+            excludedRecipeIngredientIds: it.excludedRecipeIngredientIds,
+            excludedModifierStockLineIds: it.excludedModifierStockLineIds,
+          })),
+        });
       }
 
       // Cuenta corriente: no se cobra en el momento; no va a cierre por medio de pago
@@ -834,6 +866,9 @@ export class OrdersService {
             unitPrice: item.unitPrice,
             sector: item.sector,
             notes: item.notes,
+            modifierSelections: item.modifierSelections ?? undefined,
+            excludedRecipeIngredientIds: item.excludedRecipeIngredientIds ?? undefined,
+            excludedModifierStockLineIds: item.excludedModifierStockLineIds ?? undefined,
             skipComanda: true, // No emitir comanda: ítems movidos de otra mesa
             status: 'served', // No aparecen en "En Cola": ya están servidos
             servedAt: now,
