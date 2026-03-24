@@ -113,6 +113,24 @@ export class CreateProductModifierOptionDto {
   priceDelta?: number;
 }
 
+/** Crea opción POS + insumos por venta a partir de ingredientes base de una receta (sin crear otra receta). */
+export class CreateModifierOptionFromRecipeDto {
+  @IsString()
+  recipeId!: string;
+
+  @IsOptional()
+  @IsString()
+  label?: string;
+
+  @IsOptional()
+  @IsInt()
+  sortOrder?: number;
+
+  @IsOptional()
+  @IsNumber()
+  priceDelta?: number;
+}
+
 export class UpdateProductModifierOptionDto {
   @IsOptional()
   @IsString()

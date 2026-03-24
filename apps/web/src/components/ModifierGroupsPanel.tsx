@@ -5,6 +5,7 @@ import Link from "next/link"
 import { Loader2, Pencil, Plus, Trash2, Layers, Search, X, BookOpen } from "lucide-react"
 import { sileo } from "sileo"
 import { productsApi } from "@/lib/api/products"
+import { recipesApi } from "@/lib/api/recipes"
 import { CreateModifierGroupPopover } from "@/components/CreateModifierGroupPopover"
 import {
   ModifierOptionRecipeDialog,
@@ -31,6 +32,12 @@ export type ModifierGroup = {
       product: { id: string; name: string; sku: string; unit?: string }
     }>
   }>
+}
+
+type RecipePickRow = {
+  id: string
+  name: string
+  product?: { id: string; name: string; sku: string } | null
 }
 
 type Props = {
@@ -62,9 +69,15 @@ export function ModifierGroupsPanel({
   }, [groups, searchQuery])
 
   const [optGroupId, setOptGroupId] = useState<string | null>(null)
+  /** manual = nombre + Δ precio; recipe = elegir receta existente (copia insumos base a la opción). */
+  const [addOptionMode, setAddOptionMode] = useState<"manual" | "recipe">("manual")
   const [optLabel, setOptLabel] = useState("")
   const [optPrice, setOptPrice] = useState(0)
   const [creatingOpt, setCreatingOpt] = useState(false)
+  const [recipesForPick, setRecipesForPick] = useState<RecipePickRow[]>([])
+  const [recipesPickLoading, setRecipesPickLoading] = useState(false)
+  const [recipePickQuery, setRecipePickQuery] = useState("")
+  const [selectedRecipeId, setSelectedRecipeId] = useState("")
 
   const [editingOptionId, setEditingOptionId] = useState<string | null>(null)
   const [editLabel, setEditLabel] = useState("")
@@ -114,6 +127,15 @@ export function ModifierGroupsPanel({
     setEditVisibilityLabels("")
   }
 
+  const resetAddOptionForm = () => {
+    setOptGroupId(null)
+    setAddOptionMode("manual")
+    setOptLabel("")
+    setOptPrice(0)
+    setRecipePickQuery("")
+    setSelectedRecipeId("")
+  }
+
   const handleDeleteGroup = async (groupId: string) => {
     if (!confirm("¿Eliminar este grupo y todas sus opciones?")) return
     try {
@@ -127,9 +149,7 @@ export function ModifierGroupsPanel({
   }
 
   const startEditGroup = (g: ModifierGroup) => {
-    setOptGroupId(null)
-    setOptLabel("")
-    setOptPrice(0)
+    resetAddOptionForm()
     cancelEditOption()
     setEditingGroupId(g.id)
     setEditGroupName(g.name)
@@ -225,6 +245,38 @@ export function ModifierGroupsPanel({
     }
   }
 
+  const loadRecipesForPick = useCallback(async () => {
+    setRecipesPickLoading(true)
+    try {
+      const res = await recipesApi.getAll({ limit: 2000, isActive: true })
+      const data = (res as { data?: unknown }).data
+      setRecipesForPick(Array.isArray(data) ? (data as RecipePickRow[]) : [])
+    } catch {
+      setRecipesForPick([])
+      sileo.error({ title: "No se pudieron cargar las recetas" })
+    } finally {
+      setRecipesPickLoading(false)
+    }
+  }, [])
+
+  const filteredRecipesForPick = useMemo(() => {
+    const q = recipePickQuery.trim().toLowerCase()
+    let list = [...recipesForPick]
+    list.sort((a, b) => {
+      const aSame = a.product?.id === productId ? 0 : 1
+      const bSame = b.product?.id === productId ? 0 : 1
+      if (aSame !== bSame) return aSame - bSame
+      return (a.name ?? "").localeCompare(b.name ?? "", "es", { sensitivity: "base" })
+    })
+    if (!q) return list
+    return list.filter((r) => {
+      const n = (r.name ?? "").toLowerCase()
+      const pn = (r.product?.name ?? "").toLowerCase()
+      const sku = (r.product?.sku ?? "").toLowerCase()
+      return n.includes(q) || pn.includes(q) || sku.includes(q)
+    })
+  }, [recipesForPick, recipePickQuery, productId])
+
   const handleCreateOption = async (groupId: string) => {
     const label = optLabel.trim()
     if (!label) {
@@ -237,9 +289,7 @@ export function ModifierGroupsPanel({
         label,
         priceDelta: optPrice,
       })
-      setOptLabel("")
-      setOptPrice(0)
-      setOptGroupId(null)
+      resetAddOptionForm()
       await load()
       sileo.success({ title: "Opción creada" })
     } catch (e: any) {
@@ -249,8 +299,35 @@ export function ModifierGroupsPanel({
     }
   }
 
+  const handleCreateOptionFromRecipe = async (groupId: string) => {
+    if (!selectedRecipeId) {
+      sileo.warning({ title: "Elegí una receta de la lista" })
+      return
+    }
+    setCreatingOpt(true)
+    try {
+      await productsApi.createModifierOptionFromRecipe(groupId, {
+        recipeId: selectedRecipeId,
+        ...(optLabel.trim() ? { label: optLabel.trim() } : {}),
+        priceDelta: optPrice,
+      })
+      resetAddOptionForm()
+      await load()
+      sileo.success({ title: "Opción creada desde receta" })
+    } catch (e: any) {
+      sileo.error({ title: e?.message || "Error al crear desde receta" })
+    } finally {
+      setCreatingOpt(false)
+    }
+  }
+
   const handleDeleteOption = async (optionId: string) => {
-    if (!confirm("¿Eliminar esta opción?")) return
+    if (
+      !confirm(
+        "¿Eliminar esta opción del grupo? Se quitan también los insumos por venta de la opción. No se borra la receta del módulo Recetas.",
+      )
+    )
+      return
     try {
       await productsApi.deleteModifierOption(optionId)
       if (editingOptionId === optionId) {
@@ -267,9 +344,7 @@ export function ModifierGroupsPanel({
 
   const startEditOption = (o: ModifierGroup["options"][number]) => {
     cancelEditGroup()
-    setOptGroupId(null)
-    setOptLabel("")
-    setOptPrice(0)
+    resetAddOptionForm()
     setEditingOptionId(o.id)
     setEditLabel(o.label)
     setEditPriceDelta(Number(o.priceDelta) || 0)
@@ -748,41 +823,155 @@ export function ModifierGroupsPanel({
               </ul>
               {!readOnly &&
                 (optGroupId === g.id ? (
-                  <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-gray-200 pt-3 dark:border-gray-600">
-                    <input
-                      placeholder="Nombre opción"
-                      value={optLabel}
-                      onChange={(e) => setOptLabel(e.target.value)}
-                      className="min-w-[8rem] flex-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm"
-                    />
-                    <input
-                      type="number"
-                      step="0.01"
-                      placeholder="Δ precio"
-                      value={optPrice || ""}
-                      onChange={(e) => setOptPrice(parseFloat(e.target.value) || 0)}
-                      className="w-24 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm"
-                    />
-                    <button
-                      type="button"
-                      disabled={creatingOpt}
-                      onClick={() => handleCreateOption(g.id)}
-                      className="inline-flex items-center gap-1 rounded bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 disabled:opacity-50"
-                    >
-                      {creatingOpt ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-                      Guardar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOptGroupId(null)
-                        setOptLabel("")
-                        setOptPrice(0)
-                      }}
-                      className="text-xs text-gray-500 hover:underline"
-                    >
-                      Cancelar
-                    </button>
+                  <div className="mt-3 space-y-3 border-t border-gray-200 pt-3 dark:border-gray-600">
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAddOptionMode("manual")}
+                        className={`rounded-full px-3 py-1 text-xs font-medium ${
+                          addOptionMode === "manual"
+                            ? "bg-amber-600 text-white"
+                            : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+                        }`}
+                      >
+                        Opción manual
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAddOptionMode("recipe")
+                          setSelectedRecipeId("")
+                          void loadRecipesForPick()
+                        }}
+                        className={`rounded-full px-3 py-1 text-xs font-medium ${
+                          addOptionMode === "recipe"
+                            ? "bg-amber-600 text-white"
+                            : "bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600"
+                        }`}
+                      >
+                        Desde receta existente
+                      </button>
+                    </div>
+                    {addOptionMode === "manual" ? (
+                      <div className="flex flex-wrap items-end gap-2">
+                        <input
+                          placeholder="Nombre opción"
+                          value={optLabel}
+                          onChange={(e) => setOptLabel(e.target.value)}
+                          className="min-w-[8rem] flex-1 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm"
+                        />
+                        <input
+                          type="number"
+                          step="0.01"
+                          placeholder="Δ precio"
+                          value={optPrice || ""}
+                          onChange={(e) => setOptPrice(parseFloat(e.target.value) || 0)}
+                          className="w-24 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm"
+                        />
+                        <button
+                          type="button"
+                          disabled={creatingOpt}
+                          onClick={() => handleCreateOption(g.id)}
+                          className="inline-flex items-center gap-1 rounded bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 disabled:opacity-50"
+                        >
+                          {creatingOpt ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                          Guardar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={resetAddOptionForm}
+                          className="text-xs text-gray-500 hover:underline"
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <p className="text-xs text-gray-600 dark:text-gray-400">
+                          Se copian los insumos <strong>base</strong> de la receta (sin grupo de variantes),
+                          como cantidad por unidad vendida. No se crea otra receta en Recetas. Para sacar
+                          esta opción del grupo (y evitar duplicados en el POS), usá la{" "}
+                          <strong>papelera</strong> en la fila de la opción.
+                        </p>
+                        <input
+                          type="search"
+                          placeholder="Buscar receta por nombre o producto…"
+                          value={recipePickQuery}
+                          onChange={(e) => setRecipePickQuery(e.target.value)}
+                          className="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm"
+                        />
+                        <div className="max-h-40 overflow-y-auto rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900">
+                          {recipesPickLoading ? (
+                            <div className="flex items-center gap-2 p-3 text-xs text-gray-500">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Cargando recetas…
+                            </div>
+                          ) : filteredRecipesForPick.length === 0 ? (
+                            <p className="p-3 text-xs text-gray-500">No hay recetas que coincidan.</p>
+                          ) : (
+                            filteredRecipesForPick.slice(0, 200).map((r) => (
+                              <button
+                                key={r.id}
+                                type="button"
+                                onClick={() => setSelectedRecipeId(r.id)}
+                                className={`block w-full border-b border-gray-100 px-2 py-1.5 text-left text-sm last:border-b-0 dark:border-gray-700 ${
+                                  selectedRecipeId === r.id
+                                    ? "bg-amber-100 dark:bg-amber-950/50"
+                                    : "hover:bg-gray-50 dark:hover:bg-gray-800"
+                                }`}
+                              >
+                                <span className="font-medium text-gray-900 dark:text-gray-100">
+                                  {r.name}
+                                </span>
+                                {r.product?.name ? (
+                                  <span className="ml-1 text-xs text-gray-500">
+                                    · {r.product.name}
+                                    {r.product.sku ? ` (${r.product.sku})` : ""}
+                                  </span>
+                                ) : null}
+                              </button>
+                            ))
+                          )}
+                        </div>
+                        {filteredRecipesForPick.length > 200 ? (
+                          <p className="text-[11px] text-gray-500">
+                            Mostrando 200 de {filteredRecipesForPick.length}; afiná la búsqueda.
+                          </p>
+                        ) : null}
+                        <input
+                          placeholder="Nombre en el POS (opcional, por defecto el de la receta)"
+                          value={optLabel}
+                          onChange={(e) => setOptLabel(e.target.value)}
+                          className="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm"
+                        />
+                        <div className="flex flex-wrap items-end gap-2">
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="Δ precio"
+                            value={optPrice || ""}
+                            onChange={(e) => setOptPrice(parseFloat(e.target.value) || 0)}
+                            className="w-28 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-sm"
+                          />
+                          <button
+                            type="button"
+                            disabled={creatingOpt || !selectedRecipeId}
+                            onClick={() => void handleCreateOptionFromRecipe(g.id)}
+                            className="inline-flex items-center gap-1 rounded bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-600 disabled:opacity-50"
+                          >
+                            {creatingOpt ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                            Añadir desde receta
+                          </button>
+                          <button
+                            type="button"
+                            onClick={resetAddOptionForm}
+                            className="text-xs text-gray-500 hover:underline"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <button
@@ -790,6 +979,11 @@ export function ModifierGroupsPanel({
                     onClick={() => {
                       cancelEditOption()
                       cancelEditGroup()
+                      setAddOptionMode("manual")
+                      setRecipePickQuery("")
+                      setSelectedRecipeId("")
+                      setOptLabel("")
+                      setOptPrice(0)
                       setOptGroupId(g.id)
                     }}
                     className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-amber-700 hover:underline dark:text-amber-400"

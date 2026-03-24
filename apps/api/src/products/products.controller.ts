@@ -23,6 +23,7 @@ import {
   CreateProductModifierGroupDto,
   UpdateProductModifierGroupDto,
   CreateProductModifierOptionDto,
+  CreateModifierOptionFromRecipeDto,
   UpdateProductModifierOptionDto,
   SetModifierStockLinesDto,
 } from './dto/product-modifiers.dto';
@@ -116,6 +117,14 @@ export class ProductsController {
   @Delete('modifier-groups/:groupId')
   deleteModifierGroup(@Param('groupId') groupId: string) {
     return this.productsService.deleteModifierGroup(groupId);
+  }
+
+  @Post('modifier-groups/:groupId/options/from-recipe')
+  createModifierOptionFromRecipe(
+    @Param('groupId') groupId: string,
+    @Body() dto: CreateModifierOptionFromRecipeDto,
+  ) {
+    return this.productsService.createModifierOptionFromRecipe(groupId, dto);
   }
 
   @Post('modifier-groups/:groupId/options')

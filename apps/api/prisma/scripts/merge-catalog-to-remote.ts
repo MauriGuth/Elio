@@ -86,9 +86,13 @@ async function createManySkipErrors(
   label: string,
   rows: Record<string, unknown>[],
   run: (data: Record<string, unknown>[]) => Promise<{ count: number }>,
+  opts?: { quietRowErrors?: boolean },
 ): Promise<number> {
   let ok = 0;
   let err = 0;
+  const quiet = opts?.quietRowErrors ?? false;
+  const maxShown = 8;
+  let shown = 0;
   for (let i = 0; i < rows.length; i += CHUNK) {
     const chunk = rows.slice(i, i + CHUNK);
     if (!chunk.length) continue;
@@ -102,14 +106,36 @@ async function createManySkipErrors(
           ok += 1;
         } catch (e2) {
           err += 1;
-          console.warn(`   ⚠️  ${label} omitido (${(row as { id?: string }).id ?? '?'}):`, (e2 as Error).message);
+          if (!quiet && shown < maxShown) {
+            shown++;
+            console.warn(`   ⚠️  ${label} omitido (${(row as { id?: string }).id ?? '?'}):`, (e2 as Error).message);
+          }
         }
       }
     }
   }
-  if (err) console.log(`   ${label}: +${ok} insertados, ${err} omitidos por error`);
-  else console.log(`   ${label}: +${ok} insertados`);
+  if (err) {
+    if (quiet) {
+      console.log(`   ${label}: +${ok} insertados, ${err} omitidos (FK / duplicado)`);
+    } else {
+      if (err > shown) console.log(`   … y ${err - shown} omitidos más (mismo tipo de error)`);
+      console.log(`   ${label}: +${ok} insertados, ${err} omitidos por error`);
+    }
+  } else console.log(`   ${label}: +${ok} insertados`);
   return ok;
+}
+
+/** Local id → remoto id por mismo SKU (insumos suelen repetir SKU con distinto UUID entre bases). */
+async function buildLocalToRemoteProductIdBySku(): Promise<Map<string, string>> {
+  const remote = await targetPrisma.product.findMany({ select: { id: true, sku: true } });
+  const skuToRemoteId = new Map(remote.map((p) => [p.sku, p.id]));
+  const local = await sourcePrisma.product.findMany({ select: { id: true, sku: true } });
+  const map = new Map<string, string>();
+  for (const p of local) {
+    const rid = skuToRemoteId.get(p.sku);
+    if (rid) map.set(p.id, rid);
+  }
+  return map;
 }
 
 async function main() {
@@ -261,24 +287,37 @@ async function main() {
   if (nProdSkuSkip) console.log(`   (omitidos ${nProdSkuSkip} productos por SKU duplicado en remoto)`);
   console.log(`   Product: +${nProd} nuevos`);
 
+  const productIdBySkuMap = await buildLocalToRemoteProductIdBySku();
+  const allRemoteProductIds = new Set(
+    (await targetPrisma.product.findMany({ select: { id: true } })).map((p) => p.id),
+  );
+
   const modGroups = (await sourcePrisma.productModifierGroup.findMany()).filter(
     (g) => !remoteModGroupIds.has(g.id),
   );
+  const modGroupsRows = modGroups
+    .map((g) => {
+      const pid = g.productId
+        ? (productIdBySkuMap.get(g.productId) ?? g.productId)
+        : null;
+      return {
+        id: g.id,
+        productId: pid,
+        name: g.name,
+        sortOrder: g.sortOrder,
+        required: g.required,
+        minSelect: g.minSelect,
+        maxSelect: g.maxSelect,
+        visibilityRule:
+          g.visibilityRule === null || g.visibilityRule === undefined
+            ? undefined
+            : (g.visibilityRule as Prisma.InputJsonValue),
+      };
+    })
+    .filter((g) => g.productId == null || allRemoteProductIds.has(g.productId));
   await createManySkipErrors(
     'ProductModifierGroup',
-    modGroups.map((g) => ({
-      id: g.id,
-      productId: g.productId,
-      name: g.name,
-      sortOrder: g.sortOrder,
-      required: g.required,
-      minSelect: g.minSelect,
-      maxSelect: g.maxSelect,
-      visibilityRule:
-        g.visibilityRule === null || g.visibilityRule === undefined
-          ? undefined
-          : (g.visibilityRule as Prisma.InputJsonValue),
-    })) as unknown as Record<string, unknown>[],
+    modGroupsRows as unknown as Record<string, unknown>[],
     (chunk) => targetPrisma.productModifierGroup.createMany({ data: chunk as never }),
   );
 
@@ -291,42 +330,88 @@ async function main() {
     (chunk) => targetPrisma.productModifierOption.createMany({ data: chunk as never }),
   );
 
-  const modStock = (await sourcePrisma.productModifierStockLine.findMany()).filter(
-    (l) => !remoteModLineIds.has(l.id),
-  );
-  await createManySkipErrors(
-    'ProductModifierStockLine',
-    modStock as unknown as Record<string, unknown>[],
-    (chunk) => targetPrisma.productModifierStockLine.createMany({ data: chunk as never }),
+  const remoteOptionIdsFresh = new Set(
+    (await targetPrisma.productModifierOption.findMany({ select: { id: true } })).map((o) => o.id),
   );
 
-  const stockLevels = (await sourcePrisma.stockLevel.findMany()).filter((s) => {
-    const k = `${s.productId}\t${s.locationId}`;
-    if (remoteStockLevelKeys.has(k)) return false;
-    if (!remoteProductIds.has(s.productId)) return false;
-    if (!remoteLocationIds.has(s.locationId)) return false;
+  const modStockRaw = (await sourcePrisma.productModifierStockLine.findMany()).filter(
+    (l) => !remoteModLineIds.has(l.id),
+  );
+  const modStockSkippedNoProduct: typeof modStockRaw = [];
+  const modStock = modStockRaw.filter((l) => {
+    const remotePid = productIdBySkuMap.get(l.productId) ?? l.productId;
+    if (!allRemoteProductIds.has(remotePid)) {
+      modStockSkippedNoProduct.push(l);
+      return false;
+    }
+    if (!remoteOptionIdsFresh.has(l.optionId)) {
+      return false;
+    }
     return true;
   });
+  const modStockRows = modStock.map((l) => ({
+    id: l.id,
+    optionId: l.optionId,
+    productId: productIdBySkuMap.get(l.productId) ?? l.productId,
+    quantity: l.quantity,
+  }));
+  if (modStockSkippedNoProduct.length) {
+    console.log(
+      `   (omitidas ${modStockSkippedNoProduct.length} líneas modificador: insumo sin fila en remoto con el mismo SKU)`,
+    );
+  }
+  await createManySkipErrors(
+    'ProductModifierStockLine',
+    modStockRows as unknown as Record<string, unknown>[],
+    (chunk) => targetPrisma.productModifierStockLine.createMany({ data: chunk as never }),
+    { quietRowErrors: true },
+  );
+
+  const stockLevels = (await sourcePrisma.stockLevel.findMany())
+    .map((s) => ({
+      ...s,
+      productId: productIdBySkuMap.get(s.productId) ?? s.productId,
+    }))
+    .filter((s) => {
+      const k = `${s.productId}\t${s.locationId}`;
+      if (remoteStockLevelKeys.has(k)) return false;
+      if (!allRemoteProductIds.has(s.productId)) return false;
+      if (!remoteLocationIds.has(s.locationId)) return false;
+      return true;
+    });
   await createManySkipErrors(
     'StockLevel',
     stockLevels as unknown as Record<string, unknown>[],
     (chunk) => targetPrisma.stockLevel.createMany({ data: chunk as never }),
   );
 
-  const pss = (await sourcePrisma.productSupplier.findMany()).filter((x) => !remotePsIds.has(x.id));
+  const pssRows = (await sourcePrisma.productSupplier.findMany())
+    .filter((x) => !remotePsIds.has(x.id))
+    .map((x) => ({
+      ...x,
+      productId: productIdBySkuMap.get(x.productId) ?? x.productId,
+    }))
+    .filter((x) => allRemoteProductIds.has(x.productId));
   await createManySkipErrors(
     'ProductSupplier',
-    pss as unknown as Record<string, unknown>[],
+    pssRows as unknown as Record<string, unknown>[],
     (chunk) => targetPrisma.productSupplier.createMany({ data: chunk as never }),
+    { quietRowErrors: true },
   );
 
-  const priceHist = (await sourcePrisma.supplierPriceHistory.findMany()).filter(
-    (x) => !remotePhIds.has(x.id),
-  );
+  const priceHistRows = (await sourcePrisma.supplierPriceHistory.findMany())
+    .filter((x) => !remotePhIds.has(x.id))
+    .map((h) => ({
+      ...h,
+      productId: productIdBySkuMap.get(h.productId) ?? h.productId,
+      sourceReceiptId: null as null,
+    }))
+    .filter((h) => allRemoteProductIds.has(h.productId));
   await createManySkipErrors(
     'SupplierPriceHistory',
-    priceHist.map((h) => ({ ...h, sourceReceiptId: null })) as unknown as Record<string, unknown>[],
+    priceHistRows as unknown as Record<string, unknown>[],
     (chunk) => targetPrisma.supplierPriceHistory.createMany({ data: chunk as never }),
+    { quietRowErrors: true },
   );
 
   const recipesAll = await sourcePrisma.recipe.findMany();
@@ -357,6 +442,11 @@ async function main() {
   for (const r of recipesOrdered) {
     try {
       const createdById = await mapUser(r.createdById);
+      const recipeProductId = productIdBySkuMap.get(r.productId) ?? r.productId;
+      if (!allRemoteProductIds.has(recipeProductId)) {
+        console.warn(`   ⚠️  Recipe ${r.id}: productId no resuelto en remoto, omitida`);
+        continue;
+      }
       await targetPrisma.recipe.create({
         data: {
           id: r.id,
@@ -366,7 +456,7 @@ async function main() {
           version: r.version,
           yieldQty: r.yieldQty,
           yieldUnit: r.yieldUnit,
-          productId: r.productId,
+          productId: recipeProductId,
           prepTimeMin: r.prepTimeMin,
           instructions: r.instructions,
           imageUrl: r.imageUrl,
@@ -385,11 +475,24 @@ async function main() {
   }
   console.log(`   Recipe: +${nRec} nuevas`);
 
-  const ings = (await sourcePrisma.recipeIngredient.findMany()).filter((i) => !remoteRiIds.has(i.id));
+  const ingsRaw = (await sourcePrisma.recipeIngredient.findMany()).filter((i) => !remoteRiIds.has(i.id));
+  const ingsRows = ingsRaw
+    .map((i) => ({
+      ...i,
+      productId: productIdBySkuMap.get(i.productId) ?? i.productId,
+    }))
+    .filter((i) => allRemoteProductIds.has(i.productId));
+  const ingsSkipped = ingsRaw.length - ingsRows.length;
+  if (ingsSkipped > 0) {
+    console.log(
+      `   (omitidos ${ingsSkipped} recipe_ingredients: productId sin equivalente por SKU en remoto)`,
+    );
+  }
   await createManySkipErrors(
     'RecipeIngredient',
-    ings as unknown as Record<string, unknown>[],
+    ingsRows as unknown as Record<string, unknown>[],
     (chunk) => targetPrisma.recipeIngredient.createMany({ data: chunk as never }),
+    { quietRowErrors: true },
   );
 
   const rls = (await sourcePrisma.recipeLocation.findMany()).filter((x) => {

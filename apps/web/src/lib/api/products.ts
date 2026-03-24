@@ -27,6 +27,12 @@ export const productsApi = {
   createModifierOption: (groupId: string, data: Record<string, unknown>) =>
     api.post(`/products/modifier-groups/${groupId}/options`, data),
 
+  /** Opción POS + insumos copiados desde ingredientes base de una receta (no duplica la receta). */
+  createModifierOptionFromRecipe: (
+    groupId: string,
+    data: { recipeId: string; label?: string; priceDelta?: number; sortOrder?: number },
+  ) => api.post(`/products/modifier-groups/${groupId}/options/from-recipe`, data),
+
   updateModifierOption: (optionId: string, data: Record<string, unknown>) =>
     api.patch(`/products/modifier-options/${optionId}`, data),
 

@@ -11,6 +11,7 @@ import {
   CreateProductModifierGroupDto,
   UpdateProductModifierGroupDto,
   CreateProductModifierOptionDto,
+  CreateModifierOptionFromRecipeDto,
   UpdateProductModifierOptionDto,
   ModifierStockLineInputDto,
 } from './dto/product-modifiers.dto';
@@ -467,6 +468,77 @@ export class ProductsService {
         sortOrder: dto.sortOrder ?? 0,
         priceDelta: dto.priceDelta ?? 0,
       },
+    });
+  }
+
+  /**
+   * Opción POS desde receta: copia solo ingredientes sin `modifierGroupId` como cantidades por unidad vendida
+   * (qtyPerYield / yieldQty). No inserta filas en `recipes`.
+   */
+  async createModifierOptionFromRecipe(
+    groupId: string,
+    dto: CreateModifierOptionFromRecipeDto,
+  ) {
+    const g = await this.prisma.productModifierGroup.findUnique({
+      where: { id: groupId },
+    });
+    if (!g) {
+      throw new NotFoundException(`Modifier group "${groupId}" not found`);
+    }
+    const recipe = await this.prisma.recipe.findUnique({
+      where: { id: dto.recipeId },
+      include: { ingredients: true },
+    });
+    if (!recipe) {
+      throw new NotFoundException(`Recipe "${dto.recipeId}" not found`);
+    }
+    if (!recipe.isActive) {
+      throw new BadRequestException('La receta no está activa');
+    }
+    const yq = recipe.yieldQty;
+    if (yq == null || yq <= 0) {
+      throw new BadRequestException('La receta debe tener rendimiento (yieldQty) mayor a cero');
+    }
+    const baseIngs = recipe.ingredients.filter((i) => i.modifierGroupId == null);
+    if (baseIngs.length === 0) {
+      throw new BadRequestException(
+        'Esta receta no tiene insumos base (sin grupo de variantes). Usá “Opción manual” o agregá ingredientes sin grupo en la receta.',
+      );
+    }
+    const merged = new Map<string, number>();
+    for (const ing of baseIngs) {
+      const perUnit = ing.qtyPerYield / yq;
+      merged.set(ing.productId, (merged.get(ing.productId) ?? 0) + perUnit);
+    }
+    const productIds = [...merged.keys()];
+    const found = await this.prisma.product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true },
+    });
+    if (found.length !== productIds.length) {
+      throw new BadRequestException('Un insumo de la receta ya no existe como producto');
+    }
+    const label = (dto.label?.trim() || recipe.name).trim();
+    if (!label) {
+      throw new BadRequestException('La opción necesita un nombre');
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const opt = await tx.productModifierOption.create({
+        data: {
+          groupId,
+          label,
+          sortOrder: dto.sortOrder ?? 0,
+          priceDelta: dto.priceDelta ?? 0,
+        },
+      });
+      await tx.productModifierStockLine.createMany({
+        data: [...merged.entries()].map(([productId, quantity]) => ({
+          optionId: opt.id,
+          productId,
+          quantity,
+        })),
+      });
+      return opt;
     });
   }
 
