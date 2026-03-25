@@ -49,7 +49,13 @@ export class ProductsService {
 
     if (filters.categoryId === 'none') {
       // "Sin categoría": productos cuya categoría fue eliminada (soft-deleted)
-      where.category = { isActive: false };
+      // Buscamos primero los IDs de categorías inactivas y filtramos por esos
+      const inactiveCategories = await this.prisma.category.findMany({
+        where: { isActive: false },
+        select: { id: true },
+      });
+      const inactiveIds = inactiveCategories.map((c) => c.id);
+      where.categoryId = inactiveIds.length > 0 ? { in: inactiveIds } : '__none__';
     } else if (filters.categoryId) {
       where.categoryId = filters.categoryId;
     }
