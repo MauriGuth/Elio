@@ -200,6 +200,15 @@ function modifierGroupNameIsMilkType(name: string | null | undefined): boolean {
   return false;
 }
 
+/** Grupo de origen de café en POS: títulos legacy o «GRANO» (no confundir con «granola»: /^grano\\b/). */
+function modifierGroupNameIsCoffeeBeanChoice(name: string | null | undefined): boolean {
+  const n = normName(name);
+  if (n.includes('cafe de especialidad')) return true;
+  if (n.includes('tipo de cafe')) return true;
+  if (/^grano\b/.test(n)) return true;
+  return false;
+}
+
 /** Grupo «Preparación — Pocillo|Jarrito|Doble|Tazón» (formatos clásicos), sin depender del SKU del producto. */
 function preparationGroupIsClasicoFormat(groupName: string | null | undefined): boolean {
   const n = normName(groupName);
@@ -264,6 +273,44 @@ async function recipeHasMilkTypeModifierGroup(
     include: { modifierGroup: { select: { name: true } } },
   });
   return ris.some((r) => modifierGroupNameIsMilkType(r.modifierGroup?.name ?? null));
+}
+
+/** Grupos de modificadores del producto (y globales): en remoto a veces no hay `modifierGroupId` en la receta. */
+async function productHasMilkTypeModifierGroup(
+  tx: Prisma.TransactionClient,
+  sellableProductId: string,
+): Promise<boolean> {
+  const groups = await tx.productModifierGroup.findMany({
+    where: { OR: [{ productId: sellableProductId }, { productId: null }] },
+    select: { name: true },
+  });
+  return groups.some((g) => modifierGroupNameIsMilkType(g.name));
+}
+
+async function recipeHasCoffeeBeanModifierGroup(
+  tx: Prisma.TransactionClient,
+  sellableProductId: string,
+): Promise<boolean> {
+  const recipeId = await findActiveRecipeId(tx, sellableProductId);
+  if (!recipeId) return false;
+  const ris = await tx.recipeIngredient.findMany({
+    where: { recipeId, modifierGroupId: { not: null } },
+    include: { modifierGroup: { select: { name: true } } },
+  });
+  return ris.some((r) =>
+    modifierGroupNameIsCoffeeBeanChoice(r.modifierGroup?.name ?? null),
+  );
+}
+
+async function productHasCoffeeBeanModifierGroup(
+  tx: Prisma.TransactionClient,
+  sellableProductId: string,
+): Promise<boolean> {
+  const groups = await tx.productModifierGroup.findMany({
+    where: { OR: [{ productId: sellableProductId }, { productId: null }] },
+    select: { name: true },
+  });
+  return groups.some((g) => modifierGroupNameIsCoffeeBeanChoice(g.name));
 }
 
 /**
@@ -495,7 +542,7 @@ export async function applyClasicoMilkTypeSubstitution(
 /**
  * Reemplaza consumo base de preparación por el tipo elegido:
  * - Leche: cambia entre entera / descremada / almendras.
- * - Café: cambia CAFE_GRANO por el origen elegido en "Café de especialidad".
+ * - Café: cambia CAFE_GRANO por el origen elegido (grupo «Café de especialidad», «Tipo de café» o «GRANO»).
  */
 export async function applyClasicoTypeSubstitutions(
   tx: Prisma.TransactionClient,
@@ -507,7 +554,9 @@ export async function applyClasicoTypeSubstitutions(
 ): Promise<void> {
   const okClasico = await isClasicoFormatProduct(tx, sellableProductId, productSku);
   const okMilkSwap =
-    okClasico || (await recipeHasMilkTypeModifierGroup(tx, sellableProductId));
+    okClasico ||
+    (await recipeHasMilkTypeModifierGroup(tx, sellableProductId)) ||
+    (await productHasMilkTypeModifierGroup(tx, sellableProductId));
   await applyClasicoMilkTypeSubstitution(
     tx,
     productSku,
@@ -517,7 +566,12 @@ export async function applyClasicoTypeSubstitutions(
     consumption,
     okMilkSwap,
   );
-  if (!okClasico || !norm) return;
+
+  const okCoffeeSwap =
+    okClasico ||
+    (await recipeHasCoffeeBeanModifierGroup(tx, sellableProductId)) ||
+    (await productHasCoffeeBeanModifierGroup(tx, sellableProductId));
+  if (!okCoffeeSwap || !norm) return;
 
   const optionIds = [...new Set(Object.values(norm).flat())];
   if (optionIds.length === 0) return;
@@ -531,10 +585,7 @@ export async function applyClasicoTypeSubstitutions(
     },
   });
   const coffeePicked = options.find((o) =>
-    String(o.group?.name ?? '').toLowerCase().includes('café de especialidad') ||
-    String(o.group?.name ?? '').toLowerCase().includes('cafe de especialidad') ||
-    String(o.group?.name ?? '').toLowerCase().includes('tipo de café') ||
-    String(o.group?.name ?? '').toLowerCase().includes('tipo de cafe'),
+    modifierGroupNameIsCoffeeBeanChoice(o.group?.name ?? null),
   );
   if (!coffeePicked) return;
 
