@@ -89,7 +89,13 @@ export class ProductsService {
       this.prisma.product.count({ where }),
     ]);
 
-    return { data, total, page, limit };
+    // Si la categoría está inactiva (soft-deleted), devolverla como null
+    const processedData = data.map((p) => ({
+      ...p,
+      category: p.category?.isActive ? p.category : null,
+    }));
+
+    return { data: processedData, total, page, limit };
   }
 
   async findById(id: string) {

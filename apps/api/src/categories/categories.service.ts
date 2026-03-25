@@ -190,6 +190,25 @@ export class CategoriesService {
       throw new NotFoundException(`Category with ID "${id}" not found`);
     }
 
+    // Desvincular productos que usan esta categoría
+    await this.prisma.product.updateMany({
+      where: { categoryId: id },
+      data: { categoryId: null },
+    });
+
+    // Si es una categoría de familia (slug familia-*), limpiar el campo familia en productos
+    if (category.slug.startsWith('familia-')) {
+      const familiaValue = category.name
+        .replace(/^(Tipo|Familia|Agrupar):\s*/i, '')
+        .trim();
+      if (familiaValue) {
+        await this.prisma.product.updateMany({
+          where: { familia: familiaValue },
+          data: { familia: null },
+        });
+      }
+    }
+
     return this.prisma.category.update({
       where: { id },
       data: { isActive: false },

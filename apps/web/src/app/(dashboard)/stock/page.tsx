@@ -83,7 +83,8 @@ interface ApiProduct {
     slug: string
     icon: string
     color: string
-  }
+    isActive: boolean
+  } | null
   stockLevels: ApiStockLevel[]
 }
 
@@ -101,7 +102,7 @@ interface ProcessedProduct {
     slug: string
     icon: string
     color: string
-  }
+  } | null
   stockByLocation: Array<{
     locationId: string
     locationName: string
@@ -1280,17 +1281,25 @@ export default function StockPage() {
                         </span>
                       </td>
                       <td className="px-3 py-3 align-middle">
-                        <span
-                          className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
-                          style={getCategoryBadgeStyle(product.category.color)}
-                        >
-                          {getCategoryDisplayName(product.category.name)}
-                        </span>
+                        {product.category ? (
+                          <span
+                            className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
+                            style={getCategoryBadgeStyle(product.category.color)}
+                          >
+                            {getCategoryDisplayName(product.category.name)}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 dark:text-gray-500 text-xs">—</span>
+                        )}
                       </td>
                       <td className="px-3 py-3 align-middle">
-                        <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-300">
-                          {product.familia ?? "—"}
-                        </span>
+                        {product.familia && familias.some((f) => getCategoryDisplayName(f.name) === product.familia) ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-300">
+                            {product.familia}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 dark:text-gray-500 text-xs">—</span>
+                        )}
                       </td>
                       <td className="px-3 py-3 align-middle text-sm text-gray-600 dark:text-gray-300">
                         {product.unit}
