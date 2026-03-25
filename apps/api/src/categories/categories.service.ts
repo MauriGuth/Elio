@@ -82,6 +82,20 @@ export class CategoriesService {
     });
 
     if (existing) {
+      if (!existing.isActive) {
+        // Reactivar categoría eliminada (soft-deleted) con los nuevos datos
+        const icon = data.icon ?? existing.icon ?? CategoriesService.RANDOM_ICONS[Math.floor(Math.random() * CategoriesService.RANDOM_ICONS.length)];
+        const color = data.color ?? existing.color ?? CategoriesService.randomHexColor();
+        return this.prisma.category.update({
+          where: { id: existing.id },
+          data: { ...data, slug, icon, color, isActive: true },
+          include: {
+            parent: true,
+            children: true,
+            _count: { select: { products: true } },
+          },
+        });
+      }
       throw new ConflictException(`Category with slug "${slug}" already exists`);
     }
 

@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { sileo } from "sileo"
-import { Search, Plus, Package, RefreshCw, X, Loader2, Pencil, Trash2 } from "lucide-react"
+import { Search, Plus, Package, RefreshCw, X, Loader2, Pencil, Trash2, CheckSquare } from "lucide-react"
 import { authApi } from "@/lib/api/auth"
 import { productsApi } from "@/lib/api/products"
 import { categoriesApi } from "@/lib/api/categories"
@@ -308,6 +308,15 @@ export default function StockPage() {
   const [savingFamilia, setSavingFamilia] = useState(false)
   const [deleteConfirmFamiliaId, setDeleteConfirmFamiliaId] = useState<string | null>(null)
   const [deletingFamilia, setDeletingFamilia] = useState(false)
+
+  // Selección masiva
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [showBulkEditModal, setShowBulkEditModal] = useState(false)
+  const [bulkEditField, setBulkEditField] = useState<"category" | "familia" | "unit" | null>(null)
+  const [bulkEditValue, setBulkEditValue] = useState("")
+  const [bulkProcessing, setBulkProcessing] = useState(false)
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false)
+
   const createEmptyProduct = useCallback(
     (sku = ""): NewProductForm => ({
       sku,
@@ -364,7 +373,7 @@ export default function StockPage() {
   const managedCategoryGroups = useMemo(() => {
     const groups = new Map<string, ManagedCategoryGroup>()
 
-    for (const category of categories) {
+    for (const category of categories.filter((c) => !c.slug.startsWith("familia-"))) {
       const displayName = getCategoryDisplayName(category.name)
       const key = displayName
         .normalize("NFD")
@@ -756,6 +765,70 @@ export default function StockPage() {
     }
   }
 
+  // ---------- Bulk selection handlers ----------
+
+  const toggleSelect = useCallback((id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }, [])
+
+  const toggleSelectAll = useCallback((filteredProducts: { id: string }[]) => {
+    setSelectedIds((prev) => {
+      const allIds = filteredProducts.map((p) => p.id)
+      const allSelected = allIds.every((id) => prev.has(id))
+      if (allSelected) return new Set()
+      return new Set(allIds)
+    })
+  }, [])
+
+  const openBulkEdit = useCallback((field: "category" | "familia" | "unit") => {
+    setBulkEditField(field)
+    setBulkEditValue("")
+    setShowBulkEditModal(true)
+  }, [])
+
+  const handleBulkEdit = async () => {
+    if (!bulkEditField || !bulkEditValue) return
+    setBulkProcessing(true)
+    try {
+      const payload: Record<string, string> =
+        bulkEditField === "category"
+          ? { categoryId: bulkEditValue }
+          : bulkEditField === "familia"
+          ? { familia: bulkEditValue }
+          : { unit: bulkEditValue }
+
+      await Promise.all([...selectedIds].map((id) => productsApi.update(id, payload)))
+      sileo.success({ title: `${selectedIds.size} producto${selectedIds.size !== 1 ? "s" : ""} actualizado${selectedIds.size !== 1 ? "s" : ""}` })
+      setShowBulkEditModal(false)
+      setSelectedIds(new Set())
+      fetchProducts(true)
+    } catch (err: any) {
+      sileo.error({ title: err.message || "Error al actualizar" })
+    } finally {
+      setBulkProcessing(false)
+    }
+  }
+
+  const handleBulkDelete = async () => {
+    setBulkProcessing(true)
+    try {
+      await Promise.all([...selectedIds].map((id) => productsApi.delete(id)))
+      sileo.success({ title: `${selectedIds.size} producto${selectedIds.size !== 1 ? "s" : ""} eliminado${selectedIds.size !== 1 ? "s" : ""}` })
+      setBulkDeleteConfirm(false)
+      setSelectedIds(new Set())
+      fetchProducts(true)
+    } catch (err: any) {
+      sileo.error({ title: err.message || "Error al eliminar" })
+    } finally {
+      setBulkProcessing(false)
+    }
+  }
+
   const handleDeleteCategory = async (group: ManagedCategoryGroup) => {
     setDeletingCategory(true)
     setCategoryError(null)
@@ -1064,6 +1137,52 @@ export default function StockPage() {
         </div>
       )}
 
+      {/* -------- Bulk action bar -------- */}
+      {selectedIds.size > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-blue-200 dark:border-blue-700 bg-blue-50 dark:bg-blue-900/30 px-4 py-3">
+          <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+            {selectedIds.size} producto{selectedIds.size !== 1 ? "s" : ""} seleccionado{selectedIds.size !== 1 ? "s" : ""}
+          </span>
+          <div className="flex flex-wrap gap-2 ml-2">
+            <button
+              type="button"
+              onClick={() => openBulkEdit("category")}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-blue-300 dark:border-blue-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/50"
+            >
+              <Pencil className="h-3 w-3" /> Cambiar categoría
+            </button>
+            <button
+              type="button"
+              onClick={() => openBulkEdit("familia")}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-blue-300 dark:border-blue-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/50"
+            >
+              <Pencil className="h-3 w-3" /> Cambiar familia
+            </button>
+            <button
+              type="button"
+              onClick={() => openBulkEdit("unit")}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-blue-300 dark:border-blue-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/50"
+            >
+              <Pencil className="h-3 w-3" /> Cambiar unidad
+            </button>
+            <button
+              type="button"
+              onClick={() => setBulkDeleteConfirm(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-red-300 dark:border-red-700 bg-white dark:bg-gray-800 px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
+            >
+              <Trash2 className="h-3 w-3" /> Eliminar
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSelectedIds(new Set())}
+            className="ml-auto text-xs text-blue-500 dark:text-blue-400 hover:underline"
+          >
+            Deseleccionar todo
+          </button>
+        </div>
+      )}
+
       {/* -------- Table -------- */}
       <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
         {loading ? (
@@ -1073,6 +1192,15 @@ export default function StockPage() {
             <table className="w-full min-w-[720px]">
               <thead>
                 <tr className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+                  <th className="w-10 px-3 py-3">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 accent-blue-600 cursor-pointer"
+                      checked={filteredProducts.length > 0 && filteredProducts.every((p) => selectedIds.has(p.id))}
+                      onChange={() => toggleSelectAll(filteredProducts)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </th>
                   <th className="w-14 px-2 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-white">
                     Foto
                   </th>
@@ -1115,8 +1243,19 @@ export default function StockPage() {
                   <tr
                     key={product.id}
                     onClick={() => router.push(`/stock/${product.id}`)}
-                    className="border-b border-gray-100 dark:border-gray-700 transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer"
+                    className={cn(
+                      "border-b border-gray-100 dark:border-gray-700 transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer",
+                      selectedIds.has(product.id) && "bg-blue-50 dark:bg-blue-900/20"
+                    )}
                   >
+                      <td className="px-3 py-3 align-middle" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-gray-300 dark:border-gray-600 accent-blue-600 cursor-pointer"
+                          checked={selectedIds.has(product.id)}
+                          onChange={(e) => toggleSelect(product.id, e as any)}
+                        />
+                      </td>
                       <td className="px-2 py-3 align-middle">
                         {product.imageUrl ? (
                           <img
@@ -1185,7 +1324,7 @@ export default function StockPage() {
                 {filteredProducts.length === 0 && (
                   <tr>
                     <td
-                      colSpan={9}
+                      colSpan={10}
                       className="px-4 py-12 text-center text-sm text-gray-400 dark:text-gray-400"
                     >
                       <Package className="mx-auto mb-2 h-8 w-8 text-gray-300 dark:text-gray-500" />
@@ -1995,6 +2134,95 @@ export default function StockPage() {
                 className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700"
               >
                 Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* -------- Bulk Edit Modal -------- */}
+      {showBulkEditModal && bulkEditField && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowBulkEditModal(false)}>
+          <div className="w-full max-w-sm rounded-xl bg-white dark:bg-gray-800 shadow-2xl border border-gray-200 dark:border-gray-700" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                {bulkEditField === "category" ? "Cambiar categoría" : bulkEditField === "familia" ? "Cambiar familia" : "Cambiar unidad"}
+              </h2>
+              <button type="button" onClick={() => setShowBulkEditModal(false)} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="px-6 py-5 space-y-3">
+              <p className="text-sm text-gray-500 dark:text-gray-400">
+                Se aplicará a <span className="font-semibold text-gray-800 dark:text-white">{selectedIds.size} producto{selectedIds.size !== 1 ? "s" : ""}</span>.
+              </p>
+              {bulkEditField === "category" && (
+                <select
+                  value={bulkEditValue}
+                  onChange={(e) => setBulkEditValue(e.target.value)}
+                  className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="">Seleccionar categoría...</option>
+                  {tipoCategories.map((c) => (
+                    <option key={c.id} value={c.id}>{getCategoryDisplayName(c.name)}</option>
+                  ))}
+                </select>
+              )}
+              {bulkEditField === "familia" && (
+                <select
+                  value={bulkEditValue}
+                  onChange={(e) => setBulkEditValue(e.target.value)}
+                  className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="">Sin familia</option>
+                  {familias.map((f) => (
+                    <option key={f.id} value={getCategoryDisplayName(f.name)}>{getCategoryDisplayName(f.name)}</option>
+                  ))}
+                </select>
+              )}
+              {bulkEditField === "unit" && (
+                <select
+                  value={bulkEditValue}
+                  onChange={(e) => setBulkEditValue(e.target.value)}
+                  className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none"
+                >
+                  <option value="">Seleccionar unidad...</option>
+                  {unitOptions.map((u) => (
+                    <option key={u.value} value={u.value}>{u.label}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/80 px-6 py-4">
+              <button type="button" onClick={() => setShowBulkEditModal(false)} disabled={bulkProcessing} className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50">
+                Cancelar
+              </button>
+              <button type="button" onClick={handleBulkEdit} disabled={bulkProcessing || !bulkEditValue} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+                {bulkProcessing && <Loader2 className="h-4 w-4 animate-spin" />}
+                {bulkProcessing ? "Aplicando..." : "Aplicar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* -------- Bulk Delete Confirm -------- */}
+      {bulkDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setBulkDeleteConfirm(false)}>
+          <div className="w-full max-w-sm rounded-xl bg-white dark:bg-gray-800 shadow-2xl border border-gray-200 dark:border-gray-700" onClick={(e) => e.stopPropagation()}>
+            <div className="px-6 py-5 space-y-3">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">¿Eliminar productos?</h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                Se eliminarán <span className="font-semibold text-gray-900 dark:text-white">{selectedIds.size} producto{selectedIds.size !== 1 ? "s" : ""}</span>. Esta acción no se puede deshacer.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/80 px-6 py-4">
+              <button type="button" onClick={() => setBulkDeleteConfirm(false)} disabled={bulkProcessing} className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50">
+                Cancelar
+              </button>
+              <button type="button" onClick={handleBulkDelete} disabled={bulkProcessing} className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">
+                {bulkProcessing && <Loader2 className="h-4 w-4 animate-spin" />}
+                {bulkProcessing ? "Eliminando..." : "Eliminar"}
               </button>
             </div>
           </div>
