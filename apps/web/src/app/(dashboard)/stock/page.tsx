@@ -579,8 +579,10 @@ export default function StockPage() {
     try {
       const params: Record<string, string | number | boolean> = { limit: 5000 }
       if (debouncedSearch) params.search = debouncedSearch
-      if (selectedCategory) params.categoryId = selectedCategory
-      if (selectedFamilia) params.familia = selectedFamilia
+      if (selectedCategory === "__none__") params.categoryId = "none"
+      else if (selectedCategory) params.categoryId = selectedCategory
+      if (selectedFamilia === "__none__") params.familia = "none"
+      else if (selectedFamilia) params.familia = selectedFamilia
       if (forceRefresh) params._refresh = Date.now()
 
       const response = await productsApi.getAll(params)
@@ -1032,6 +1034,7 @@ export default function StockPage() {
           className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
         >
           <option value="">Todas las categorías</option>
+          <option value="__none__">— Sin categoría</option>
           {tipoCategories.map((cat) => (
             <option key={cat.id} value={cat.id}>
               {getCategoryDisplayName(cat.name)}
@@ -1047,6 +1050,7 @@ export default function StockPage() {
           className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
         >
           <option value="">Todas las familias</option>
+          <option value="__none__">— Sin familia</option>
           {familias.map((cat) => (
             <option key={cat.id} value={getCategoryDisplayName(cat.name)}>
               {getCategoryDisplayName(cat.name)}

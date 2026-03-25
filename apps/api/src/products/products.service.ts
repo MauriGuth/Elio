@@ -47,11 +47,15 @@ export class ProductsService {
       ];
     }
 
-    if (filters.categoryId) {
+    if (filters.categoryId === 'none') {
+      where.categoryId = null;
+    } else if (filters.categoryId) {
       where.categoryId = filters.categoryId;
     }
 
-    if (filters.familia?.trim()) {
+    if (filters.familia === 'none') {
+      where.familia = null;
+    } else if (filters.familia?.trim()) {
       where.familia = filters.familia.trim();
     }
 
