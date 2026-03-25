@@ -24,6 +24,23 @@ import {
 } from "./RecipeModifierStockBlock"
 import { ModifierGroupsManagerDialog } from "@/components/ModifierGroupsManagerDialog"
 
+/**
+ * Tras guardar la receta se persisten stock/precios por **cada opción** de modificador.
+ * En remoto, un `await` por opción suma latencias (p. ej. 50 opciones × 200 ms ≈ 10 s).
+ */
+const MODIFIER_PERSIST_CONCURRENCY = 12
+
+async function runBatched<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  for (let i = 0; i < items.length; i += concurrency) {
+    const slice = items.slice(i, i + concurrency)
+    await Promise.all(slice.map((item) => fn(item)))
+  }
+}
+
 type ProductOption = { id: string; name: string; sku: string; unit?: string }
 type IngredientRow = {
   productId: string
@@ -480,6 +497,8 @@ export default function RecipesPage() {
 
   const persistModifierStockLines = async () => {
     if (!form.productId) return
+    type StockTask = { optionId: string; lines: { productId: string; quantity: number }[] }
+    const tasks: StockTask[] = []
     for (const g of modifierGroupsData) {
       for (const o of g.options || []) {
         const rows = modifierLinesByOption[o.id] ?? []
@@ -492,19 +511,27 @@ export default function RecipesPage() {
           productId,
           quantity,
         }))
-        await productsApi.setModifierStockLines(o.id, lines)
+        tasks.push({ optionId: o.id, lines })
       }
     }
+    await runBatched(tasks, MODIFIER_PERSIST_CONCURRENCY, (t) =>
+      productsApi.setModifierStockLines(t.optionId, t.lines),
+    )
   }
 
   const persistOptionPrices = async () => {
+    type PriceTask = { optionId: string; priceDelta: number }
+    const tasks: PriceTask[] = []
     for (const g of modifierGroupsData) {
       for (const o of g.options || []) {
         const p = optionPriceById[o.id]
         if (p === undefined) continue
-        await productsApi.updateModifierOption(o.id, { priceDelta: p })
+        tasks.push({ optionId: o.id, priceDelta: p })
       }
     }
+    await runBatched(tasks, MODIFIER_PERSIST_CONCURRENCY, (t) =>
+      productsApi.updateModifierOption(t.optionId, { priceDelta: t.priceDelta }),
+    )
   }
 
   const saveForm = async () => {
