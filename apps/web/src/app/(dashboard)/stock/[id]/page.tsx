@@ -131,6 +131,14 @@ function getCategoryDisplayName(name: string | null | undefined): string {
   return name.replace(/^(Tipo|Familia|Agrupar):\s*/i, "").trim() || name
 }
 
+const PREPARATION_SECTOR_FORM_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "Automático (por categoría y nombre)" },
+  { value: "kitchen", label: "Cocina" },
+  { value: "coffee", label: "Cafetería / café" },
+  { value: "bar", label: "Bar" },
+  { value: "bakery", label: "Panadería" },
+]
+
 // ---------- API → UI mapping ----------
 
 interface ApiStockLevel {
@@ -161,6 +169,7 @@ interface ApiProduct {
   isProduced: boolean
   isPerishable: boolean
   consumeRecipeOnSale?: boolean
+  preparationSector?: string | null
   isActive: boolean
   category: {
     id: string
@@ -215,6 +224,7 @@ interface ProcessedProduct {
   isIngredient: boolean
   isPerishable: boolean
   consumeRecipeOnSale: boolean
+  preparationSector?: string | null
   category: {
     id: string
     name: string
@@ -292,6 +302,7 @@ function processProduct(p: ApiProduct): ProcessedProduct {
     isIngredient: p.isIngredient ?? false,
     isPerishable: p.isPerishable ?? false,
     consumeRecipeOnSale: p.consumeRecipeOnSale ?? false,
+    preparationSector: p.preparationSector ?? null,
     category: p.category,
     stockByLocation,
     totalStock,
@@ -442,6 +453,7 @@ export default function ProductDetailPage() {
     isIngredient: false,
     isPerishable: false,
     consumeRecipeOnSale: false,
+    preparationSector: "" as string,
   })
   const [editImageFile, setEditImageFile] = useState<File | null>(null)
   const [editImageUploading, setEditImageUploading] = useState(false)
@@ -468,11 +480,11 @@ export default function ProductDetailPage() {
     [categories]
   )
 
-  /** Mismo criterio que alta de producto: solo tipos PRODUCTO / INSUMO / RECETA (slug tipo-*). */
-  const tipoCategories = useMemo(
+  /** Rubros para categoría del producto: igual que el filtro de la grilla (excluye solo familia-*). Incluye tipo-insumo y rubros propios (ej. INSUMOS). */
+  const stockRubroCategories = useMemo(
     () =>
       categories
-        .filter((c) => c.slug.startsWith("tipo-"))
+        .filter((c) => !c.slug.startsWith("familia-"))
         .sort((a, b) =>
           getCategoryDisplayName(a.name).localeCompare(getCategoryDisplayName(b.name), "es", {
             sensitivity: "base",
@@ -482,13 +494,13 @@ export default function ProductDetailPage() {
   )
 
   /** Si el producto tenía otra categoría (legacy), mostrarla al final para no perder el valor. */
-  const tipoCategoriesForEdit = useMemo(() => {
+  const rubroCategoriesForEdit = useMemo(() => {
     const id = editForm.categoryId
-    if (!id || tipoCategories.some((c) => c.id === id)) return tipoCategories
+    if (!id || stockRubroCategories.some((c) => c.id === id)) return stockRubroCategories
     const orphan = categories.find((c) => c.id === id)
-    if (!orphan) return tipoCategories
-    return [...tipoCategories, orphan]
-  }, [tipoCategories, categories, editForm.categoryId])
+    if (!orphan) return stockRubroCategories
+    return [...stockRubroCategories, orphan]
+  }, [stockRubroCategories, categories, editForm.categoryId])
 
   const fetchData = useCallback(async (forceRefresh?: boolean) => {
     setLoading(true)
@@ -578,6 +590,7 @@ export default function ProductDetailPage() {
       isIngredient: product.isIngredient,
       isPerishable: product.isPerishable,
       consumeRecipeOnSale: product.consumeRecipeOnSale ?? false,
+      preparationSector: product.preparationSector ?? "",
     })
     setEditImageFile(null)
     setEditError(null)
@@ -621,6 +634,9 @@ export default function ProductDetailPage() {
         isIngredient: editForm.isIngredient,
         isPerishable: editForm.isPerishable,
         consumeRecipeOnSale: editForm.consumeRecipeOnSale,
+        preparationSector: editForm.preparationSector
+          ? editForm.preparationSector
+          : null,
       })
       setShowEditModal(false)
       await fetchData(true)
@@ -950,7 +966,7 @@ export default function ProductDetailPage() {
                   aria-label="Categoría del producto"
                 >
                   <option value="">Seleccionar categoría</option>
-                  {tipoCategoriesForEdit.map((c) => (
+                  {rubroCategoriesForEdit.map((c) => (
                     <option key={c.id} value={c.id}>
                       {getCategoryDisplayName(c.name)}
                       {!c.slug.startsWith("tipo-") ? " (reasignar a tipo)" : ""}
@@ -1117,6 +1133,28 @@ export default function ProductDetailPage() {
                   </div>
                 </div>
               )}
+              <div className="space-y-1.5">
+                <label className="block text-sm font-medium text-gray-700 dark:text-white">
+                  Destino de comanda
+                </label>
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  Cafetería (POS) muestra café, bar y panadería; Cocina solo platos de cocina. Vacío = inferir por categoría/nombre.
+                </p>
+                <select
+                  aria-label="Destino de comanda"
+                  value={editForm.preparationSector}
+                  onChange={(e) =>
+                    setEditForm((f) => ({ ...f, preparationSector: e.target.value }))
+                  }
+                  className="w-full max-w-md rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                >
+                  {PREPARATION_SECTOR_FORM_OPTIONS.map((o) => (
+                    <option key={o.value || "auto"} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="flex flex-wrap gap-6">
                 <label className="inline-flex items-center gap-2">
                   <input

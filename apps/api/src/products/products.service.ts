@@ -37,27 +37,33 @@ export class ProductsService {
     const skip = (page - 1) * limit;
 
     const where: Prisma.ProductWhereInput = {};
+    const andParts: Prisma.ProductWhereInput[] = [];
+
+    const categoryIdParam =
+      typeof filters.categoryId === 'string' ? filters.categoryId.trim() : filters.categoryId;
 
     if (filters.search) {
-      where.OR = [
-        { name: { contains: filters.search, mode: 'insensitive' } },
-        { sku: { contains: filters.search, mode: 'insensitive' } },
-        { barcode: { contains: filters.search, mode: 'insensitive' } },
-        { description: { contains: filters.search, mode: 'insensitive' } },
-      ];
+      andParts.push({
+        OR: [
+          { name: { contains: filters.search, mode: 'insensitive' } },
+          { sku: { contains: filters.search, mode: 'insensitive' } },
+          { barcode: { contains: filters.search, mode: 'insensitive' } },
+          { description: { contains: filters.search, mode: 'insensitive' } },
+        ],
+      });
     }
 
-    if (filters.categoryId === 'none') {
-      // "Sin categoría": productos cuya categoría fue eliminada (soft-deleted)
-      // Buscamos primero los IDs de categorías inactivas y filtramos por esos
-      const inactiveCategories = await this.prisma.category.findMany({
-        where: { isActive: false },
-        select: { id: true },
+    if (categoryIdParam === 'none' || categoryIdParam === '__none__') {
+      // Sin categoría en grilla: categoría inactiva (soft-delete) → el panel muestra "—"
+      andParts.push({
+        OR: [{ category: { isActive: false } }],
       });
-      const inactiveIds = inactiveCategories.map((c) => c.id);
-      where.categoryId = inactiveIds.length > 0 ? { in: inactiveIds } : '__none__';
-    } else if (filters.categoryId) {
-      where.categoryId = filters.categoryId;
+    } else if (categoryIdParam) {
+      where.categoryId = categoryIdParam;
+    }
+
+    if (andParts.length > 0) {
+      where.AND = andParts;
     }
 
     if (filters.familia === 'none') {

@@ -8,6 +8,8 @@ import {
   MaxLength,
   Min,
   IsObject,
+  IsIn,
+  ValidateIf,
 } from 'class-validator';
 
 export class UpdateProductDto {
@@ -84,6 +86,12 @@ export class UpdateProductDto {
   @IsOptional()
   @IsBoolean()
   consumeRecipeOnSale?: boolean;
+
+  /** null limpia el valor y vuelve a la inferencia por categoría en el POS. */
+  @IsOptional()
+  @ValidateIf((_, v) => v != null)
+  @IsIn(['kitchen', 'bar', 'coffee', 'bakery'])
+  preparationSector?: string | null;
 
   @IsOptional()
   @IsBoolean()

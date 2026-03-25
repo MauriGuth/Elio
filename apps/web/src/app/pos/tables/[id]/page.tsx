@@ -579,49 +579,71 @@ function formatCuitDisplay(value: string): string {
   return `${digits.slice(0, 2)}-${digits.slice(2, 10)}-${digits.slice(10)}`
 }
 
-/** Auto-detect sector from product category */
-function detectSector(product: any): PendingItem["sector"] {
+/** Inferencia por categoría y nombre (si no hay `preparationSector` en el producto). */
+function inferSectorFromCategory(product: any): PendingItem["sector"] {
   const catName = (product.category?.name || "").toLowerCase()
-  // Café / bebida caliente
+  const prodName = (product.name || "").toLowerCase()
+  const hay = `${catName} ${prodName}`
+  // Café / bebida caliente / café helado / tragos con café (nombre o rubro)
   if (
-    catName.includes("cafe") ||
-    catName.includes("café") ||
-    catName.includes("bebida caliente") ||
-    catName.includes("infusi")
+    hay.includes("cafe") ||
+    hay.includes("café") ||
+    hay.includes("coffee") ||
+    hay.includes("bebida caliente") ||
+    hay.includes("infusi") ||
+    hay.includes("latte") ||
+    hay.includes("espresso") ||
+    hay.includes("capucc") ||
+    hay.includes("machiato") ||
+    hay.includes("machiatto") ||
+    hay.includes("macchiato") ||
+    hay.includes("moka")
   ) {
     return "coffee"
   }
   // Bar / bebidas frías / alcohol
   if (
-    catName.includes("bebida") ||
-    catName.includes("trago") ||
-    catName.includes("cerveza") ||
-    catName.includes("vino") ||
-    catName.includes("cocktail") ||
-    catName.includes("cóctel") ||
-    catName.includes("gaseosa") ||
-    catName.includes("jugo") ||
-    catName.includes("agua") ||
-    catName.includes("refresco")
+    hay.includes("bebida") ||
+    hay.includes("trago") ||
+    hay.includes("cerveza") ||
+    hay.includes("vino") ||
+    hay.includes("cocktail") ||
+    hay.includes("cóctel") ||
+    hay.includes("gaseosa") ||
+    hay.includes("jugo") ||
+    hay.includes("agua") ||
+    hay.includes("refresco")
   ) {
     return "bar"
   }
-  // Panadería / pastelería / postres
+  // Panadería / pastelería / postres (\bpan\b evita «empanada» → panadería)
   if (
-    catName.includes("pan") ||
-    catName.includes("pastel") ||
-    catName.includes("postre") ||
-    catName.includes("dulce") ||
-    catName.includes("torta") ||
-    catName.includes("brownie") ||
-    catName.includes("galletita") ||
-    catName.includes("repostería") ||
-    catName.includes("panadería")
+    hay.includes("medialuna") ||
+    hay.includes("factura") ||
+    hay.includes("croissant") ||
+    /\bpan\b/i.test(hay) ||
+    hay.includes("panader") ||
+    hay.includes("pastel") ||
+    hay.includes("postre") ||
+    hay.includes("dulce") ||
+    hay.includes("torta") ||
+    hay.includes("brownie") ||
+    hay.includes("galletita") ||
+    hay.includes("repostería") ||
+    hay.includes("panadería")
   ) {
     return "bakery"
   }
-  // Default: cocina
   return "kitchen"
+}
+
+/** Sector de comanda: explícito en producto o inferido (cafetería POS = coffee|bar|bakery). */
+function resolvePreparationSector(product: any): PendingItem["sector"] {
+  const s = product?.preparationSector
+  if (s === "kitchen" || s === "bar" || s === "coffee" || s === "bakery") {
+    return s
+  }
+  return inferSectorFromCategory(product)
 }
 
 const ITEM_STATUS_STYLES: Record<string, string> = {
@@ -815,7 +837,7 @@ function parseVoiceCommand(
       }
     }
     if (bestMatch && bestScore >= 40) {
-      const sector = detectSector(bestMatch)
+      const sector = resolvePreparationSector(bestMatch)
       const trailingNote = splitProductAndNotes(productText).notesPart
       results.push({ product: bestMatch, quantity, sector, notes: trailingNote })
       continue
@@ -838,7 +860,7 @@ function parseVoiceCommand(
     }
 
     if (bestMatch && bestScore >= 40) {
-      const sector = detectSector(bestMatch)
+      const sector = resolvePreparationSector(bestMatch)
       results.push({ product: bestMatch, quantity, sector, notes: notesPart })
       continue
     }
@@ -856,7 +878,7 @@ function parseVoiceCommand(
       }
     }
     if (bestMatch && bestScore >= 40) {
-      const sector = detectSector(bestMatch)
+      const sector = resolvePreparationSector(bestMatch)
       results.push({ product: bestMatch, quantity, sector, notes: notesPart })
     }
   }
@@ -1481,7 +1503,9 @@ export default function TableOrderPage() {
   /* ── derived: filtered products ── */
   const filteredProducts = useMemo(() => {
     let list = products
-    if (activeCategory !== "all") {
+    if (activeCategory === "__uncategorized__") {
+      list = list.filter((p) => !p.category?.id)
+    } else if (activeCategory !== "all") {
       list = list.filter((p) => p.category?.id === activeCategory)
     }
     if (searchQuery.trim()) {
@@ -1616,7 +1640,7 @@ export default function TableOrderPage() {
           productName: product.name,
           quantity: 1,
           unitPrice: product.salePrice,
-          sector: detectSector(product),
+          sector: resolvePreparationSector(product),
           notes: "",
         },
       ])
@@ -1738,7 +1762,7 @@ export default function TableOrderPage() {
       (i) => i.productId === product.id && pendingLineMatchKey(i) === key
     )
     const qtyAdd = voiceMeta?.quantity ?? 1
-    const sector = voiceMeta?.sector ?? detectSector(product)
+    const sector = voiceMeta?.sector ?? resolvePreparationSector(product)
     const notes = voiceMeta?.notes?.trim() ?? ""
     if (existing) {
       setPendingItems((prev) =>
@@ -2908,6 +2932,20 @@ export default function TableOrderPage() {
             >
               Todos
             </button>
+            {products.some((p) => !p.category?.id) && (
+              <button
+                type="button"
+                onClick={() => setActiveCategory("__uncategorized__")}
+                className={cn(
+                  "shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors whitespace-nowrap",
+                  activeCategory === "__uncategorized__"
+                    ? "bg-blue-500 text-white"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300"
+                )}
+              >
+                Sin categoría
+              </button>
+            )}
             {categories.map((cat) => (
               <button
                 key={cat.id}

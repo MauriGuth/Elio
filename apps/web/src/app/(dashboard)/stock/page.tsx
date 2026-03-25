@@ -76,6 +76,7 @@ interface ApiProduct {
   isIngredient: boolean
   isProduced: boolean
   isPerishable: boolean
+  preparationSector?: string | null
   isActive: boolean
   category: {
     id: string
@@ -113,6 +114,7 @@ interface ProcessedProduct {
   }>
   totalStock: number
   worstStatus: StockStatus
+  preparationSector?: string | null
 }
 
 type NewProductForm = {
@@ -130,6 +132,8 @@ type NewProductForm = {
   isSellable: boolean
   isIngredient: boolean
   isPerishable: boolean
+  /** "" = automático en POS */
+  preparationSector: string
 }
 
 type ManagedCategoryGroup = {
@@ -142,6 +146,15 @@ type ManagedCategoryGroup = {
     color: string
   }>
 }
+
+/** Comanda / KDS: cafetería POS muestra café + bar + panadería. */
+const PREPARATION_SECTOR_FORM_OPTIONS: { value: string; label: string }[] = [
+  { value: "", label: "Automático (por categoría y nombre)" },
+  { value: "kitchen", label: "Cocina" },
+  { value: "coffee", label: "Cafetería / café" },
+  { value: "bar", label: "Bar" },
+  { value: "bakery", label: "Panadería" },
+]
 
 function processProduct(p: ApiProduct): ProcessedProduct {
   const stockByLocation = (p.stockLevels || []).map((sl) => {
@@ -191,6 +204,7 @@ function processProduct(p: ApiProduct): ProcessedProduct {
     stockByLocation,
     totalStock,
     worstStatus,
+    preparationSector: p.preparationSector ?? null,
   }
 }
 
@@ -333,6 +347,7 @@ export default function StockPage() {
       isSellable: false,
       isIngredient: false,
       isPerishable: false,
+      preparationSector: "",
     }),
     []
   )
@@ -359,10 +374,11 @@ export default function StockPage() {
     [categories]
   )
 
-  const tipoCategories = useMemo(
+  /** Filtro categoría en grilla: todas salvo familias (incluye tipo-insumo, rubros propios, etc.) */
+  const stockRubroCategories = useMemo(
     () =>
       categories
-        .filter((c) => c.slug.startsWith("tipo-"))
+        .filter((c) => !c.slug.startsWith("familia-"))
         .sort((a, b) =>
           getCategoryDisplayName(a.name).localeCompare(getCategoryDisplayName(b.name), "es", {
             sensitivity: "base",
@@ -453,10 +469,14 @@ export default function StockPage() {
   }, [createEmptyProduct, getNextProdSku])
 
   useEffect(() => {
-    if (selectedCategory && !tipoCategories.some((category) => category.id === selectedCategory)) {
+    if (
+      selectedCategory &&
+      selectedCategory !== "__none__" &&
+      !stockRubroCategories.some((category) => category.id === selectedCategory)
+    ) {
       setSelectedCategory("")
     }
-  }, [selectedCategory, tipoCategories])
+  }, [selectedCategory, stockRubroCategories])
 
   const hasActiveFilters =
     !!searchQuery ||
@@ -696,6 +716,7 @@ export default function StockPage() {
         ...newProduct,
         imageUrl: imageUrl || undefined,
         familia: newProduct.familia || undefined,
+        preparationSector: newProduct.preparationSector || undefined,
         salePriceByLocation: newProduct.locationIds.length > 0 ? salePriceByLocation : undefined,
       })
       closeCreateProductModal()
@@ -942,7 +963,7 @@ export default function StockPage() {
           </p>
           <button
             type="button"
-            onClick={fetchProducts}
+            onClick={() => void fetchProducts(true)}
             className="mt-6 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
           >
             <RefreshCw className="h-4 w-4" />
@@ -1035,7 +1056,7 @@ export default function StockPage() {
         >
           <option value="">Todas las categorías</option>
           <option value="__none__">— Sin categoría</option>
-          {tipoCategories.map((cat) => (
+          {stockRubroCategories.map((cat) => (
             <option key={cat.id} value={cat.id}>
               {getCategoryDisplayName(cat.name)}
             </option>
@@ -1501,7 +1522,7 @@ export default function StockPage() {
                       className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     >
                       <option value="">Seleccionar...</option>
-                      {tipoCategories.map((cat) => (
+                      {stockRubroCategories.map((cat) => (
                         <option key={cat.id} value={cat.id}>
                           {getCategoryDisplayName(cat.name)}
                         </option>
@@ -1547,6 +1568,29 @@ export default function StockPage() {
                       ))}
                     </select>
                   </div>
+                </div>
+
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
+                    Destino de comanda (cocina / cafetería / bar / panadería)
+                  </label>
+                  <p className="mb-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    La pantalla <strong>Cafetería</strong> del POS agrupa café, bar y panadería. <strong>Cocina</strong> solo muestra platos de cocina.
+                  </p>
+                  <select
+                    aria-label="Destino de comanda"
+                    value={newProduct.preparationSector}
+                    onChange={(e) =>
+                      setNewProduct({ ...newProduct, preparationSector: e.target.value })
+                    }
+                    className="w-full max-w-md rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  >
+                    {PREPARATION_SECTOR_FORM_OPTIONS.map((o) => (
+                      <option key={o.value || "auto"} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 {/* Locations */}
@@ -2176,7 +2220,7 @@ export default function StockPage() {
                   className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none"
                 >
                   <option value="">Seleccionar categoría...</option>
-                  {tipoCategories.map((c) => (
+                  {stockRubroCategories.map((c) => (
                     <option key={c.id} value={c.id}>{getCategoryDisplayName(c.name)}</option>
                   ))}
                 </select>

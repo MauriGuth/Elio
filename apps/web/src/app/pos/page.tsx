@@ -4,6 +4,16 @@ import { useState, useCallback, useEffect } from "react"
 import Link from "next/link"
 import { Banknote, UtensilsCrossed, ChefHat, Coffee, Warehouse, MapPin } from "lucide-react"
 import { setStoredPosCoords, getStoredPosCoords } from "@/lib/api/auth"
+import {
+  getPosGeolocationPosition,
+  geolocationErrorMessage,
+} from "@/lib/pos-geolocation"
+
+function isLocalDevHost(): boolean {
+  if (typeof window === "undefined") return false
+  const h = window.location.hostname
+  return h === "localhost" || h === "127.0.0.1" || h === "[::1]"
+}
 
 export default function PosStationSelectorPage() {
   const [locationStatus, setLocationStatus] = useState<"idle" | "asking" | "granted" | "denied" | "error">("idle")
@@ -14,32 +24,45 @@ export default function PosStationSelectorPage() {
   }, [])
 
   const requestLocation = useCallback(() => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setLocationStatus("error")
-      setLocationError("Tu navegador no soporta ubicación.")
-      return
-    }
     setLocationError("")
     setLocationStatus("asking")
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
+    getPosGeolocationPosition()
+      .then((pos) => {
         setStoredPosCoords(pos.coords.latitude, pos.coords.longitude)
         setLocationStatus("granted")
-      },
-      (err: GeolocationPositionError) => {
-        if (err.code === 1) {
+      })
+      .catch((err: unknown) => {
+        if (err instanceof Object && "code" in err && (err as GeolocationPositionError).code === 1) {
           setLocationStatus("denied")
-          setLocationError("Tenés que permitir la ubicación para poder ingresar como Cajero, Mozo, etc.")
-        } else if (err.code === 3) {
-          setLocationStatus("error")
-          setLocationError("Se acabó el tiempo. Tocá de nuevo «Permitir ubicación».")
-        } else {
-          setLocationStatus("error")
-          setLocationError("No se pudo obtener la ubicación.")
+          setLocationError(geolocationErrorMessage(err as GeolocationPositionError))
+          return
         }
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
-    )
+        if (
+          err instanceof Object &&
+          "code" in err &&
+          typeof (err as GeolocationPositionError).code === "number"
+        ) {
+          setLocationStatus("error")
+          setLocationError(geolocationErrorMessage(err as GeolocationPositionError))
+          return
+        }
+        setLocationStatus("error")
+        setLocationError(err instanceof Error ? err.message : "No se pudo obtener la ubicación.")
+      })
+  }, [])
+
+  const skipGeoDev = useCallback(() => {
+    const lat = Number(process.env.NEXT_PUBLIC_POS_DEV_LAT ?? "-34.6037")
+    const lng = Number(process.env.NEXT_PUBLIC_POS_DEV_LNG ?? "-58.3816")
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return
+    setStoredPosCoords(lat, lng)
+    setLocationError("")
+    setLocationStatus("granted")
+  }, [])
+
+  const [showLocalDevSkip, setShowLocalDevSkip] = useState(false)
+  useEffect(() => {
+    setShowLocalDevSkip(isLocalDevHost())
   }, [])
 
   const showOverlay = locationStatus !== "granted" && locationStatus !== "denied"
@@ -64,7 +87,7 @@ export default function PosStationSelectorPage() {
             {(locationError || locationStatus === "error") && (
               <p className="mt-2 text-center text-sm text-red-600">{locationError}</p>
             )}
-            <div className="mt-6">
+            <div className="mt-6 space-y-2">
               <button
                 type="button"
                 onClick={requestLocation}
@@ -73,6 +96,16 @@ export default function PosStationSelectorPage() {
               >
                 {locationStatus === "asking" ? "Obteniendo ubicación…" : "Permitir ubicación"}
               </button>
+              {showLocalDevSkip && (
+                <button
+                  type="button"
+                  onClick={skipGeoDev}
+                  disabled={locationStatus === "asking"}
+                  className="w-full rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 text-sm font-medium text-amber-900 transition hover:bg-amber-100"
+                >
+                  Desarrollo: continuar sin GPS (usa coordenadas de prueba)
+                </button>
+              )}
             </div>
           </div>
         </div>

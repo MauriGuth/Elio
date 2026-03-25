@@ -209,6 +209,12 @@ model Product {
   isPerishable Boolean  @default(false) @map("is_perishable")
   /** Si true, al cerrar la venta se descuentan insumos de la receta activa (no el producto terminado). Café/bar elaborado al momento. */
   consumeRecipeOnSale Boolean @default(false) @map("consume_recipe_on_sale")
+  /**
+   * Destino de comanda / KDS: cocina, bar, café o panadería.
+   * Pantalla «Cafetería» agrupa coffee + bar + bakery; «Cocina» solo kitchen.
+   * null = inferir por nombre de categoría en el POS (comportamiento anterior).
+   */
+  preparationSector String? @map("preparation_sector")
   isActive     Boolean  @default(true) @map("is_active")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")

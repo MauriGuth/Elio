@@ -1,4 +1,5 @@
 import { api, getApiUrl, getUserKey } from '../api';
+import { getPosGeolocationPosition, geolocationErrorMessage } from '../pos-geolocation';
 
 /** Clave y validez de coordenadas GPS guardadas al permitir ubicación en /pos */
 const POS_GPS_STORAGE_KEY = 'elio_pos_gps_coords';
@@ -66,41 +67,33 @@ export const authApi = {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       throw new Error('Tu navegador no soporta ubicación. Probá desde otro dispositivo.');
     }
-    return new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          loginRequest({
-            ...data,
-            latitude: pos.coords.latitude,
-            longitude: pos.coords.longitude,
-          })
-            .then(({ response: res2, body: body2 }) => {
-              if (res2.ok) {
-                const loginBody2 = body2 as LoginResponse;
-                api.setToken(loginBody2.access_token);
-                if (typeof window !== 'undefined') {
-                  localStorage.setItem(getUserKey(), JSON.stringify(loginBody2.user));
-                }
-                resolve(loginBody2);
-              } else {
-                const err2 = body2 as { message?: string };
-                reject(new Error(err2?.message ?? 'Error al verificar ubicación.'));
-              }
-            })
-            .catch(reject);
-        },
-        (err: GeolocationPositionError) => {
-          if (err.code === 1) {
-            reject(new Error('Tenés que permitir la ubicación para ingresar.'));
-          } else if (err.code === 3) {
-            reject(new Error('Se acabó el tiempo. Intentá de nuevo y permití la ubicación.'));
-          } else {
-            reject(new Error('No se pudo obtener la ubicación. Revisá que esté permitida.'));
-          }
-        },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
-      );
+    let pos: GeolocationPosition;
+    try {
+      pos = await getPosGeolocationPosition();
+    } catch (err) {
+      const msg =
+        err instanceof Object && 'code' in err && typeof (err as GeolocationPositionError).code === 'number'
+          ? geolocationErrorMessage(err as GeolocationPositionError)
+          : err instanceof Error
+            ? err.message
+            : 'No se pudo obtener la ubicación.';
+      throw new Error(msg);
+    }
+    const { response: res2, body: body2 } = await loginRequest({
+      ...data,
+      latitude: pos.coords.latitude,
+      longitude: pos.coords.longitude,
     });
+    if (res2.ok) {
+      const loginBody2 = body2 as LoginResponse;
+      api.setToken(loginBody2.access_token);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(getUserKey(), JSON.stringify(loginBody2.user));
+      }
+      return loginBody2;
+    }
+    const err2 = body2 as { message?: string };
+    throw new Error(err2?.message ?? 'Error al verificar ubicación.');
   },
 
   login: async (data: LoginRequest): Promise<LoginResponse> => {
