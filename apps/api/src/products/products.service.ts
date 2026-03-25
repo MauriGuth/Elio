@@ -48,7 +48,8 @@ export class ProductsService {
     }
 
     if (filters.categoryId === 'none') {
-      where.categoryId = null;
+      // "Sin categoría": productos cuya categoría fue eliminada (soft-deleted)
+      where.category = { isActive: false };
     } else if (filters.categoryId) {
       where.categoryId = filters.categoryId;
     }
