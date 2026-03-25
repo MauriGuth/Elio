@@ -579,15 +579,21 @@ function formatCuitDisplay(value: string): string {
   return `${digits.slice(0, 2)}-${digits.slice(2, 10)}-${digits.slice(10)}`
 }
 
+/** Texto categoría+nombre sin acentos para matchear rubros (café, cóctel, tazón, etc.). */
+function foldSectorHay(product: any): string {
+  const raw = `${product.category?.name || ""} ${product.name || ""}`
+  return raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+}
+
 /** Inferencia por categoría y nombre (si no hay `preparationSector` en el producto). */
 function inferSectorFromCategory(product: any): PendingItem["sector"] {
-  const catName = (product.category?.name || "").toLowerCase()
-  const prodName = (product.name || "").toLowerCase()
-  const hay = `${catName} ${prodName}`
-  // Café / bebida caliente / café helado / tragos con café (nombre o rubro)
+  const hay = foldSectorHay(product)
+  // Café: bebidas de café + formatos de taza (pocillo, jarrito, doble, tazón, etc.)
   if (
     hay.includes("cafe") ||
-    hay.includes("café") ||
     hay.includes("coffee") ||
     hay.includes("bebida caliente") ||
     hay.includes("infusi") ||
@@ -597,7 +603,11 @@ function inferSectorFromCategory(product: any): PendingItem["sector"] {
     hay.includes("machiato") ||
     hay.includes("machiatto") ||
     hay.includes("macchiato") ||
-    hay.includes("moka")
+    hay.includes("moka") ||
+    hay.includes("pocillo") ||
+    hay.includes("jarrito") ||
+    hay.includes("tazon") ||
+    /\bdoble\b/.test(hay)
   ) {
     return "coffee"
   }
@@ -608,7 +618,7 @@ function inferSectorFromCategory(product: any): PendingItem["sector"] {
     hay.includes("cerveza") ||
     hay.includes("vino") ||
     hay.includes("cocktail") ||
-    hay.includes("cóctel") ||
+    hay.includes("coctel") ||
     hay.includes("gaseosa") ||
     hay.includes("jugo") ||
     hay.includes("agua") ||
@@ -621,7 +631,7 @@ function inferSectorFromCategory(product: any): PendingItem["sector"] {
     hay.includes("medialuna") ||
     hay.includes("factura") ||
     hay.includes("croissant") ||
-    /\bpan\b/i.test(hay) ||
+    /\bpan\b/.test(hay) ||
     hay.includes("panader") ||
     hay.includes("pastel") ||
     hay.includes("postre") ||
@@ -629,8 +639,8 @@ function inferSectorFromCategory(product: any): PendingItem["sector"] {
     hay.includes("torta") ||
     hay.includes("brownie") ||
     hay.includes("galletita") ||
-    hay.includes("repostería") ||
-    hay.includes("panadería")
+    hay.includes("reposteria") ||
+    hay.includes("panaderia")
   ) {
     return "bakery"
   }
