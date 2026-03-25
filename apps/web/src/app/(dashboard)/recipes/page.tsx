@@ -89,6 +89,9 @@ export default function RecipesPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [deletingRecipeId, setDeletingRecipeId] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false)
   const [productOutputSearch, setProductOutputSearch] = useState("")
   const [productOutputDropdownOpen, setProductOutputDropdownOpen] = useState(false)
   const [openIngredientDropdownIndex, setOpenIngredientDropdownIndex] = useState<number | null>(null)
@@ -610,6 +613,21 @@ export default function RecipesPage() {
     [fetchRecipes]
   )
 
+  const handleBulkDelete = async () => {
+    setBulkDeleting(true)
+    try {
+      await Promise.all([...selectedIds].map((id) => recipesApi.delete(id)))
+      sileo.success({ title: `${selectedIds.size} receta${selectedIds.size !== 1 ? "s" : ""} eliminada${selectedIds.size !== 1 ? "s" : ""}` })
+      setBulkDeleteConfirm(false)
+      setSelectedIds(new Set())
+      await fetchRecipes()
+    } catch (err: any) {
+      sileo.error({ title: err.message || "Error al eliminar" })
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
   const filtered = useMemo(() => {
     const base = searchQuery
       ? recipes.filter(
@@ -742,10 +760,47 @@ export default function RecipesPage() {
         </div>
       ) : (
         <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+          {/* Barra de acciones bulk */}
+          {selectedIds.size > 0 && (
+            <div className="flex items-center justify-between gap-4 border-b border-gray-200 dark:border-gray-700 bg-blue-50 dark:bg-blue-900/20 px-4 py-2.5">
+              <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                {selectedIds.size} receta{selectedIds.size !== 1 ? "s" : ""} seleccionada{selectedIds.size !== 1 ? "s" : ""}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedIds(new Set())}
+                  className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700"
+                >
+                  Deseleccionar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBulkDeleteConfirm(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Eliminar seleccionadas
+                </button>
+              </div>
+            </div>
+          )}
           <div className="overflow-x-auto">
             <table className="min-w-[720px] w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+                  <th className="w-10 px-3 py-3">
+                    <input
+                      type="checkbox"
+                      checked={filtered.length > 0 && filtered.every((r) => selectedIds.has(r.id))}
+                      onChange={(e) => {
+                        if (e.target.checked) setSelectedIds(new Set(filtered.map((r) => r.id)))
+                        else setSelectedIds(new Set())
+                      }}
+                      className="h-4 w-4 rounded border-gray-300 accent-blue-600"
+                      aria-label="Seleccionar todas"
+                    />
+                  </th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600 dark:text-white">Receta</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600 dark:text-white">Producto de salida</th>
                   <th className="px-4 py-3 text-center font-medium text-gray-600 dark:text-white">Ingredientes</th>
@@ -755,7 +810,7 @@ export default function RecipesPage() {
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-4 py-12 text-center text-gray-500 dark:text-gray-400">
+                    <td colSpan={5} className="px-4 py-12 text-center text-gray-500 dark:text-gray-400">
                       No hay recetas
                     </td>
                   </tr>
@@ -763,8 +818,23 @@ export default function RecipesPage() {
                   filtered.map((recipe) => {
                     const hasOutput = !!(recipe.productId || recipe.product?.id)
                     const ingCount = recipe._count?.ingredients ?? recipe.ingredients?.length ?? 0
+                    const isSelected = selectedIds.has(recipe.id)
                     return (
-                      <tr key={recipe.id} className="border-b border-gray-100 dark:border-gray-700 transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                      <tr key={recipe.id} className={cn("border-b border-gray-100 dark:border-gray-700 transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50", isSelected && "bg-blue-50/50 dark:bg-blue-900/10")}>
+                        <td className="px-3 py-3">
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => {
+                              const next = new Set(selectedIds)
+                              if (e.target.checked) next.add(recipe.id)
+                              else next.delete(recipe.id)
+                              setSelectedIds(next)
+                            }}
+                            className="h-4 w-4 rounded border-gray-300 accent-blue-600"
+                            aria-label={`Seleccionar ${recipe.name}`}
+                          />
+                        </td>
                         <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">{recipe.name}</td>
                         <td className="px-4 py-3">
                           <span className={cn(hasOutput ? "text-gray-900 dark:text-white" : "text-gray-400 dark:text-gray-400")}>
@@ -806,6 +876,38 @@ export default function RecipesPage() {
             </table>
           </div>
         </div>
+
+        {/* Modal confirmación bulk delete */}
+        {bulkDeleteConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/50" aria-hidden onClick={() => !bulkDeleting && setBulkDeleteConfirm(false)} />
+            <div className="relative w-full max-w-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 shadow-xl">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Eliminar recetas</h3>
+              <p className="text-sm text-gray-600 dark:text-gray-300 mb-6">
+                ¿Eliminás las <strong>{selectedIds.size}</strong> recetas seleccionadas? Esta acción no se puede deshacer.
+              </p>
+              <div className="flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setBulkDeleteConfirm(false)}
+                  disabled={bulkDeleting}
+                  className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkDelete}
+                  disabled={bulkDeleting}
+                  className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  {bulkDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  Eliminar {selectedIds.size} receta{selectedIds.size !== 1 ? "s" : ""}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       )}
 
       {/* Modal crear / editar */}
