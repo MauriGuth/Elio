@@ -12,6 +12,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:railway:fix-failed-init-once": "prisma migrate resolve --rolled-back 20260210000000_init && prisma migrate resolve --applied 20260210000000_init && prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "seed": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/seed.ts",
     "prisma:clear-products": "ts-node --compiler-options '{\"module\":\"CommonJS\"}' prisma/scripts/delete-products-suppliers-recipes.ts",
