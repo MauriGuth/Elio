@@ -759,6 +759,7 @@ export default function RecipesPage() {
           <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
         </div>
       ) : (
+        <>
         <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
           {/* Barra de acciones bulk */}
           {selectedIds.size > 0 && (
@@ -908,6 +909,7 @@ export default function RecipesPage() {
             </div>
           </div>
         )}
+        </>
       )}
 
       {/* Modal crear / editar */}
