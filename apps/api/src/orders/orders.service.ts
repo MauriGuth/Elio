@@ -27,6 +27,54 @@ export class OrdersService {
     private readonly arcaFiscalService: ArcaFiscalService,
   ) {}
 
+  /** YYYYMMDD en hora local (mismo criterio que el rango todayStart/todayEnd del count). */
+  private static localDateCompactYmd(d: Date): string {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}${m}${day}`;
+  }
+
+  private static databaseIsPostgres(): boolean {
+    const u = process.env.DATABASE_URL ?? '';
+    return u.startsWith('postgresql:') || u.startsWith('postgres://');
+  }
+
+  /** Clave estable para `pg_advisory_xact_lock` (un solo contador por día local). */
+  private static advisoryLockKeyForOrderSeq(dateStr: string): number {
+    let h = 0;
+    for (const c of `elio:order-seq:${dateStr}`) {
+      h = (Math.imul(31, h) + c.charCodeAt(0)) | 0;
+    }
+    return h === 0 ? 1 : h;
+  }
+
+  /**
+   * Siguiente `ORD-YYYYMMDD-NNN` leyendo el máximo ya guardado (huecos por borrados OK).
+   * Solo filtra por prefijo de `order_number` (no por `createdAt`): si filtráramos por día local,
+   * pedidos con el mismo prefijo pero `createdAt` en UTC en otro “día” quedarían fuera y repetiríamos número (P2002).
+   * Debe llamarse **dentro** de la misma transacción que el `order.create`, tras advisory lock en Postgres.
+   */
+  private async allocateNextOrderNumberInTx(
+    tx: Prisma.TransactionClient,
+    dateStr: string,
+  ): Promise<string> {
+    const prefix = `ORD-${dateStr}-`;
+    const rows = await tx.order.findMany({
+      where: { orderNumber: { startsWith: prefix } },
+      select: { orderNumber: true },
+    });
+    let maxSeq = 0;
+    for (const { orderNumber } of rows) {
+      const m = orderNumber.match(/^ORD-\d{8}-(\d+)/);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (Number.isFinite(n)) maxSeq = Math.max(maxSeq, n);
+      }
+    }
+    return `${prefix}${String(maxSeq + 1).padStart(3, '0')}`;
+  }
+
   async findAll(filters: {
     locationId?: string;
     status?: string;
@@ -148,24 +196,9 @@ export class OrdersService {
   }
 
   async create(data: CreateOrderDto, userId: string) {
-    // Generate order number: ORD-YYYYMMDD-XXX
     const today = new Date();
-    const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
-    const todayStart = new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      today.getDate(),
-    );
-    const todayEnd = new Date(todayStart.getTime() + 86400000);
+    const dateStr = OrdersService.localDateCompactYmd(today);
 
-    const todayCount = await this.prisma.order.count({
-      where: {
-        createdAt: { gte: todayStart, lt: todayEnd },
-      },
-    });
-    const orderNumber = `ORD-${dateStr}-${String(todayCount + 1).padStart(3, '0')}`;
-
-    // Calculate subtotal from items
     const subtotal = data.items.reduce(
       (sum, item) => sum + item.unitPrice * item.quantity,
       0,
@@ -194,6 +227,13 @@ export class OrdersService {
     }
 
     return this.prisma.$transaction(async (tx) => {
+      if (OrdersService.databaseIsPostgres()) {
+        await tx.$executeRaw(
+          Prisma.sql`SELECT pg_advisory_xact_lock(${OrdersService.advisoryLockKeyForOrderSeq(dateStr)})`,
+        );
+      }
+      const orderNumber = await this.allocateNextOrderNumberInTx(tx, dateStr);
+
       const order = await tx.order.create({
         data: {
           locationId: data.locationId,
@@ -238,7 +278,6 @@ export class OrdersService {
         },
       });
 
-      // If tableId provided, update table status to 'occupied'
       if (data.tableId) {
         await tx.table.update({
           where: { id: data.tableId },

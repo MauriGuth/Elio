@@ -47,6 +47,64 @@ import {
   FileCheck,
 } from "lucide-react"
 
+/**
+ * Impresión térmica ~80 mm: @page + ancho útil 72 mm, tipografía compacta.
+ * Chrome/Edge suelen respetar `size: 80mm auto`; si no, el ancho en mm del bloque ayuda igual.
+ */
+const THERMAL_RECEIPT_PRINT_CSS = `
+@media print {
+  @page { size: 80mm auto; margin: 2mm; }
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  body * { visibility: hidden !important; }
+  .pre-cierre-print-content, .pre-cierre-print-content *,
+  .cierre-receipt-print-content, .cierre-receipt-print-content * {
+    visibility: visible !important;
+  }
+  .pre-cierre-print-content,
+  .cierre-receipt-print-content {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 72mm !important;
+    max-width: 72mm !important;
+    margin: 0 !important;
+    padding: 1mm 2mm 3mm !important;
+    background: #fff !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    font-size: 10pt !important;
+    line-height: 1.2 !important;
+    color: #000 !important;
+  }
+  .thermal-print-title { font-size: 11pt !important; font-weight: 700 !important; margin: 0 0 2px !important; }
+  .thermal-print-meta { font-size: 8.5pt !important; color: #222 !important; margin: 0 0 2px !important; }
+  .thermal-print-lead { font-size: 9pt !important; margin: 0 0 6px !important; }
+  .thermal-print-table { width: 100% !important; border-collapse: collapse !important; font-size: 8.5pt !important; }
+  .thermal-print-table th, .thermal-print-table td {
+    padding: 1px 0 !important;
+    vertical-align: top !important;
+    word-break: break-word !important;
+    hyphens: auto !important;
+  }
+  .thermal-print-table thead th { border-bottom: 1px solid #000 !important; font-weight: 600 !important; }
+  .thermal-print-table tbody tr { border-bottom: 1px solid #ddd !important; }
+  .thermal-print-col-qty { width: 7mm !important; text-align: center !important; white-space: nowrap !important; }
+  .thermal-print-col-pu { width: 15mm !important; text-align: right !important; font-variant-numeric: tabular-nums !important; }
+  .thermal-print-col-total { width: 18mm !important; text-align: right !important; font-variant-numeric: tabular-nums !important; }
+  .thermal-print-discount { font-size: 8.5pt !important; margin: 4px 0 0 !important; }
+  .thermal-print-total { font-size: 10.5pt !important; font-weight: 700 !important; margin: 6px 0 0 !important; }
+  .thermal-print-pay { font-size: 9pt !important; margin: 2px 0 0 !important; }
+  .thermal-print-foot { font-size: 7.5pt !important; color: #333 !important; margin: 8px 0 0 !important; }
+  .no-print { display: none !important; }
+}
+`.trim()
+
 /* ── Types ── */
 interface PendingItem {
   tempId: string
@@ -1978,9 +2036,11 @@ export default function TableOrderPage() {
       setPendingItems([])
       await fetchData()
       sileo.success({ title: "Pedido enviado a cocina" })
-    } catch {
-      setError("Error al enviar pedido")
-      sileo.error({ title: "Error al enviar pedido" })
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Error al enviar pedido"
+      setError(msg)
+      sileo.error({ title: "Error al enviar pedido", description: msg })
     } finally {
       setSending(false)
     }
@@ -3180,24 +3240,24 @@ export default function TableOrderPage() {
           ═══════════════════════════════════ */}
       {showPreCierreModal && order && table && (
         <>
-          <style dangerouslySetInnerHTML={{ __html: `@media print { body * { visibility: hidden; } .pre-cierre-print-content, .pre-cierre-print-content * { visibility: visible; } .pre-cierre-print-content { position: absolute; left: 0; top: 0; width: 100%; max-width: 100%; background: white; padding: 24px; } .no-print { display: none !important; } }` }} />
+          <style dangerouslySetInnerHTML={{ __html: THERMAL_RECEIPT_PRINT_CSS }} />
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
             <div className="pre-cierre-print-content max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
-              <h1 className="text-lg font-bold text-gray-900">Pre cierre de control</h1>
-              <p className="mt-1 text-sm text-gray-500">
+              <h1 className="thermal-print-title text-lg font-bold text-gray-900">Pre cierre de control</h1>
+              <p className="thermal-print-meta mt-1 text-sm text-gray-500">
                 {/^\d+$/.test(String(table.name ?? "")) ? `Mesa ${table.name}` : table.name} · Pedido #{order.orderNumber ?? order.id}
               </p>
-              <p className="text-sm text-gray-500">
+              <p className="thermal-print-meta text-sm text-gray-500">
                 {new Date().toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" })}
               </p>
-              <p className="mb-4 text-sm text-gray-600">Verifique la cuenta antes del pago.</p>
-              <table className="w-full border-collapse text-sm">
+              <p className="thermal-print-lead mb-4 text-sm text-gray-600">Verifique la cuenta antes del pago.</p>
+              <table className="thermal-print-table w-full border-collapse text-sm">
                 <thead>
                   <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
                     <th className="pb-2">Producto</th>
-                    <th className="pb-2 w-12">Cant.</th>
-                    <th className="pb-2 w-20">P.unit</th>
-                    <th className="pb-2 text-right w-24">Total</th>
+                    <th className="thermal-print-col-qty pb-2">Cant.</th>
+                    <th className="thermal-print-col-pu pb-2">P.unit</th>
+                    <th className="thermal-print-col-total pb-2 text-right">Total</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3208,29 +3268,29 @@ export default function TableOrderPage() {
                     return (
                       <tr key={i.id} className="border-b border-gray-100">
                         <td className="py-2">{i.productName ?? i.product?.name ?? "Ítem"}</td>
-                        <td className="py-2">{qty}</td>
-                        <td className="py-2">{formatCurrency(up)}</td>
-                        <td className="py-2 text-right">{formatCurrency(total)}</td>
+                        <td className="thermal-print-col-qty py-2">{qty}</td>
+                        <td className="thermal-print-col-pu py-2">{formatCurrency(up)}</td>
+                        <td className="thermal-print-col-total py-2 text-right">{formatCurrency(total)}</td>
                       </tr>
                     )
                   })}
                   {pendingItems.map((p) => (
                     <tr key={p.tempId} className="border-b border-gray-100">
                       <td className="py-2">{p.productName}</td>
-                      <td className="py-2">{p.quantity}</td>
-                      <td className="py-2">{formatCurrency(p.unitPrice)}</td>
-                      <td className="py-2 text-right">{formatCurrency(p.unitPrice * p.quantity)}</td>
+                      <td className="thermal-print-col-qty py-2">{p.quantity}</td>
+                      <td className="thermal-print-col-pu py-2">{formatCurrency(p.unitPrice)}</td>
+                      <td className="thermal-print-col-total py-2 text-right">{formatCurrency(p.unitPrice * p.quantity)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
               {discount > 0 && (
-                <p className="mt-2 text-sm text-blue-700">Descuento: -{formatCurrency(discount)}</p>
+                <p className="thermal-print-discount mt-2 text-sm text-blue-700">Descuento: -{formatCurrency(discount)}</p>
               )}
-              <p className="mt-3 text-base font-bold text-gray-900">
+              <p className="thermal-print-total mt-3 text-base font-bold text-gray-900">
                 Total: {formatCurrency(Math.max(0, orderTotal))}
               </p>
-              <p className="mt-4 text-xs text-gray-500">Documento de verificación. No es ticket de pago.</p>
+              <p className="thermal-print-foot mt-4 text-xs text-gray-500">Documento de verificación. No es ticket de pago.</p>
               <p className="no-print mt-2 text-xs text-gray-500">Se abrió el cuadro de impresión. Elegí la impresora y confirmá.</p>
               <div className="no-print mt-4 flex gap-3">
                 <button
@@ -3262,24 +3322,24 @@ export default function TableOrderPage() {
           ═══════════════════════════════════ */}
       {showCierreReceiptModal && closedOrderSnapshot && (
         <>
-          <style dangerouslySetInnerHTML={{ __html: `@media print { body * { visibility: hidden; } .cierre-receipt-print-content, .cierre-receipt-print-content * { visibility: visible; } .cierre-receipt-print-content { position: absolute; left: 0; top: 0; width: 100%; max-width: 100%; background: white; padding: 24px; } .no-print { display: none !important; } }` }} />
+          <style dangerouslySetInnerHTML={{ __html: THERMAL_RECEIPT_PRINT_CSS }} />
           <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
             <div className="cierre-receipt-print-content max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
-              <h1 className="text-lg font-bold text-gray-900">Comprobante de cierre</h1>
-              <p className="mt-1 text-sm text-gray-500">
+              <h1 className="thermal-print-title text-lg font-bold text-gray-900">Comprobante de cierre</h1>
+              <p className="thermal-print-meta mt-1 text-sm text-gray-500">
                 {closedOrderSnapshot.tableName} · Pedido #{closedOrderSnapshot.orderNumber}
               </p>
-              <p className="text-sm text-gray-500">
+              <p className="thermal-print-meta text-sm text-gray-500">
                 {new Date().toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" })}
               </p>
-              <p className="mb-4 text-sm font-medium text-emerald-700">Cuenta cerrada</p>
-              <table className="w-full border-collapse text-sm">
+              <p className="thermal-print-lead mb-4 text-sm font-medium text-emerald-700">Cuenta cerrada</p>
+              <table className="thermal-print-table w-full border-collapse text-sm">
                 <thead>
                   <tr className="border-b border-gray-200 text-left text-xs text-gray-500">
                     <th className="pb-2">Producto</th>
-                    <th className="pb-2 w-12">Cant.</th>
-                    <th className="pb-2 w-20">P.unit</th>
-                    <th className="pb-2 text-right w-24">Total</th>
+                    <th className="thermal-print-col-qty pb-2">Cant.</th>
+                    <th className="thermal-print-col-pu pb-2">P.unit</th>
+                    <th className="thermal-print-col-total pb-2 text-right">Total</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3290,22 +3350,22 @@ export default function TableOrderPage() {
                     return (
                       <tr key={i.id} className="border-b border-gray-100">
                         <td className="py-2">{i.productName ?? i.product?.name ?? "Ítem"}</td>
-                        <td className="py-2">{qty}</td>
-                        <td className="py-2">{formatCurrency(up)}</td>
-                        <td className="py-2 text-right">{formatCurrency(total)}</td>
+                        <td className="thermal-print-col-qty py-2">{qty}</td>
+                        <td className="thermal-print-col-pu py-2">{formatCurrency(up)}</td>
+                        <td className="thermal-print-col-total py-2 text-right">{formatCurrency(total)}</td>
                       </tr>
                     )
                   })}
                 </tbody>
               </table>
               {closedOrderSnapshot.discount > 0 && (
-                <p className="mt-2 text-sm text-blue-700">Descuento: -{formatCurrency(closedOrderSnapshot.discount)}</p>
+                <p className="thermal-print-discount mt-2 text-sm text-blue-700">Descuento: -{formatCurrency(closedOrderSnapshot.discount)}</p>
               )}
-              <p className="mt-3 text-base font-bold text-gray-900">
+              <p className="thermal-print-total mt-3 text-base font-bold text-gray-900">
                 Total: {formatCurrency(Math.max(0, closedOrderSnapshot.total))}
               </p>
-              <p className="mt-1 text-sm text-gray-600">Pago: {closedOrderSnapshot.paymentMethod}</p>
-              <p className="mt-4 text-xs text-gray-500">Comprobante de cierre de cuenta.</p>
+              <p className="thermal-print-pay mt-1 text-sm text-gray-600">Pago: {closedOrderSnapshot.paymentMethod}</p>
+              <p className="thermal-print-foot mt-4 text-xs text-gray-500">Comprobante de cierre de cuenta.</p>
               <p className="no-print mt-2 text-xs text-gray-500">Se abrió el cuadro de impresión. Elegí la impresora y confirmá.</p>
               <div className="no-print mt-4 flex gap-3">
                 <button
