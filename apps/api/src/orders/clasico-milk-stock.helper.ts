@@ -197,6 +197,8 @@ function modifierGroupNameIsMilkType(name: string | null | undefined): boolean {
   const n = normName(name);
   if (n.includes('tipo de leche')) return true;
   if (/\btipo leche\b/.test(n)) return true;
+  /** Títulos POS tipo «LECHE *» sin la palabra «tipo». */
+  if (/^leche\b/.test(n)) return true;
   return false;
 }
 
@@ -242,10 +244,25 @@ export async function isClasicoFormatProduct(
 }
 
 /**
- * Grupo de preparación (café solo / con leche / …): nombre con «preparación».
- * En take / algunos catálogos el grupo puede tener `visibilityRule`; antes solo se miraban
- * grupos sin regla y no se sustituía leche → el stock quedaba en «TIPO DE LECHE».
+ * Grupo elegido en POS (café solo / con leche / jarrito…): por nombre o por formato clásico.
+ * Si todos los grupos tienen `visibilityRule`, el fallback «sin regla» quedaba vacío y no había
+ * sustitución leche/grano (stock en TIPO DE LECHE / CAFE genérico).
  */
+function groupNameSuggestsPreparationChoice(name: string | null | undefined): boolean {
+  const n = normName(name);
+  if (n.includes('preparacion') || n.includes('preparation')) return true;
+  if (preparationGroupIsClasicoFormat(name)) return true;
+  if (
+    n.includes('pocillo') ||
+    n.includes('jarrito') ||
+    n.includes('tazon') ||
+    n.includes('doble')
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function pickPreparationModifierGroup(
   groups: Array<{
     id: string;
@@ -254,11 +271,19 @@ function pickPreparationModifierGroup(
     visibilityRule: Prisma.JsonValue | null;
   }>,
 ): (typeof groups)[0] | undefined {
+  if (groups.length === 0) return undefined;
   const sorted = [...groups].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
-  const byPrepName = sorted.filter((g) => normName(g.name).includes('preparacion'));
-  if (byPrepName.length > 0) return byPrepName[0];
+  const byPrepHint = sorted.filter((g) => groupNameSuggestsPreparationChoice(g.name));
+  if (byPrepHint.length > 0) return byPrepHint[0];
   const noRule = sorted.filter((g) => g.visibilityRule == null);
-  return noRule[0];
+  if (noRule.length > 0) return noRule[0];
+  const notMilkNotBean = sorted.filter(
+    (g) =>
+      !modifierGroupNameIsMilkType(g.name) &&
+      !modifierGroupNameIsCoffeeBeanChoice(g.name),
+  );
+  if (notMilkNotBean.length > 0) return notMilkNotBean[0];
+  return sorted[0];
 }
 
 /** Receta activa con ingrediente que enlaza el grupo «Tipo de leche» (salón, take, tragos, etc.). */
@@ -352,6 +377,27 @@ async function resolveMilkPickedForClasico(
   return first ? { id: first.id, label: first.label } : null;
 }
 
+/** Receta sin `modifierGroupId` para leche: el grupo igual está en catálogo global / producto. */
+async function resolveMilkPickedFromProductCatalog(
+  tx: Prisma.TransactionClient,
+  sellableProductId: string,
+  norm: Record<string, string[]>,
+): Promise<{ id: string; label: string } | null> {
+  const groups = await tx.productModifierGroup.findMany({
+    where: { OR: [{ productId: sellableProductId }, { productId: null }] },
+    select: { id: true, name: true },
+  });
+  const milkG = groups.find((g) => modifierGroupNameIsMilkType(g.name));
+  if (!milkG) return null;
+  const optIdFromNorm = norm[milkG.id]?.[0];
+  if (!optIdFromNorm) return null;
+  const opt = await tx.productModifierOption.findUnique({
+    where: { id: optIdFromNorm },
+    select: { id: true, label: true },
+  });
+  return opt ? { id: opt.id, label: opt.label } : null;
+}
+
 async function resolveBySkuOrName(
   tx: Prisma.TransactionClient,
   skus: string[],
@@ -423,9 +469,9 @@ export async function applyClasicoMilkTypeSubstitution(
     },
   });
 
-  const milkOptFull =
-    options.find((o) => modifierGroupNameIsMilkType(o.group?.name ?? null)) ??
-    options.find((o) => o.group?.visibilityRule != null);
+  const milkOptFull = options.find((o) =>
+    modifierGroupNameIsMilkType(o.group?.name ?? null),
+  );
 
   let milkPicked: { id: string; label: string } | null = milkOptFull
     ? { id: milkOptFull.id, label: milkOptFull.label }
@@ -433,6 +479,13 @@ export async function applyClasicoMilkTypeSubstitution(
 
   if (!milkPicked) {
     milkPicked = await resolveMilkPickedForClasico(tx, sellableProductId, norm);
+  }
+  if (!milkPicked) {
+    milkPicked = await resolveMilkPickedFromProductCatalog(
+      tx,
+      sellableProductId,
+      norm,
+    );
   }
   if (!milkPicked) return;
 
