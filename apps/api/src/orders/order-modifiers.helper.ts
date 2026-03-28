@@ -25,7 +25,10 @@ export function normalizeModifierSelections(
 }
 
 export type ValidateModifierSelectionsOptions = {
-  /** Si la receta del producto define grupos en ingredientes, solo esos se validan (POS). */
+  /**
+   * Grupos a validar (misma lógica que el POS: receta → ids en ingredientes; sin receta →
+   * solo grupos con product_id explícito). Vacío = el ítem no lleva modificadores obligatorios.
+   */
   onlyValidateGroupIds?: string[];
 };
 
@@ -38,23 +41,21 @@ export async function validateModifierSelections(
   const normalized =
     raw === null || raw === undefined ? null : normalizeModifierSelections(raw);
 
-  const restrict = options?.onlyValidateGroupIds;
-  /** Con IDs de receta: cargar esos grupos aunque legacy tengan otro product_id. Sin filtro: grupos del producto + globales (null). */
-  const groupsAll = await db.productModifierGroup.findMany({
-    where:
-      restrict !== undefined && restrict.length > 0
-        ? { id: { in: restrict } }
-        : {
-            OR: [{ productId }, { productId: null }],
+  const restrict = options?.onlyValidateGroupIds ?? [];
+
+  const groupsAll =
+    restrict.length > 0
+      ? await db.productModifierGroup.findMany({
+          where: { id: { in: restrict } },
+          include: {
+            options: {
+              orderBy: { sortOrder: 'asc' },
+              select: { id: true, label: true },
+            },
           },
-    include: {
-      options: {
-        orderBy: { sortOrder: 'asc' },
-        select: { id: true, label: true },
-      },
-    },
-    orderBy: { sortOrder: 'asc' },
-  });
+          orderBy: { sortOrder: 'asc' },
+        })
+      : [];
 
   if (groupsAll.length === 0) {
     if (normalized && Object.keys(normalized).length > 0) {
@@ -63,20 +64,14 @@ export async function validateModifierSelections(
     return null;
   }
 
-  /** `[]` = la receta no exige ningún grupo (ej. variantes ocultas por exclusión de ingrediente) */
-  const allowed =
-    restrict !== undefined ? new Set(restrict) : null;
+  const allowed = new Set(restrict);
 
-  /** Con receta: mismo orden que ingredientes (`restrict`); sin receta: sortOrder del catálogo. */
   const byGroupId = new Map(groupsAll.map((g) => [g.id, g]));
-  const groups =
-    restrict != null && restrict.length > 0
-      ? restrict
-          .map((id) => byGroupId.get(id))
-          .filter((g): g is (typeof groupsAll)[number] => Boolean(g))
-      : groupsAll;
+  const groups = restrict
+    .map((id) => byGroupId.get(id))
+    .filter((g): g is (typeof groupsAll)[number] => Boolean(g));
 
-  if (allowed && normalized) {
+  if (normalized) {
     for (const key of Object.keys(normalized)) {
       if (!allowed.has(key)) {
         throw new BadRequestException(
@@ -101,8 +96,8 @@ export async function validateModifierSelections(
   const selections: Record<string, string[]> = {};
   if (normalized) {
     for (const [k, v] of Object.entries(normalized)) {
-      if (!allowed || allowed.has(k)) {
-        if (visibleIds.has(k)) selections[k] = v;
+      if (allowed.has(k) && visibleIds.has(k)) {
+        selections[k] = v;
       }
     }
   }

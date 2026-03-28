@@ -25,6 +25,7 @@ export class ProductsService {
     search?: string;
     categoryId?: string;
     familia?: string;
+    supplierId?: string;
     isActive?: boolean;
     isSellable?: boolean;
     isIngredient?: boolean;
@@ -50,6 +51,14 @@ export class ProductsService {
           { barcode: { contains: filters.search, mode: 'insensitive' } },
           { description: { contains: filters.search, mode: 'insensitive' } },
         ],
+      });
+    }
+
+    const supplierIdParam =
+      typeof filters.supplierId === 'string' ? filters.supplierId.trim() : '';
+    if (supplierIdParam) {
+      andParts.push({
+        productSuppliers: { some: { supplierId: supplierIdParam } },
       });
     }
 

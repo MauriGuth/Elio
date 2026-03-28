@@ -73,12 +73,74 @@ export async function getRecipePosContext(
     }
   }
 
-  const ingredients: RecipePosIngredientRow[] = ingredientsRows.map((r) => ({
-    id: r.id,
-    productId: r.productId,
-    name: r.product?.name ?? 'Producto',
-    modifierGroupId: r.modifierGroupId,
-  }));
+  /**
+   * Productos que no deben listarse en «Incluye» (solo receta base del plato vendible):
+   * - insumos ligados a opciones del POS (`product_modifier_stock_line`);
+   * - insumos base de la receta activa de cada producto en filas con `modifierGroupId`
+   *   (ej. semi-elaborado «tostadas» en la receta del desayuno → harina/leche van ahí, no al checklist del desayuno).
+   */
+  const baseChecklistExcludeProductIds = new Set<string>();
+  if (modifierGroupIds.length > 0) {
+    const options = await prisma.productModifierOption.findMany({
+      where: { groupId: { in: modifierGroupIds } },
+      select: { id: true },
+    });
+    const optionIds = options.map((o: { id: string }) => o.id);
+    if (optionIds.length > 0) {
+      const stockLines = await prisma.productModifierStockLine.findMany({
+        where: { optionId: { in: optionIds } },
+        select: { productId: true },
+      });
+      for (const line of stockLines) {
+        baseChecklistExcludeProductIds.add(line.productId);
+      }
+    }
+  }
+
+  const variantSlotProductIds = [
+    ...new Set(
+      ingredientsRows
+        .filter((r) => r.modifierGroupId != null)
+        .map((r) => r.productId),
+    ),
+  ];
+  if (variantSlotProductIds.length > 0) {
+    const subRecipeIds = await Promise.all(
+      variantSlotProductIds.map((pid) => findActiveRecipeId(prisma, pid)),
+    );
+    const uniqueSubRecipeIds = [
+      ...new Set(subRecipeIds.filter((id): id is string => id != null)),
+    ];
+    if (uniqueSubRecipeIds.length > 0) {
+      const subBaseIngredients = await prisma.recipeIngredient.findMany({
+        where: {
+          recipeId: { in: uniqueSubRecipeIds },
+          modifierGroupId: null,
+        },
+        select: { productId: true },
+      });
+      for (const row of subBaseIngredients) {
+        baseChecklistExcludeProductIds.add(row.productId);
+      }
+    }
+  }
+
+  const ingredients: RecipePosIngredientRow[] = ingredientsRows
+    .filter((r) => {
+      if (r.modifierGroupId != null) {
+        return true;
+      }
+      if (baseChecklistExcludeProductIds.has(r.productId)) {
+        return false;
+      }
+      return true;
+    })
+    .map((r) => ({
+      id: r.id,
+      productId: r.productId,
+      name: r.product?.name ?? 'Producto',
+      modifierGroupId: r.modifierGroupId,
+    }));
 
   return { recipeId, modifierGroupIds, ingredients };
 }
@@ -183,19 +245,25 @@ export async function getPrepMinutesByProductIdsForLocation(
 }
 
 /**
- * IDs de grupos de modificadores que el POS debe validar para este ítem:
- * los ligados a la receta activa, menos los vinculados a ingredientes excluidos
- * (ej. sin pan → no exigir "Tipo de pan").
- * `undefined` = no filtrar por receta (validar todos los grupos del producto).
+ * IDs de grupos de modificadores que el POS/API deben validar para este ítem.
+ * - Con receta: solo grupos enlazados en ingredientes (orden de la receta), menos los
+ *   ocultos por `excludedRecipeIngredientIds`.
+ * - Receta sin ningún ingrediente con `modifierGroupId`: `[]` (no validar el catálogo global).
+ * - Sin receta: solo grupos con `product_id` = este producto (no los globales `product_id` null).
  */
 export async function getOrderItemRecipeModifierGroupIdsToValidate(
   prisma: PrismaLike,
   productId: string,
   excludedRecipeIngredientIds?: string[] | null,
-): Promise<string[] | undefined> {
+): Promise<string[]> {
   const recipeId = await findActiveRecipeId(prisma, productId);
   if (!recipeId) {
-    return undefined;
+    const productGroups = (await prisma.productModifierGroup.findMany({
+      where: { productId },
+      select: { id: true },
+      orderBy: { sortOrder: 'asc' },
+    })) as Array<{ id: string }>;
+    return productGroups.map((g) => g.id);
   }
 
   const ingredients = (await prisma.recipeIngredient.findMany({
@@ -214,7 +282,7 @@ export async function getOrderItemRecipeModifierGroupIdsToValidate(
     }
   }
   if (baseIds.length === 0) {
-    return undefined;
+    return [];
   }
 
   if (!excludedRecipeIngredientIds?.length) {

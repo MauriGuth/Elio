@@ -60,8 +60,13 @@ export class StockController {
   }
 
   @Get('logistics-summary')
-  getLogisticsSummary(@Query('locationId') locationId?: string) {
-    return this.stockService.getLogisticsSummary(locationId);
+  getLogisticsSummary(
+    @Query('locationId') locationId?: string,
+    @Query('purchaseOnly') purchaseOnly?: string,
+  ) {
+    return this.stockService.getLogisticsSummary(locationId, {
+      purchaseOnly: purchaseOnly === 'true' || purchaseOnly === '1',
+    });
   }
 
   @Post('adjust')

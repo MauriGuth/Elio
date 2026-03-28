@@ -3,7 +3,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { CreateMovementDto } from './dto/create-movement.dto';
 import { UpdateLevelDto } from './dto/update-level.dto';
-import { Prisma } from '../../generated/prisma';
+import { LocationType, Prisma } from '../../generated/prisma';
+import { isCategorySlugAllowedForPurchaseOrders } from '../common/purchase-order-category';
 
 @Injectable()
 export class StockService {
@@ -302,10 +303,19 @@ export class StockService {
   /**
    * Resumen para logística: por local/depósito, productos con stock crítico o bajo,
    * sugerencia de pedido (mín/máx y por demanda) y ventas/consumo real (últimos 7 y 30 días).
+   * Sin locationId: solo locales de negocio (excluye depósito — el depósito es origen de reposición).
+   * @param purchaseOnly Si true, solo filas cuya categoría sea tipo producto o insumo (pedidos de compra).
    */
-  async getLogisticsSummary(locationId?: string) {
+  async getLogisticsSummary(
+    locationId?: string,
+    options?: { purchaseOnly?: boolean },
+  ) {
     const where: Prisma.StockLevelWhereInput = {};
-    if (locationId) where.locationId = locationId;
+    if (locationId) {
+      where.locationId = locationId;
+    } else {
+      where.location = { type: { not: LocationType.WAREHOUSE } };
+    }
 
     const levels = await this.prisma.stockLevel.findMany({
       where,
@@ -317,8 +327,9 @@ export class StockService {
             sku: true,
             unit: true,
             avgCost: true,
+            familia: true,
             categoryId: true,
-            category: { select: { name: true } },
+            category: { select: { name: true, slug: true } },
             productSuppliers: {
               where: { supplier: { isActive: true } },
               take: 1,
@@ -344,7 +355,11 @@ export class StockService {
       type: 'sale',
       createdAt: { gte: last30 },
     };
-    if (locationId) movementWhere.locationId = locationId;
+    if (locationId) {
+      movementWhere.locationId = locationId;
+    } else {
+      movementWhere.location = { type: { not: LocationType.WAREHOUSE } };
+    }
 
     const salesMovements = await this.prisma.stockMovement.findMany({
       where: movementWhere,
@@ -366,7 +381,9 @@ export class StockService {
     const pendingShipments = await this.prisma.shipment.findMany({
       where: {
         status: { in: ['prepared', 'dispatched', 'in_transit', 'reception_control'] },
-        ...(locationId && { destinationId: locationId }),
+        ...(locationId
+          ? { destinationId: locationId }
+          : { destination: { type: { not: LocationType.WAREHOUSE } } }),
       },
       select: { destinationId: true, items: { select: { productId: true, sentQty: true } } },
     });
@@ -387,7 +404,8 @@ export class StockService {
         sku: string | null;
         unit: string;
         avgCost: number;
-        category?: { name: string } | null;
+        familia?: string | null;
+        category?: { name: string; slug: string } | null;
         productSuppliers?: Array<{ supplier: { id: string; name: string } }>;
       };
       locationId: string;
@@ -402,7 +420,17 @@ export class StockService {
       suggestedOrderQtyByDemand: number;
     }> = [];
 
+    const purchaseOnly = options?.purchaseOnly === true;
+
     for (const sl of levels) {
+      const catSlug = (sl.product as { category?: { slug?: string } | null })
+        ?.category?.slug;
+      if (
+        purchaseOnly &&
+        !isCategorySlugAllowedForPurchaseOrders(catSlug ?? null)
+      ) {
+        continue;
+      }
       const key = `${sl.productId}:${sl.locationId}`;
       const pendingQty = pendingByKey.get(key) ?? 0;
       const effectiveQty = sl.quantity + pendingQty;
@@ -429,7 +457,8 @@ export class StockService {
           sku: string | null;
           unit: string;
           avgCost: number;
-          category?: { name: string } | null;
+          familia?: string | null;
+          category?: { name: string; slug: string } | null;
           productSuppliers?: Array<{ supplier: { id: string; name: string } }>;
         },
         locationId: sl.locationId,

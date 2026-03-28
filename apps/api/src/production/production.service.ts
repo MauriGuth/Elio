@@ -115,7 +115,14 @@ export class ProductionService {
             orderNumber: true,
             estimatedCost: true,
             plannedQty: true,
-            recipe: { select: { name: true, yieldQty: true, yieldUnit: true } },
+            recipe: {
+              select: {
+                name: true,
+                yieldQty: true,
+                yieldUnit: true,
+                shelfLifeDays: true,
+              },
+            },
             location: { select: { id: true, name: true } },
             items: {
               include: {
@@ -168,6 +175,7 @@ export class ProductionService {
             yieldUnit: true,
             productId: true,
             prepTimeMin: true,
+            shelfLifeDays: true,
             recipeLocations: {
               select: { locationId: true, prepTimeMin: true },
             },
@@ -485,13 +493,29 @@ export class ProductionService {
         : 'completed';
 
     return this.prisma.$transaction(async (tx) => {
+      let outputProductId = order.recipe.productId;
+      if (!outputProductId && order.recipe.name?.trim()) {
+        const byName = await tx.product.findFirst({
+          where: {
+            isActive: true,
+            name: {
+              equals: order.recipe.name.trim(),
+              mode: 'insensitive',
+            },
+          },
+          select: { id: true },
+          orderBy: { updatedAt: 'desc' },
+        });
+        outputProductId = byName?.id ?? null;
+      }
+
       // Create stock movement (production_in) for produced product
-      if (order.recipe.productId) {
+      if (outputProductId) {
         // Increase stock for produced product
         const stockLevel = await tx.stockLevel.findUnique({
           where: {
             productId_locationId: {
-              productId: order.recipe.productId,
+              productId: outputProductId,
               locationId: order.locationId,
             },
           },
@@ -502,7 +526,7 @@ export class ProductionService {
         await tx.stockLevel.upsert({
           where: {
             productId_locationId: {
-              productId: order.recipe.productId,
+              productId: outputProductId,
               locationId: order.locationId,
             },
           },
@@ -510,7 +534,7 @@ export class ProductionService {
             quantity: currentQty + data.actualQty,
           },
           create: {
-            productId: order.recipe.productId,
+            productId: outputProductId,
             locationId: order.locationId,
             quantity: data.actualQty,
           },
@@ -518,7 +542,7 @@ export class ProductionService {
 
         await tx.stockMovement.create({
           data: {
-            productId: order.recipe.productId,
+            productId: outputProductId,
             locationId: order.locationId,
             type: 'production_in',
             quantity: data.actualQty,
@@ -535,7 +559,7 @@ export class ProductionService {
         await tx.productionBatch.create({
           data: {
             productionOrderId: order.id,
-            productId: order.recipe.productId,
+            productId: outputProductId,
             quantity: data.actualQty,
             unit: order.recipe.yieldUnit,
             batchCode,
@@ -694,5 +718,265 @@ export class ProductionService {
       totalProductionToday: todayProduction,
       totalCostToday: Math.round(totalCostToday * 100) / 100,
     };
+  }
+
+  /** Tolera decimales de BD / float (evita que 9.999999 no sea ≤ min 10). */
+  private static readonly QTY_EPS = 1e-5;
+
+  private lte(a: number, b: number): boolean {
+    return a <= b + ProductionService.QTY_EPS;
+  }
+
+  private gt(a: number, b: number): boolean {
+    return a > b + ProductionService.QTY_EPS;
+  }
+
+  /**
+   * Mismos umbrales que `getStockStatus` en apps/web/src/lib/utils.ts
+   * (crítico / medio / normal / exceso).
+   */
+  private stockStatus(
+    current: number,
+    min: number,
+    max?: number | null,
+  ): 'critical' | 'medium' | 'normal' | 'excess' {
+    if (this.lte(current, min)) return 'critical';
+    if (this.lte(current, min * 1.5)) return 'medium';
+    if (max != null && max > 0 && this.gt(current, max)) return 'excess';
+    return 'normal';
+  }
+
+  /**
+   * Crítico/medio como en la UI, más regla práctica si min=0 (muchos depósitos):
+   * con máximo configurado, stock bajo respecto al máximo cuenta como crítico/medio.
+   */
+  private lowStockBandForSuggestion(
+    current: number,
+    min: number,
+    max?: number | null,
+  ): 'critical' | 'medium' | null {
+    const s = this.stockStatus(current, min, max);
+    if (s === 'critical' || s === 'medium') return s;
+    if (s === 'excess') return null;
+    if (max != null && max > 0 && current < max - ProductionService.QTY_EPS) {
+      const ratio = current / max;
+      if (min <= ProductionService.QTY_EPS) {
+        if (ratio <= 0.1 + ProductionService.QTY_EPS) return 'critical';
+        if (ratio <= 0.35 + ProductionService.QTY_EPS) return 'medium';
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Objetivo de reposición y brecha desde un nivel de stock (misma regla que antes).
+   */
+  private targetGapForSuggestion(
+    stock: {
+      quantity: number;
+      minQuantity: number;
+      maxQuantity: number | null;
+    },
+    band: 'critical' | 'medium',
+  ): { target: number; gap: number } | null {
+    const minQ = stock.minQuantity;
+    const maxQ = stock.maxQuantity;
+    const target =
+      maxQ != null && maxQ > 0
+        ? maxQ
+        : minQ > 0
+          ? minQ * 2.5
+          : null;
+    if (target == null || target <= ProductionService.QTY_EPS) {
+      return null;
+    }
+
+    let gap = target - stock.quantity;
+    if (gap <= ProductionService.QTY_EPS) {
+      if (band === 'critical' && this.lte(stock.quantity, stock.minQuantity)) {
+        gap = Math.max(0.01, stock.minQuantity > 0 ? stock.minQuantity : 1);
+      } else if (
+        band === 'medium' &&
+        this.lte(stock.quantity, stock.minQuantity * 1.5)
+      ) {
+        gap = Math.max(0.01, stock.minQuantity > 0 ? stock.minQuantity * 0.5 : 1);
+      } else {
+        return null;
+      }
+    }
+    return { target, gap };
+  }
+
+  /**
+   * Parte de las recetas con elaboración en ESTE depósito (RecipeLocation), igual que el listado
+   * de “recetas del depósito”. Para cada una, si el stock del producto de salida en el depósito
+   * está en crítico/medio según umbrales, se sugiere producción. No se filtra por insumos.
+   * @param stockBand `critical` | `medium` | `all` (default)
+   */
+  async getSuggestionsFromStock(
+    locationId: string,
+    stockBand: 'critical' | 'medium' | 'all' = 'all',
+  ) {
+    const location = await this.prisma.location.findUnique({
+      where: { id: locationId },
+    });
+    if (!location) {
+      throw new NotFoundException(
+        `Location with ID "${locationId}" not found`,
+      );
+    }
+    if (location.type !== 'WAREHOUSE') {
+      throw new BadRequestException(
+        'Las sugerencias por stock solo aplican a ubicaciones tipo depósito (WAREHOUSE).',
+      );
+    }
+
+    const recipeSelectDepot = {
+      id: true,
+      name: true,
+      isActive: true,
+      yieldQty: true,
+      yieldUnit: true,
+      productId: true,
+      parentId: true,
+      product: { select: { id: true, name: true } },
+      recipeLocations: {
+        where: { locationId },
+        select: { locationId: true },
+      },
+    } as const;
+
+    const rls = await this.prisma.recipeLocation.findMany({
+      where: { locationId },
+      include: {
+        recipe: { select: recipeSelectDepot },
+      },
+    });
+
+    type RecipePick = NonNullable<(typeof rls)[0]['recipe']>;
+
+    const depotRecipesById = new Map<string, RecipePick>();
+    for (const rl of rls) {
+      const r = rl.recipe;
+      if (!r?.isActive) continue;
+      if (!depotRecipesById.has(r.id)) {
+        depotRecipesById.set(r.id, r);
+      }
+    }
+
+    const outputProductIdByRecipeId = new Map<string, string>();
+    const recipesNeedingProductByName: RecipePick[] = [];
+
+    for (const r of depotRecipesById.values()) {
+      if (r.productId) {
+        outputProductIdByRecipeId.set(r.id, r.productId);
+      } else {
+        recipesNeedingProductByName.push(r);
+      }
+    }
+
+    await Promise.all(
+      recipesNeedingProductByName.map(async (r) => {
+        const nm = r.name?.trim();
+        if (!nm) return;
+        const p = await this.prisma.product.findFirst({
+          where: {
+            isActive: true,
+            name: { equals: nm, mode: 'insensitive' },
+          },
+          select: { id: true },
+          orderBy: { updatedAt: 'desc' },
+        });
+        if (p) {
+          outputProductIdByRecipeId.set(r.id, p.id);
+        }
+      }),
+    );
+
+    const outputIds = [
+      ...new Set(outputProductIdByRecipeId.values()),
+    ] as string[];
+
+    const stockRows =
+      outputIds.length > 0
+        ? await this.prisma.stockLevel.findMany({
+            where: { locationId, productId: { in: outputIds } },
+            include: {
+              product: { select: { id: true, name: true } },
+            },
+          })
+        : [];
+
+    const stockByProductId = new Map(
+      stockRows.map((s) => [s.productId, s]),
+    );
+
+    const suggestions: Array<{
+      recipeId: string;
+      recipeName: string;
+      productId: string;
+      productName: string;
+      locationId: string;
+      locationName: string;
+      currentQty: number;
+      minQuantity: number;
+      maxQuantity: number | null;
+      targetStock: number;
+      stockStatus: 'critical' | 'medium';
+      suggestedPlannedQty: number;
+      yieldQty: number;
+      yieldUnit: string;
+    }> = [];
+
+    for (const recipe of depotRecipesById.values()) {
+      const outId = outputProductIdByRecipeId.get(recipe.id);
+      if (!outId) continue;
+
+      const stock = stockByProductId.get(outId);
+      if (!stock) continue;
+
+      const band = this.lowStockBandForSuggestion(
+        stock.quantity,
+        stock.minQuantity,
+        stock.maxQuantity,
+      );
+      if (!band) continue;
+      if (stockBand === 'critical' && band !== 'critical') continue;
+      if (stockBand === 'medium' && band !== 'medium') continue;
+
+      const tg = this.targetGapForSuggestion(stock, band);
+      if (!tg) continue;
+
+      const suggestedPlannedQty = Math.max(
+        0.01,
+        Math.round(tg.gap * 100) / 100,
+      );
+
+      suggestions.push({
+        recipeId: recipe.id,
+        recipeName: recipe.name,
+        productId: outId,
+        productName:
+          recipe.product?.name || stock.product?.name || recipe.name,
+        locationId,
+        locationName: location.name,
+        currentQty: stock.quantity,
+        minQuantity: stock.minQuantity,
+        maxQuantity: stock.maxQuantity,
+        targetStock: Math.round(tg.target * 100) / 100,
+        stockStatus: band,
+        suggestedPlannedQty,
+        yieldQty: recipe.yieldQty,
+        yieldUnit: recipe.yieldUnit,
+      });
+    }
+
+    suggestions.sort((a, b) =>
+      a.recipeName.localeCompare(b.recipeName, 'es', {
+        sensitivity: 'base',
+      }),
+    );
+
+    return { data: suggestions };
   }
 }

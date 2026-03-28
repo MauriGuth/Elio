@@ -9,8 +9,10 @@ import {
   MinLength,
   MaxLength,
   Min,
+  Max,
+  ValidateIf,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 
 export class CreateRecipeIngredientDto {
   @IsString()
@@ -70,6 +72,19 @@ export class CreateRecipeDto {
   @IsInt()
   @Min(0)
   prepTimeMin?: number;
+
+  /** Días de vida útil del elaborado (opcional). */
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === '' || value === undefined || value === null) return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : value;
+  })
+  @ValidateIf((_, v) => v !== undefined)
+  @IsInt()
+  @Min(1)
+  @Max(3650)
+  shelfLifeDays?: number;
 
   /** Ubicaciones donde se puede elaborar esta receta. */
   @IsOptional()

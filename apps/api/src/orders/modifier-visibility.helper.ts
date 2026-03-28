@@ -71,8 +71,9 @@ export function computeVisibleModifierGroupIds(
                   (x) => x.sortOrder === rule.whenPriorGroupSortOrder,
                 ),
           ].filter((x): x is (typeof sortedForRule)[number] => Boolean(x));
+    // Sin grupo previo resoluble en `groups` (ej. regla apunta a un sortOrder/id que no está en la receta),
+    // no marcar como visible: si no, el API exige opciones que el POS nunca mostró.
     if (priors.length === 0) {
-      visible.push(g.id);
       continue;
     }
     let ok = false;

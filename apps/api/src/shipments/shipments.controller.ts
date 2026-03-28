@@ -15,6 +15,8 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Role } from '../../generated/prisma';
 import { ShipmentsService } from './shipments.service';
 import { CreateShipmentDto } from './dto/create-shipment.dto';
+import { CreateMultiShipmentDto } from './dto/create-multi-shipment.dto';
+import { ReorderShipmentStopsDto } from './dto/reorder-shipment-stops.dto';
 import { ReceiveShipmentDto } from './dto/receive-shipment.dto';
 import { UpdateShipmentItemDto } from './dto/update-shipment-item.dto';
 
@@ -67,6 +69,16 @@ export class ShipmentsController {
     return this.shipmentsService.create(dto, userId);
   }
 
+  @Post('multi')
+  @UseGuards(RolesGuard)
+  @Roles(Role.LOGISTICS, Role.WAREHOUSE_MANAGER, Role.ADMIN)
+  createMulti(
+    @Body() dto: CreateMultiShipmentDto,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.shipmentsService.createMultiStop(dto, userId);
+  }
+
   @Patch(':id/items/:itemId')
   @UseGuards(RolesGuard)
   @Roles(Role.LOGISTICS, Role.WAREHOUSE_MANAGER, Role.ADMIN)
@@ -108,6 +120,48 @@ export class ShipmentsController {
     @CurrentUser('id') userId: string,
   ) {
     return this.shipmentsService.receive(id, dto, userId);
+  }
+
+  @Post(':id/stops/:stopId/mark-arrived')
+  @UseGuards(RolesGuard)
+  @Roles(Role.LOGISTICS, Role.WAREHOUSE_MANAGER, Role.ADMIN)
+  markStopArrived(
+    @Param('id') id: string,
+    @Param('stopId') stopId: string,
+  ) {
+    return this.shipmentsService.markStopArrived(id, stopId);
+  }
+
+  @Post(':id/stops/:stopId/start-reception-control')
+  @UseGuards(RolesGuard)
+  @Roles(Role.LOGISTICS, Role.WAREHOUSE_MANAGER, Role.LOCATION_MANAGER, Role.ADMIN)
+  startStopReceptionControl(
+    @Param('id') id: string,
+    @Param('stopId') stopId: string,
+  ) {
+    return this.shipmentsService.startStopReceptionControl(id, stopId);
+  }
+
+  @Post(':id/stops/:stopId/receive')
+  @UseGuards(RolesGuard)
+  @Roles(Role.LOGISTICS, Role.WAREHOUSE_MANAGER, Role.LOCATION_MANAGER, Role.ADMIN)
+  receiveStop(
+    @Param('id') id: string,
+    @Param('stopId') stopId: string,
+    @Body() dto: ReceiveShipmentDto,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.shipmentsService.receiveStop(id, stopId, dto, userId);
+  }
+
+  @Patch(':id/stop-order')
+  @UseGuards(RolesGuard)
+  @Roles(Role.LOGISTICS, Role.WAREHOUSE_MANAGER, Role.ADMIN)
+  reorderStops(
+    @Param('id') id: string,
+    @Body() dto: ReorderShipmentStopsDto,
+  ) {
+    return this.shipmentsService.reorderStops(id, dto);
   }
 
   @Post(':id/cancel')

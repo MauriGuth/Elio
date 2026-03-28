@@ -11,12 +11,17 @@ export class LocationsService {
     type?: string;
     isActive?: boolean;
     search?: string;
+    /** Solo locales marcados como sala / capacidad de producción (`is_production`). */
+    isProduction?: boolean;
   }) {
-    const { type, isActive, search } = filters;
+    const { type, isActive, search, isProduction } = filters;
 
     const where: any = {};
 
     if (type) where.type = type;
+    if (isProduction === true || isProduction === false) {
+      where.isProduction = isProduction;
+    }
     // Por defecto solo locales activos (los "eliminados" tienen isActive: false y no se listan)
     where.isActive = isActive !== undefined ? isActive : true;
 

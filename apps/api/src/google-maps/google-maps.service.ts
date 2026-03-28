@@ -113,4 +113,72 @@ export class GoogleMapsService {
       return null;
     }
   }
+
+  /**
+   * Ruta depósito → varias paradas en orden (última = destination).
+   * waypoints = direcciones de las paradas intermedias (sin la última).
+   */
+  async getRouteWithWaypoints(
+    originAddress: string,
+    waypointAddresses: string[],
+    destinationAddress: string,
+    withTraffic = false,
+  ): Promise<{
+    durationMinTotal: number;
+    polyline: string;
+    legs: Array<{
+      durationMin: number;
+      distanceMeters: number;
+      polyline: string | null;
+    }>;
+  } | null> {
+    if (!this.apiKey?.trim()) return null;
+    const o = encodeURIComponent(originAddress.trim());
+    const d = encodeURIComponent(destinationAddress.trim());
+    if (!o || !d) return null;
+
+    const wps = waypointAddresses
+      .map((a) => a?.trim())
+      .filter(Boolean)
+      .map((a) => encodeURIComponent(a));
+    const wpParam =
+      wps.length > 0 ? `&waypoints=${wps.join('%7C')}` : '';
+
+    const traffic = withTraffic ? '&departure_time=now' : '';
+    const url = `https://maps.googleapis.com/maps/api/directions/json?origin=${o}&destination=${d}${wpParam}&mode=driving${traffic}&key=${this.apiKey}`;
+
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.status !== 'OK' || !data.routes?.length) return null;
+      const route = data.routes[0];
+      const overview = route.overview_polyline?.points ?? '';
+      const rawLegs = route.legs ?? [];
+      if (!rawLegs.length) return null;
+
+      let durationMinTotal = 0;
+      const legs = rawLegs.map((leg: any) => {
+        const seconds =
+          withTraffic && leg.duration_in_traffic?.value != null
+            ? Number(leg.duration_in_traffic.value)
+            : Number(leg.duration?.value ?? 0);
+        const dm = Math.round(seconds / 60);
+        durationMinTotal += dm;
+        const dist = Number(leg.distance?.value ?? 0);
+        return {
+          durationMin: dm,
+          distanceMeters: Math.round(dist),
+          polyline: null,
+        };
+      });
+
+      return {
+        durationMinTotal,
+        polyline: overview || '',
+        legs,
+      };
+    } catch {
+      return null;
+    }
+  }
 }

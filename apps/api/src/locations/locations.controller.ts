@@ -24,8 +24,20 @@ export class LocationsController {
     @Query('type') type?: string,
     @Query('isActive') isActive?: boolean,
     @Query('search') search?: string,
+    @Query('isProduction') isProductionRaw?: string,
   ) {
-    return this.locationsService.findAll({ type, isActive, search });
+    const isProduction =
+      isProductionRaw === 'true'
+        ? true
+        : isProductionRaw === 'false'
+          ? false
+          : undefined;
+    return this.locationsService.findAll({
+      type,
+      isActive,
+      search,
+      isProduction,
+    });
   }
 
   @Get(':id')

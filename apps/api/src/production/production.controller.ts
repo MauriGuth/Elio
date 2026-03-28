@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Post,
@@ -21,6 +22,20 @@ export class ProductionController {
   @Get('stats')
   getDashboardStats(@Query('locationId') locationId?: string) {
     return this.productionService.getDashboardStats(locationId);
+  }
+
+  @Get('suggestions-from-stock')
+  getSuggestionsFromStock(
+    @Query('locationId') locationId?: string,
+    @Query('stockBand') stockBand?: string,
+  ) {
+    const id = locationId?.trim();
+    if (!id) {
+      throw new BadRequestException('El parámetro locationId es obligatorio.');
+    }
+    const band =
+      stockBand === 'critical' || stockBand === 'medium' ? stockBand : 'all';
+    return this.productionService.getSuggestionsFromStock(id, band);
   }
 
   @Get('batches/code/:code')

@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -18,6 +19,7 @@ import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { GenerateFromDemandDto } from './dto/generate-from-demand.dto';
 import { ReceivePurchaseOrderDto } from './dto/update-purchase-order-status.dto';
 import { UpdatePurchaseOrderItemDto } from './dto/update-purchase-order-item.dto';
+import { AddPurchaseOrderItemDto } from './dto/add-purchase-order-item.dto';
 
 @Controller('purchase-orders')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -68,6 +70,11 @@ export class PurchaseOrdersController {
     return this.purchaseOrdersService.create(dto, userId);
   }
 
+  @Post(':id/items')
+  addItem(@Param('id') id: string, @Body() dto: AddPurchaseOrderItemDto) {
+    return this.purchaseOrdersService.addItem(id, dto);
+  }
+
   @Patch(':id/items/:itemId')
   updateItem(
     @Param('id') id: string,
@@ -75,6 +82,11 @@ export class PurchaseOrdersController {
     @Body() dto: UpdatePurchaseOrderItemDto,
   ) {
     return this.purchaseOrdersService.updateItem(id, itemId, dto);
+  }
+
+  @Delete(':id/items/:itemId')
+  removeItem(@Param('id') id: string, @Param('itemId') itemId: string) {
+    return this.purchaseOrdersService.removeItem(id, itemId);
   }
 
   @Patch(':id/place')

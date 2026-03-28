@@ -219,9 +219,7 @@ export class OrdersService {
         this.prisma,
         item.productId,
         item.modifierSelections,
-        groupIds !== undefined
-          ? { onlyValidateGroupIds: groupIds }
-          : undefined,
+        { onlyValidateGroupIds: groupIds },
       );
       resolvedItems.push({ item, sel });
     }
@@ -316,9 +314,7 @@ export class OrdersService {
       this.prisma,
       data.productId,
       data.modifierSelections,
-      groupIds !== undefined
-        ? { onlyValidateGroupIds: groupIds }
-        : undefined,
+      { onlyValidateGroupIds: groupIds },
     );
 
     return this.prisma.$transaction(async (tx) => {

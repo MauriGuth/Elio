@@ -10,6 +10,8 @@ import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { GenerateFromDemandDto } from './dto/generate-from-demand.dto';
 import { ReceivePurchaseOrderDto } from './dto/update-purchase-order-status.dto';
 import { UpdatePurchaseOrderItemDto } from './dto/update-purchase-order-item.dto';
+import { AddPurchaseOrderItemDto } from './dto/add-purchase-order-item.dto';
+import { isCategorySlugAllowedForPurchaseOrders } from '../common/purchase-order-category';
 
 const PO_NUMBER_PREFIX = 'PO';
 const PLACEHOLDER_SUPPLIER_NAME = 'Sin asignar (pendiente de proveedor)';
@@ -51,11 +53,30 @@ export class PurchaseOrdersService {
       );
     }
 
-    const demandRows = await this.stockService.getLogisticsSummary(locationId);
-    const needReorder = (demandRows as any[]).filter(
+    const demandRows = await this.stockService.getLogisticsSummary(locationId, {
+      purchaseOnly: true,
+    });
+    let needReorder = (demandRows as any[]).filter(
       (r) =>
         (r.suggestedOrderQty > 0 || r.suggestedOrderQtyByDemand > 0) &&
         r.status !== 'normal',
+    );
+    if (needReorder.length === 0) {
+      return { location, bySupplier: [], byCategory: [] };
+    }
+
+    const pidList = [...new Set(needReorder.map((r: any) => r.productId))];
+    const productsForPo = await this.prisma.product.findMany({
+      where: { id: { in: pidList } },
+      select: { id: true, category: { select: { slug: true } } },
+    });
+    const allowedProductIds = new Set(
+      productsForPo
+        .filter((p) => isCategorySlugAllowedForPurchaseOrders(p.category?.slug))
+        .map((p) => p.id),
+    );
+    needReorder = needReorder.filter((r: any) =>
+      allowedProductIds.has(r.productId),
     );
     if (needReorder.length === 0) {
       return { location, bySupplier: [], byCategory: [] };
@@ -250,13 +271,37 @@ export class PurchaseOrdersService {
     }
 
     // Incluir productos en crítico/medio que no tienen proveedor en la demanda (Brownie, Café Americano, etc.)
-    const logisticsRows = await this.stockService.getLogisticsSummary(dto.locationId);
-    const needReorderRest = (logisticsRows as any[]).filter(
+    const logisticsRows = await this.stockService.getLogisticsSummary(dto.locationId, {
+      purchaseOnly: true,
+    });
+    let needReorderRest = (logisticsRows as any[]).filter(
       (r) =>
         (r.status === 'critical' || r.status === 'medium') &&
         (r.suggestedOrderQty > 0 || r.suggestedOrderQtyByDemand > 0) &&
         !productIdsInDemand.has(r.productId),
     );
+    if (needReorderRest.length > 0) {
+      const restIds = [...new Set(needReorderRest.map((r: any) => r.productId))];
+      const restProducts = await this.prisma.product.findMany({
+        where: { id: { in: restIds } },
+        select: { id: true, category: { select: { slug: true } } },
+      });
+      const allowedRest = new Set(
+        restProducts
+          .filter((p) => isCategorySlugAllowedForPurchaseOrders(p.category?.slug))
+          .map((p) => p.id),
+      );
+      needReorderRest = needReorderRest.filter((r: any) =>
+        allowedRest.has(r.productId),
+      );
+    }
+    if (dto.productIds?.length) {
+      const allow = new Set(dto.productIds);
+      needReorderRest = needReorderRest.filter((r: any) =>
+        allow.has(r.productId),
+      );
+    }
+
     if (needReorderRest.length > 0) {
       const placeholderSupplier = await this.getOrCreatePlaceholderSupplier();
       const restItems = needReorderRest.map((r: any) => {
@@ -477,6 +522,128 @@ export class PurchaseOrdersService {
         },
       },
     });
+  }
+
+  async addItem(purchaseOrderId: string, dto: AddPurchaseOrderItemDto) {
+    const po = await this.prisma.purchaseOrder.findUnique({
+      where: { id: purchaseOrderId },
+      include: { items: true },
+    });
+    if (!po) {
+      throw new NotFoundException(`Orden de compra "${purchaseOrderId}" no encontrada`);
+    }
+    if (po.status !== 'draft') {
+      throw new BadRequestException(
+        `Solo se pueden agregar productos en borrador. Estado actual: ${po.status}`,
+      );
+    }
+    if (po.items.some((i) => i.productId === dto.productId)) {
+      throw new BadRequestException(
+        'Este producto ya está en la orden. Editá la cantidad en la fila existente.',
+      );
+    }
+
+    const product = await this.prisma.product.findUnique({
+      where: { id: dto.productId },
+      include: {
+        productSuppliers: {
+          where: { supplierId: po.supplierId },
+          take: 1,
+        },
+      },
+    });
+    if (!product) {
+      throw new NotFoundException(`Producto "${dto.productId}" no encontrado`);
+    }
+
+    let unitCost =
+      dto.unitCost != null
+        ? dto.unitCost
+        : (product.productSuppliers[0]?.unitCost ?? product.avgCost ?? 0);
+    unitCost = Math.round(unitCost * 100) / 100;
+
+    const lastPrice = await this.prisma.supplierPriceHistory.findFirst({
+      where: { supplierId: po.supplierId, productId: dto.productId },
+      orderBy: { recordedAt: 'desc' },
+      select: { unitCost: true },
+    });
+    const lastKnownRaw =
+      lastPrice?.unitCost ??
+      (product.lastCost > 0 ? product.lastCost : null);
+    const lastKnownCost =
+      lastKnownRaw != null ? Math.round(lastKnownRaw * 100) / 100 : null;
+
+    let priceStatus: 'ok' | 'expensive' | 'cheap' = 'ok';
+    if (lastKnownCost != null && unitCost > 0) {
+      const diff = (unitCost - lastKnownCost) / lastKnownCost;
+      if (diff > 0.05) priceStatus = 'expensive';
+      else if (diff < -0.05) priceStatus = 'cheap';
+    }
+
+    await this.prisma.purchaseOrderItem.create({
+      data: {
+        purchaseOrderId,
+        productId: dto.productId,
+        quantity: dto.quantity,
+        unitCost,
+        lastKnownCost,
+        priceStatus,
+      },
+    });
+
+    const items = await this.prisma.purchaseOrderItem.findMany({
+      where: { purchaseOrderId },
+    });
+    const totalAmount = items.reduce(
+      (s, i) => s + (i.quantity ?? 0) * (i.unitCost ?? 0),
+      0,
+    );
+    await this.prisma.purchaseOrder.update({
+      where: { id: purchaseOrderId },
+      data: { totalAmount: Math.round(totalAmount * 100) / 100 },
+    });
+
+    return this.findById(purchaseOrderId);
+  }
+
+  async removeItem(purchaseOrderId: string, itemId: string) {
+    const po = await this.prisma.purchaseOrder.findUnique({
+      where: { id: purchaseOrderId },
+      include: { items: true },
+    });
+    if (!po) {
+      throw new NotFoundException(`Orden de compra "${purchaseOrderId}" no encontrada`);
+    }
+    if (po.status !== 'draft') {
+      throw new BadRequestException(
+        `Solo se pueden quitar productos en borrador. Estado actual: ${po.status}`,
+      );
+    }
+    if (po.items.length <= 1) {
+      throw new BadRequestException(
+        'La orden debe tener al menos un producto. No se puede eliminar el único ítem.',
+      );
+    }
+    const item = po.items.find((i) => i.id === itemId);
+    if (!item) {
+      throw new NotFoundException(`El ítem "${itemId}" no pertenece a esta orden.`);
+    }
+
+    await this.prisma.purchaseOrderItem.delete({ where: { id: itemId } });
+
+    const items = await this.prisma.purchaseOrderItem.findMany({
+      where: { purchaseOrderId },
+    });
+    const totalAmount = items.reduce(
+      (s, i) => s + (i.quantity ?? 0) * (i.unitCost ?? 0),
+      0,
+    );
+    await this.prisma.purchaseOrder.update({
+      where: { id: purchaseOrderId },
+      data: { totalAmount: Math.round(totalAmount * 100) / 100 },
+    });
+
+    return this.findById(purchaseOrderId);
   }
 
   async place(id: string, userId: string) {

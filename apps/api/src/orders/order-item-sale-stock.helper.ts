@@ -134,6 +134,22 @@ export async function applyOrderItemSaleStock(
     );
   }
 
+  /** Receta sin consumo positivo (sin receta activa, solo filas de modificador, etc.) → descontar terminado. */
+  if (consumeRecipe) {
+    let positive = 0;
+    for (const [, v] of consumption) {
+      if (v > EPS) {
+        positive += v;
+      }
+    }
+    if (positive < EPS) {
+      consumption.set(
+        item.productId,
+        (consumption.get(item.productId) ?? 0) + item.quantity,
+      );
+    }
+  }
+
   for (const [productId, net] of consumption.entries()) {
     if (Math.abs(net) < EPS) continue;
 

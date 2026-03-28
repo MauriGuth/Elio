@@ -9,8 +9,10 @@ import {
   MinLength,
   MaxLength,
   Min,
+  Max,
+  ValidateIf,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Type, Transform } from 'class-transformer';
 import { CreateRecipeIngredientDto } from './create-recipe.dto';
 
 export class UpdateRecipeDto {
@@ -45,6 +47,20 @@ export class UpdateRecipeDto {
   @IsInt()
   @Min(0)
   prepTimeMin?: number;
+
+  /** Días de vida útil; null para borrar el valor. */
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value === '' || value === undefined) return undefined;
+    if (value === null) return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : value;
+  })
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @IsInt()
+  @Min(1)
+  @Max(3650)
+  shelfLifeDays?: number | null;
 
   @IsOptional()
   @IsArray()

@@ -131,6 +131,7 @@ model Location {
   recipeLocations      RecipeLocation[]
   originShipments      Shipment[]       @relation("ShipmentOrigin")
   destinationShipments Shipment[]       @relation("ShipmentDestination")
+  shipmentStops        ShipmentStop[]
   tables               Table[]
   orders               Order[]
   alerts               Alert[]
@@ -674,6 +675,8 @@ model Recipe {
   yieldUnit    String    @map("yield_unit")
   productId    String?   @map("product_id")
   prepTimeMin  Int?      @map("prep_time_min")
+  /** Días de vida útil del producto elaborado (opcional). */
+  shelfLifeDays Int?     @map("shelf_life_days")
   instructions String?
   imageUrl     String?   @map("image_url")
   isActive     Boolean   @default(true) @map("is_active")
@@ -835,6 +838,8 @@ model Shipment {
   shipmentNumber   String    @unique @map("shipment_number")
   originId         String    @map("origin_id")
   destinationId    String    @map("destination_id")
+  /** true = varias paradas (locales); ítems van por ShipmentStop */
+  isMultiStop      Boolean   @default(false) @map("is_multi_stop")
   status           String    @default("draft")
   qrCode           String?   @map("qr_code")
   estimatedArrival    DateTime? @map("estimated_arrival")
@@ -866,6 +871,7 @@ model Shipment {
   receivedBy   User?          @relation("ShipmentReceiver", fields: [receivedById], references: [id])
   approvedBy   User?          @relation("ShipmentApprover", fields: [approvedById], references: [id])
   items        ShipmentItem[]
+  stops        ShipmentStop[]
 
   @@index([originId])
   @@index([destinationId])
@@ -874,11 +880,39 @@ model Shipment {
   @@map("shipments")
 }
 
+// ─── ShipmentStop (parada en ruta multi-local, orden = sortOrder) ─
+
+model ShipmentStop {
+  id                          String    @id @default(cuid())
+  shipmentId                  String    @map("shipment_id")
+  locationId                  String    @map("location_id")
+  sortOrder                   Int       @map("sort_order")
+  legPolyline                 String?   @map("leg_polyline")
+  legDurationMin              Int?      @map("leg_duration_min")
+  legDistanceMeters           Int?      @map("leg_distance_meters")
+  arrivedAt                   DateTime? @map("arrived_at")
+  receptionControlStartedAt DateTime? @map("reception_control_started_at")
+  receptionControlCompletedAt DateTime? @map("reception_control_completed_at")
+  receivedByName            String?   @map("received_by_name")
+  receivedBySignature       String?   @map("received_by_signature")
+  receptionNotes            String?   @map("reception_notes")
+
+  shipment Shipment      @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  location Location      @relation(fields: [locationId], references: [id])
+  items    ShipmentItem[]
+
+  @@unique([shipmentId, sortOrder])
+  @@index([shipmentId])
+  @@index([locationId])
+  @@map("shipment_stops")
+}
+
 // ─── ShipmentItem ─────────────────────────────────────────────
 
 model ShipmentItem {
   id           String  @id @default(cuid())
   shipmentId   String  @map("shipment_id")
+  shipmentStopId String? @map("shipment_stop_id")
   productId    String  @map("product_id")
   sentQty      Float   @map("sent_qty")
   receivedQty  Float?  @map("received_qty")
@@ -889,10 +923,12 @@ model ShipmentItem {
   notes        String?
 
   // Relations
-  shipment Shipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
-  product  Product  @relation(fields: [productId], references: [id])
+  shipment     Shipment      @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  shipmentStop ShipmentStop? @relation(fields: [shipmentStopId], references: [id], onDelete: SetNull)
+  product      Product       @relation(fields: [productId], references: [id])
 
   @@index([shipmentId])
+  @@index([shipmentStopId])
   @@index([productId])
   @@map("shipment_items")
 }
