@@ -190,16 +190,49 @@ export class CategoriesService {
       throw new NotFoundException(`Category with ID "${id}" not found`);
     }
 
-    // Si es una categoría de familia (slug familia-*), limpiar el campo familia en productos
+    const displayFromCategoryName = (name: string) =>
+      name.replace(/^(Tipo|Familia|Agrupar|Subfamilia):\s*/i, '').trim();
+
+    // Raíz familia-*: eliminar subfamilias hijas y limpiar familia + subfamilia en productos
     if (category.slug.startsWith('familia-')) {
-      const familiaValue = category.name
-        .replace(/^(Tipo|Familia|Agrupar):\s*/i, '')
-        .trim();
+      const children = await this.prisma.category.findMany({
+        where: { parentId: id, isActive: true },
+      });
+      for (const ch of children) {
+        const subVal = displayFromCategoryName(ch.name);
+        if (subVal) {
+          await this.prisma.product.updateMany({
+            where: { subfamilia: subVal },
+            data: { subfamilia: null },
+          });
+        }
+        await this.prisma.category.update({
+          where: { id: ch.id },
+          data: { isActive: false },
+        });
+      }
+      const familiaValue = displayFromCategoryName(category.name);
       if (familiaValue) {
         await this.prisma.product.updateMany({
           where: { familia: familiaValue },
-          data: { familia: null },
+          data: { familia: null, subfamilia: null },
         });
+      }
+    } else {
+      const parent = category.parentId
+        ? await this.prisma.category.findUnique({ where: { id: category.parentId } })
+        : null;
+      const isSubfamiliaRow =
+        category.slug.startsWith('subfamilia-') ||
+        (!!parent && parent.slug.startsWith('familia-'));
+      if (isSubfamiliaRow) {
+        const subValue = displayFromCategoryName(category.name);
+        if (subValue) {
+          await this.prisma.product.updateMany({
+            where: { subfamilia: subValue },
+            data: { subfamilia: null },
+          });
+        }
       }
     }
 

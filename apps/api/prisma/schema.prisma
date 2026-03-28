@@ -199,6 +199,8 @@ model Product {
   categoryId   String   @map("category_id")
   /** Familia del artículo (ej. ADICIONAL, TAPEOS). Usado junto a categoría (tipo). */
   familia      String?  @map("familia")
+  /** Subfamilia dentro de la familia (ej. Frutos secos bajo Almacén). */
+  subfamilia   String?  @map("subfamilia")
   unit         String
   imageUrl     String?  @map("image_url")
   avgCost      Float    @default(0) @map("avg_cost")

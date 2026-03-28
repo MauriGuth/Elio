@@ -38,9 +38,16 @@ export class UpdateProductDto {
   categoryId?: string;
 
   @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
   @IsString()
   @MaxLength(100)
-  familia?: string;
+  familia?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @IsString()
+  @MaxLength(100)
+  subfamilia?: string | null;
 
   @IsOptional()
   @IsString()

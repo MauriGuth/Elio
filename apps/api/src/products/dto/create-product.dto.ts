@@ -39,6 +39,11 @@ export class CreateProductDto {
   @MaxLength(100)
   familia?: string;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  subfamilia?: string;
+
   @IsString()
   @MaxLength(20)
   unit: string;

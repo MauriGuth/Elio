@@ -25,6 +25,7 @@ export class ProductsService {
     search?: string;
     categoryId?: string;
     familia?: string;
+    subfamilia?: string;
     supplierId?: string;
     isActive?: boolean;
     isSellable?: boolean;
@@ -79,6 +80,12 @@ export class ProductsService {
       where.familia = null;
     } else if (filters.familia?.trim()) {
       where.familia = filters.familia.trim();
+    }
+
+    if (filters.subfamilia === 'none') {
+      where.subfamilia = null;
+    } else if (filters.subfamilia?.trim()) {
+      where.subfamilia = filters.subfamilia.trim();
     }
 
     if (filters.isActive !== undefined) {
@@ -225,7 +232,20 @@ export class ProductsService {
   }
 
   async update(id: string, data: UpdateProductDto) {
-    const { locationIds, salePriceByLocation, SalePriceByLocation: _skip, ...productData } = data as UpdateProductDto & { SalePriceByLocation?: Record<string, number> };
+    const { locationIds, salePriceByLocation, SalePriceByLocation: _skip, ...rest } = data as UpdateProductDto & { SalePriceByLocation?: Record<string, number> };
+    const productData: Record<string, unknown> = { ...rest };
+    if (productData.familia !== undefined) {
+      productData.familia =
+        productData.familia != null && String(productData.familia).trim()
+          ? String(productData.familia).trim()
+          : null;
+    }
+    if (productData.subfamilia !== undefined) {
+      productData.subfamilia =
+        productData.subfamilia != null && String(productData.subfamilia).trim()
+          ? String(productData.subfamilia).trim()
+          : null;
+    }
     const product = await this.prisma.product.findUnique({
       where: { id },
     });
@@ -234,7 +254,7 @@ export class ProductsService {
       throw new NotFoundException(`Product with ID "${id}" not found`);
     }
 
-    if (productData.sku && productData.sku !== product.sku) {
+    if (typeof productData.sku === 'string' && productData.sku && productData.sku !== product.sku) {
       const existing = await this.prisma.product.findFirst({
         where: { sku: productData.sku, id: { not: id } },
       });
@@ -243,7 +263,7 @@ export class ProductsService {
       }
     }
 
-    if (productData.categoryId) {
+    if (typeof productData.categoryId === 'string' && productData.categoryId) {
       const category = await this.prisma.category.findUnique({
         where: { id: productData.categoryId },
       });
@@ -266,7 +286,9 @@ export class ProductsService {
     }
 
     const defaultSalePrice =
-      productData.salePrice !== undefined ? productData.salePrice : product.salePrice;
+      productData.salePrice !== undefined
+        ? (productData.salePrice as number)
+        : product.salePrice;
 
     const priceByLoc =
       (salePriceByLocation && typeof salePriceByLocation === 'object' ? salePriceByLocation : null) ??
@@ -277,7 +299,7 @@ export class ProductsService {
     await this.prisma.$transaction(async (tx) => {
       await tx.product.update({
         where: { id },
-        data: productData,
+        data: productData as Prisma.ProductUpdateInput,
       });
 
       if (uniqueLocationIds !== undefined) {
