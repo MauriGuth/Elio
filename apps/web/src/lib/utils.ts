@@ -75,6 +75,39 @@ export function formatDateTime(date: string | Date): string {
   return `${formatDate(date)} ${formatTime(date)}`
 }
 
+/** Fecha legible larga, ej. "28 de marzo de 2026" (es-AR). */
+export function formatDateLong(date: string | Date): string {
+  return new Intl.DateTimeFormat("es-AR", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(new Date(date))
+}
+
+/** Suma días calendario en hora local (vencimiento = día de producción + N días). */
+export function addCalendarDaysLocal(date: string | Date, calendarDays: number): Date {
+  const d = new Date(date)
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + calendarDays)
+}
+
+/**
+ * POS: el producto se ofrece en un local si no tiene niveles de stock (compat: carta global)
+ * o si existe `StockLevel` para ese `locationId` (ubicaciones elegidas en el producto).
+ */
+export function isProductAvailableAtLocation(
+  product: {
+    stockLevels?: Array<{ locationId?: string; location?: { id?: string } }> | null
+  },
+  locationId: string
+): boolean {
+  if (!locationId) return false
+  const levels = product.stockLevels
+  if (!Array.isArray(levels) || levels.length === 0) return true
+  return levels.some(
+    (l) => (l.locationId ?? l.location?.id) === locationId
+  )
+}
+
 /**
  * Formatea un número de teléfono para mostrar (ej: 542995171364 → "+54 299 517 1364").
  * Acepta entrada con o sin +; normaliza a solo dígitos y opcional + al inicio.

@@ -175,6 +175,84 @@ input:-webkit-autofill:active {
   body {
     background: white;
   }
+
+  /* Detalle producción: imprimir solo el bloque #lote (QR + datos), igual que en pantalla */
+  html.print-lote-qr-active body * {
+    visibility: hidden;
+  }
+  html.print-lote-qr-active #lote,
+  html.print-lote-qr-active #lote * {
+    visibility: visible;
+  }
+  html.print-lote-qr-active #lote .lote-qr-no-print {
+    display: none !important;
+  }
+  html.print-lote-qr-active #lote {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    max-width: 100%;
+    margin: 0 !important;
+    padding: 1rem !important;
+    background: #fff !important;
+    color: #111827 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    box-shadow: none !important;
+  }
+  html.print-lote-qr-active.dark #lote {
+    background: #fff !important;
+    color: #111827 !important;
+  }
+  html.print-lote-qr-active #lote h3,
+  html.print-lote-qr-active #lote p,
+  html.print-lote-qr-active #lote span {
+    color: inherit;
+  }
+  html.print-lote-qr-active #lote .text-gray-900,
+  html.print-lote-qr-active #lote .font-semibold {
+    color: #111827 !important;
+  }
+  html.print-lote-qr-active #lote .text-gray-700 {
+    color: #374151 !important;
+  }
+  html.print-lote-qr-active #lote .text-gray-600 {
+    color: #4b5563 !important;
+  }
+  html.print-lote-qr-active #lote .text-gray-500 {
+    color: #6b7280 !important;
+  }
+  html.print-lote-qr-active #lote .text-gray-400 {
+    color: #9ca3af !important;
+  }
+  html.print-lote-qr-active #lote .border-blue-200 {
+    border-color: #bfdbfe !important;
+  }
+  html.print-lote-qr-active #lote .border-blue-100 {
+    border-color: #dbeafe !important;
+  }
+  html.print-lote-qr-active #lote .bg-blue-50\/50,
+  html.print-lote-qr-active #lote [class*="bg-blue-50"] {
+    background-color: rgb(239 246 255 / 0.5) !important;
+  }
+  html.print-lote-qr-active #lote .lote-qr-batch-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  html.print-lote-qr-active #lote .lote-qr-caducidad-box {
+    background-color: #fffbeb !important;
+    border-color: #fbbf24 !important;
+  }
+  html.print-lote-qr-active #lote .text-green-700 {
+    color: #15803d !important;
+  }
+  html.print-lote-qr-active #lote .text-green-800 {
+    color: #166534 !important;
+  }
+  html.print-lote-qr-active #lote .text-green-600 {
+    color: #16a34a !important;
+  }
 }
 
 /* Formularios de login (login, cajero, mozo, depósito): placeholder/autocompletado gris, texto al escribir negro */

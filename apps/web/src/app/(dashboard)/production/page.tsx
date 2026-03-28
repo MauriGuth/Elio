@@ -17,14 +17,27 @@ import {
   QrCode,
   ChevronRight,
   ChevronDown,
+  Trash2,
+  RefreshCw,
 } from "lucide-react"
 import { productionApi } from "@/lib/api/production"
 import { recipesApi } from "@/lib/api/recipes"
 import { locationsApi } from "@/lib/api/locations"
 import { aiEventsApi } from "@/lib/api/ai-events"
-import { cn, formatCurrency, formatNumber, formatDate } from "@/lib/utils"
+import {
+  cn,
+  formatCurrency,
+  formatNumber,
+  formatDate,
+  getStockStatusColor,
+  getStockStatusLabel,
+} from "@/lib/utils"
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input"
 import type { ProductionStatus } from "@/types"
+
+function isWarehouseLocationType(t: unknown): boolean {
+  return String(t ?? "").toUpperCase() === "WAREHOUSE"
+}
 
 // ---------- helpers ----------
 
@@ -125,6 +138,11 @@ export default function ProductionPage() {
     ""
   )
   const [selectedDate, setSelectedDate] = useState("")
+  /** Filtro servidor: depósito o sala con `isProduction` (ej. sala de pastas). */
+  const [productionLocationFilterId, setProductionLocationFilterId] = useState("")
+  const [productionFilterLocations, setProductionFilterLocations] = useState<
+    { id: string; name: string }[]
+  >([])
 
   // Data state
   const [orders, setOrders] = useState<any[]>([])
@@ -137,9 +155,41 @@ export default function ProductionPage() {
 
   // Recipes and locations for create modal
   const [recipesList, setRecipesList] = useState<{ id: string; name: string }[]>([])
-  const [locationsList, setLocationsList] = useState<{ id: string; name: string }[]>([])
+  const [locationsList, setLocationsList] = useState<
+    { id: string; name: string; type?: string }[]
+  >([])
+  /** Depósitos desde el API (filtro servidor); no depender solo del campo `type` en la lista completa. */
+  const [warehouseLocations, setWarehouseLocations] = useState<
+    { id: string; name: string }[]
+  >([])
   /** Ubicaciones permitidas para la receta seleccionada (según lo configurado en la receta). */
   const [allowedLocationIds, setAllowedLocationIds] = useState<string[]>([])
+
+  /** Modal «Producción sugerida» (solo stock crítico en depósito) */
+  const [showSuggestedModal, setShowSuggestedModal] = useState(false)
+  const [suggestionDepotId, setSuggestionDepotId] = useState("")
+  const [stockSuggestionRows, setStockSuggestionRows] = useState<
+    Array<{
+      rowKey: string
+      recipeId: string
+      recipeName: string
+      productName: string
+      locationId: string
+      locationName: string
+      currentQty: number
+      targetStock: number
+      stockStatus: string
+      suggestedPlannedQty: number
+      yieldUnit: string
+      plannedQty: number
+    }>
+  >([])
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false)
+  const [creatingFromSuggestions, setCreatingFromSuggestions] = useState(false)
+  const [suggestionsPlannedDate, setSuggestionsPlannedDate] = useState(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+  })
 
   // Create modal state
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -156,16 +206,19 @@ export default function ProductionPage() {
   const [recipeSearch, setRecipeSearch] = useState("")
   const [recipeDropdownOpen, setRecipeDropdownOpen] = useState(false)
 
-  // Close modal on Escape
+  // Cerrar modales con Escape
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setShowCreateModal(false)
+      if (e.key === "Escape") {
+        setShowCreateModal(false)
+        setShowSuggestedModal(false)
+      }
     }
-    if (showCreateModal) {
+    if (showCreateModal || showSuggestedModal) {
       document.addEventListener("keydown", handleKeyDown)
       return () => document.removeEventListener("keydown", handleKeyDown)
     }
-  }, [showCreateModal])
+  }, [showCreateModal, showSuggestedModal])
 
   // Load AI events on mount
   useEffect(() => {
@@ -203,10 +256,179 @@ export default function ProductionPage() {
       } catch {
         // Non-critical
       }
+      try {
+        const resWh = await locationsApi.getAll({
+          type: "WAREHOUSE",
+          isActive: true,
+        })
+        const wh = Array.isArray(resWh) ? resWh : (resWh as any).data || []
+        setWarehouseLocations(wh.map((l: any) => ({ id: l.id, name: l.name })))
+      } catch {
+        // Non-critical
+      }
     }
     loadRecipes()
     loadLocations()
   }, [])
+
+  // Depósitos + salas de producción para el filtro de la grilla
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const [whRes, roomRes] = await Promise.all([
+          locationsApi.getAll({ type: "WAREHOUSE", isActive: true }),
+          locationsApi.getAll({ isProduction: true, isActive: true }),
+        ])
+        const wh = Array.isArray(whRes) ? whRes : (whRes as any).data ?? []
+        const rooms = Array.isArray(roomRes) ? roomRes : (roomRes as any).data ?? []
+        const byId = new Map<string, string>()
+        for (const l of wh) {
+          if (l?.id) byId.set(l.id, l.name)
+        }
+        for (const l of rooms) {
+          if (l?.id) byId.set(l.id, l.name)
+        }
+        const merged = [...byId.entries()]
+          .map(([id, name]) => ({ id, name }))
+          .sort((a, b) =>
+            a.name.localeCompare(b.name, "es", { sensitivity: "base" })
+          )
+        if (!cancelled) setProductionFilterLocations(merged)
+      } catch {
+        if (!cancelled) setProductionFilterLocations([])
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!showSuggestedModal || warehouseLocations.length > 0) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const resWh = await locationsApi.getAll({
+          type: "WAREHOUSE",
+          isActive: true,
+        })
+        if (cancelled) return
+        const wh = Array.isArray(resWh) ? resWh : (resWh as any).data || []
+        setWarehouseLocations(wh.map((l: any) => ({ id: l.id, name: l.name })))
+      } catch {
+        // ignore
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [showSuggestedModal, warehouseLocations.length])
+
+  useEffect(() => {
+    const ids = new Set(warehouseLocations.map((w) => w.id))
+    setSuggestionDepotId((prev) => {
+      if (prev && ids.has(prev)) return prev
+      return warehouseLocations[0]?.id ?? ""
+    })
+  }, [warehouseLocations])
+
+  const fetchCriticalSuggestions = useCallback(async () => {
+    if (!suggestionDepotId) {
+      sileo.error({ title: "Seleccioná un depósito." })
+      return
+    }
+    setLoadingSuggestions(true)
+    try {
+      const res = await productionApi.getSuggestionsFromStock(
+        suggestionDepotId,
+        { stockBand: "critical" }
+      )
+      const raw = Array.isArray(res)
+        ? res
+        : (res as any)?.data?.data ??
+          (res as any)?.data ??
+          []
+      const rows = Array.isArray(raw) ? raw : []
+      setStockSuggestionRows(
+        rows.map((r: any) => ({
+          rowKey: `${r.recipeId}-${r.locationId}`,
+          recipeId: r.recipeId,
+          recipeName: r.recipeName,
+          productName: r.productName ?? r.recipeName,
+          locationId: r.locationId,
+          locationName: r.locationName,
+          currentQty: r.currentQty,
+          targetStock: r.targetStock,
+          stockStatus: r.stockStatus,
+          suggestedPlannedQty: r.suggestedPlannedQty,
+          yieldUnit: r.yieldUnit ?? "",
+          plannedQty: r.suggestedPlannedQty,
+        }))
+      )
+    } catch (err: any) {
+      sileo.error({
+        title: err.message || "No se pudo cargar el listado de stock crítico",
+      })
+    } finally {
+      setLoadingSuggestions(false)
+    }
+  }, [suggestionDepotId])
+
+  useEffect(() => {
+    if (!showSuggestedModal || !suggestionDepotId) return
+    void fetchCriticalSuggestions()
+  }, [showSuggestedModal, suggestionDepotId, fetchCriticalSuggestions])
+
+  const removeSuggestionRow = (rowKey: string) => {
+    setStockSuggestionRows((prev) => prev.filter((r) => r.rowKey !== rowKey))
+  }
+
+  const updateSuggestionPlannedQty = (rowKey: string, plannedQty: number) => {
+    setStockSuggestionRows((prev) =>
+      prev.map((r) => (r.rowKey === rowKey ? { ...r, plannedQty } : r))
+    )
+  }
+
+  const handleCreateFromStockSuggestions = async () => {
+    const rows = stockSuggestionRows.filter((r) => r.plannedQty > 0)
+    if (rows.length === 0) {
+      sileo.error({ title: "No hay líneas con cantidad mayor a 0." })
+      return
+    }
+    if (!suggestionsPlannedDate?.trim()) {
+      sileo.error({ title: "Elegí una fecha planificada para las órdenes." })
+      return
+    }
+    if (suggestionsPlannedDate.slice(0, 10) < minPlannedDate) {
+      sileo.error({ title: "La fecha planificada no puede ser anterior a hoy." })
+      return
+    }
+    setCreatingFromSuggestions(true)
+    try {
+      for (const row of rows) {
+        await productionApi.create({
+          recipeId: row.recipeId,
+          locationId: row.locationId,
+          plannedQty: row.plannedQty,
+          plannedDate: suggestionsPlannedDate,
+          notes: "Producción sugerida — stock crítico en depósito",
+        })
+      }
+      setStockSuggestionRows([])
+      setShowSuggestedModal(false)
+      await fetchOrders()
+      sileo.success({
+        title: `Se crearon ${rows.length} orden${rows.length !== 1 ? "es" : ""} en borrador`,
+      })
+    } catch (err: any) {
+      sileo.error({
+        title: err.message || "Error al crear órdenes desde sugerencias",
+      })
+    } finally {
+      setCreatingFromSuggestions(false)
+    }
+  }
 
   // Al elegir una receta, cargar sus ubicaciones (las configuradas en la receta)
   useEffect(() => {
@@ -248,12 +470,14 @@ export default function ProductionPage() {
     setLoading(true)
     setError(null)
     try {
-      const params: Record<string, any> = {}
+      const params: Record<string, any> = { limit: 500 }
       if (selectedStatus) params.status = selectedStatus
+      if (productionLocationFilterId) params.locationId = productionLocationFilterId
 
       const res = await productionApi.getAll(params)
       const data = res.data ?? (res as any).data ?? []
-      const totalCount = res.total ?? (res as any).meta?.total ?? 0
+      const totalCount =
+        (res as any).meta?.total ?? res.total ?? (res as any).total ?? 0
       setOrders(data)
       setTotal(totalCount)
     } catch (err: any) {
@@ -264,7 +488,7 @@ export default function ProductionPage() {
     } finally {
       setLoading(false)
     }
-  }, [selectedStatus])
+  }, [selectedStatus, productionLocationFilterId])
 
   useEffect(() => {
     fetchOrders()
@@ -361,14 +585,30 @@ export default function ProductionPage() {
             Gestiona las órdenes de producción y recetas
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => { setCreateError(null); setShowCreateModal(true) }}
-          className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700"
-        >
-          <Plus className="h-4 w-4" />
-          Nueva Producción
-        </button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setStockSuggestionRows([])
+              setShowSuggestedModal(true)
+            }}
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-2.5 text-sm font-medium text-gray-800 dark:text-gray-100 shadow-sm transition-colors hover:bg-gray-50 dark:hover:bg-gray-700"
+          >
+            <Sparkles className="h-4 w-4 text-amber-500" />
+            Producción sugerida
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setCreateError(null)
+              setShowCreateModal(true)
+            }}
+            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2.5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-blue-700"
+          >
+            <Plus className="h-4 w-4" />
+            Nueva Producción
+          </button>
+        </div>
       </div>
 
       {/* -------- Filters -------- */}
@@ -388,6 +628,24 @@ export default function ProductionPage() {
             </option>
           ))}
         </select>
+
+        {/* Depósito / sala de producción (misma ubicación que guarda la orden) */}
+        <div className="flex min-w-[220px] max-w-[min(100%,320px)] items-center gap-2 rounded-lg border border-gray-200 bg-white px-2 py-1.5 dark:border-gray-700 dark:bg-gray-800">
+          <Factory className="h-4 w-4 shrink-0 text-gray-400" aria-hidden />
+          <select
+            aria-label="Filtrar por sala de producción o depósito"
+            value={productionLocationFilterId}
+            onChange={(e) => setProductionLocationFilterId(e.target.value)}
+            className="min-w-0 flex-1 border-0 bg-transparent py-0.5 text-sm text-gray-800 focus:outline-none focus:ring-0 dark:text-gray-100"
+          >
+            <option value="">Todas las ubicaciones y salas</option>
+            {productionFilterLocations.map((loc) => (
+              <option key={loc.id} value={loc.id}>
+                {loc.name}
+              </option>
+            ))}
+          </select>
+        </div>
 
         {/* Date */}
         <div className="relative">
@@ -784,7 +1042,7 @@ export default function ProductionPage() {
                         .map((loc: any) => (
                           <option key={loc.id} value={loc.id}>
                             {loc.name}
-                            {loc.type === "WAREHOUSE" ? " (Depósito)" : ""}
+                            {isWarehouseLocationType(loc.type) ? " (Depósito)" : ""}
                           </option>
                         ))}
                   </select>
@@ -865,6 +1123,234 @@ export default function ProductionPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* -------- Modal Producción sugerida (solo stock crítico) -------- */}
+      {showSuggestedModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setShowSuggestedModal(false)}
+        >
+          <div
+            className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  Producción sugerida
+                </h2>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Todas las recetas que tengan este depósito configurado y cuyo producto elaborado está
+                  en stock crítico aquí (misma lógica que el módulo de stock; con mínimo 0 y máximo,
+                  también ≤10 % del máximo). Si hay varias recetas para el mismo producto, aparecen
+                  todas. No se validan insumos en este paso. Cantidad sugerida hasta el objetivo;
+                  podés editarla o quitar filas. Al crear se generan borradores.
+                </p>
+              </div>
+              <button
+                type="button"
+                aria-label="Cerrar"
+                onClick={() => setShowSuggestedModal(false)}
+                className="rounded-lg p-1 text-gray-400 transition-colors hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="shrink-0 border-b border-gray-200 dark:border-gray-700 px-6 py-3">
+              <div className="flex flex-wrap items-end gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                    Depósito
+                  </label>
+                  <select
+                    aria-label="Depósito"
+                    value={suggestionDepotId}
+                    onChange={(e) => setSuggestionDepotId(e.target.value)}
+                    className="min-w-[200px] rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white"
+                  >
+                    {warehouseLocations.length === 0 ? (
+                      <option value="">Sin depósitos</option>
+                    ) : (
+                      warehouseLocations.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.name}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-400">
+                    Fecha planificada
+                  </label>
+                  <input
+                    type="date"
+                    min={minPlannedDate}
+                    aria-label="Fecha planificada"
+                    value={suggestionsPlannedDate}
+                    onChange={(e) => setSuggestionsPlannedDate(e.target.value)}
+                    className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white"
+                  />
+                </div>
+                <button
+                  type="button"
+                  aria-busy={loadingSuggestions}
+                  onClick={() => void fetchCriticalSuggestions()}
+                  disabled={loadingSuggestions || !suggestionDepotId}
+                  className={cn(
+                    "relative inline-flex min-w-[158px] items-center justify-center gap-2 overflow-hidden rounded-lg border px-3 py-2 text-sm font-medium transition-all duration-200",
+                    "border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100",
+                    "hover:bg-gray-50 dark:hover:bg-gray-700 hover:border-gray-400 dark:hover:border-gray-500",
+                    "active:scale-[0.98]",
+                    "disabled:pointer-events-none disabled:opacity-60",
+                    loadingSuggestions &&
+                      "border-blue-400/80 dark:border-blue-600/80 ring-2 ring-blue-500/25 dark:ring-blue-400/20"
+                  )}
+                >
+                  <RefreshCw
+                    className={cn(
+                      "h-4 w-4 shrink-0 transition-transform duration-500",
+                      loadingSuggestions && "animate-spin"
+                    )}
+                    aria-hidden
+                  />
+                  <span className="tabular-nums">
+                    {loadingSuggestions ? "Actualizando…" : "Actualizar listado"}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+              {!suggestionDepotId ? (
+                <p className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/20 px-4 py-3 text-sm text-amber-900 dark:text-amber-100/90">
+                  No hay un depósito seleccionado. Configurá al menos una ubicación tipo depósito o
+                  elegí otra en el listado.
+                </p>
+              ) : loadingSuggestions && stockSuggestionRows.length === 0 ? (
+                <div className="flex items-center justify-center gap-2 py-12 text-sm text-gray-500 dark:text-gray-400">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Cargando productos en stock crítico…
+                </div>
+              ) : stockSuggestionRows.length > 0 ? (
+                <div
+                  className={cn(
+                    "overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700 transition-opacity duration-200",
+                    loadingSuggestions && "pointer-events-none opacity-55"
+                  )}
+                >
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-200 dark:border-gray-700 text-left text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                        <th className="px-3 py-2">Receta</th>
+                        <th className="px-3 py-2">Producto</th>
+                        <th className="px-3 py-2 text-right">Stock actual</th>
+                        <th className="px-3 py-2 text-right">Objetivo</th>
+                        <th className="px-3 py-2">Estado</th>
+                        <th className="px-3 py-2 text-right">Cant. sugerida</th>
+                        <th className="w-12 px-2 py-2" aria-label="Quitar" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stockSuggestionRows.map((row) => (
+                        <tr
+                          key={row.rowKey}
+                          className="border-b border-gray-100 dark:border-gray-800"
+                        >
+                          <td className="px-3 py-2 font-medium text-gray-900 dark:text-white">
+                            {row.recipeName}
+                          </td>
+                          <td className="px-3 py-2 text-gray-600 dark:text-gray-300">
+                            {row.productName}
+                            {row.yieldUnit ? (
+                              <span className="ml-1 text-xs text-gray-400">
+                                ({row.yieldUnit})
+                              </span>
+                            ) : null}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-gray-800 dark:text-gray-200">
+                            {formatNumber(row.currentQty)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-gray-600 dark:text-gray-400">
+                            {formatNumber(row.targetStock)}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span
+                              className={cn(
+                                "inline-flex rounded-full border px-2 py-0.5 text-xs font-medium",
+                                getStockStatusColor(row.stockStatus)
+                              )}
+                            >
+                              {getStockStatusLabel(row.stockStatus)}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <FormattedNumberInput
+                              aria-label={`Cantidad sugerida ${row.recipeName}`}
+                              value={row.plannedQty}
+                              onChange={(n) =>
+                                updateSuggestionPlannedQty(row.rowKey, n)
+                              }
+                              className="ml-auto w-28 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-2 py-1.5 text-right text-sm tabular-nums"
+                            />
+                          </td>
+                          <td className="px-2 py-2 text-center">
+                            <button
+                              type="button"
+                              aria-label={`Quitar ${row.recipeName}`}
+                              onClick={() => removeSuggestionRow(row.rowKey)}
+                              className="rounded-lg p-2 text-gray-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900/40 px-4 py-3 text-sm text-gray-600 dark:text-gray-400">
+                  No hay líneas para mostrar: puede que el stock crítico que ves en la grilla general sea
+                  de otro depósito, que la receta activa no tenga enlazado el mismo producto elaborado
+                  (campo producto en la receta), o que todas las recetas de ese producto tengan ya una
+                  orden borrador/pendiente/en curso en este depósito. Probá «Actualizar listado» o otro
+                  depósito.
+                </p>
+              )}
+            </div>
+
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/80 px-6 py-4">
+              <button
+                type="button"
+                onClick={() => setShowSuggestedModal(false)}
+                disabled={creatingFromSuggestions}
+                className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+              >
+                Cerrar
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleCreateFromStockSuggestions()}
+                disabled={
+                  creatingFromSuggestions ||
+                  stockSuggestionRows.length === 0 ||
+                  !suggestionDepotId
+                }
+                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {creatingFromSuggestions ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Factory className="h-4 w-4" />
+                )}
+                Crear producción
+              </button>
+            </div>
           </div>
         </div>
       )}

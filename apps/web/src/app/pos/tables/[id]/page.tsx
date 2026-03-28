@@ -13,8 +13,9 @@ import { cashRegistersApi } from "@/lib/api/cash-registers"
 import { getLocationKey, posStationSuffix } from "@/lib/api"
 import { isBaristaTakeProductSku } from "@/lib/barista-take-products"
 import { aiEventsApi } from "@/lib/api/ai-events"
+import { speakShort } from "@/lib/speech"
 import { sileo } from "sileo"
-import { cn, formatCurrency } from "@/lib/utils"
+import { cn, formatCurrency, isProductAvailableAtLocation } from "@/lib/utils"
 import {
   ArrowLeft,
   Plus,
@@ -366,8 +367,8 @@ function computeVisibleModifierGroupIdsForPos(
                 sortedForRule.find((x) => x.sortOrder === rule.whenPriorGroupSortOrder)
               : sortedForRule.find((x) => x.sortOrder === rule.whenPriorGroupSortOrder),
           ].filter((x): x is any => Boolean(x))
+    // Coincide con `computeVisibleModifierGroupIds` en el API: sin prior resoluble → no visible.
     if (priors.length === 0) {
-      visible.push(g.id)
       continue
     }
     let ok = false
@@ -1359,7 +1360,6 @@ export default function TableOrderPage() {
       })
     }
 
-    const synth = window.speechSynthesis
     let phrase: string
     if (modalQueue.length > 0) {
       if (directLabels.length > 0) {
@@ -1375,17 +1375,14 @@ export default function TableOrderPage() {
         return m.notes ? `${base} (${m.notes})` : base
       }).join(", ")}`
     }
-    const utt = new SpeechSynthesisUtterance(phrase)
-    utt.lang = "es-AR"
-    utt.rate = 1.1
-    synth.speak(utt)
+    speakShort(phrase)
 
     setVoiceConfirming(false)
     setVoiceMatches([])
     setVoiceTranscript("")
   }, [voiceMatches, pendingItems])
 
-  /* ── resolve location ── */
+  /* ── resolve location (solo si aún vacío: no pisar el local de la mesa al cargarla) ── */
   useEffect(() => {
     const user = authApi.getStoredUser()
     const loc =
@@ -1399,7 +1396,7 @@ export default function TableOrderPage() {
           return null
         }
       })()
-    if (loc?.id) setLocationId(loc.id)
+    if (loc?.id) setLocationId((prev) => prev || loc.id)
   }, [])
 
   /* ── estado de turno (caja abierta) ── */
@@ -1446,9 +1443,11 @@ export default function TableOrderPage() {
       const tableData = await tablesApi.getById(tableId)
       setTable(tableData)
 
-      const effectiveLocationId = locationId || tableData?.location?.id || ""
-      if (!locationId && tableData?.location?.id) {
-        setLocationId(tableData.location.id)
+      /** Venta en mesa = siempre el local de la mesa (no el del usuario en otra sucursal). */
+      const tableLocId = tableData?.location?.id ?? ""
+      const effectiveLocationId = tableLocId || locationId || ""
+      if (tableLocId) {
+        setLocationId(tableLocId)
       }
 
       if (effectiveLocationId) {
@@ -1459,17 +1458,23 @@ export default function TableOrderPage() {
           _refresh: Date.now(),
         })
         const rawProducts = productsData?.data ?? productsData ?? []
-        const scopedProducts = rawProducts.map((product: any) => {
-          const stockForLocation = Array.isArray(product.stockLevels)
-            ? product.stockLevels.find((level: any) => level.locationId === effectiveLocationId)
-            : null
-          // Antes se excluían productos sin stock_levels en este local → no aparecían en mesas
-          // (p. ej. carta recién sembrada o local nuevo). Mostrarlos igual; precio desde producto si hace falta.
-          return {
-            ...product,
-            salePrice: stockForLocation?.salePrice ?? product.salePrice ?? 0,
-          }
-        })
+        const scopedProducts = rawProducts
+          .filter((product: any) =>
+            isProductAvailableAtLocation(product, effectiveLocationId)
+          )
+          .map((product: any) => {
+            const stockForLocation = Array.isArray(product.stockLevels)
+              ? product.stockLevels.find(
+                  (level: any) =>
+                    (level.locationId ?? level.location?.id) ===
+                    effectiveLocationId
+                )
+              : null
+            return {
+              ...product,
+              salePrice: stockForLocation?.salePrice ?? product.salePrice ?? 0,
+            }
+          })
 
         setProducts(scopedProducts)
       } else {
@@ -3047,14 +3052,29 @@ export default function TableOrderPage() {
                 const qty = pendingItems
                   .filter((i) => i.productId === product.id)
                   .reduce((s, i) => s + i.quantity, 0)
+                const stockLocationId = table?.location?.id || locationId || ""
+                const locationStockQty = Array.isArray(product.stockLevels)
+                  ? Number(
+                      product.stockLevels.find(
+                        (l: { locationId?: string; location?: { id?: string } }) =>
+                          (l.locationId ?? l.location?.id) === stockLocationId
+                      )?.quantity ?? 0
+                    )
+                  : 0
+                const noStockAtLocation = locationStockQty <= 0
+                const blockedByGridStock = noStockAtLocation
+                const showSinStockEnLocal = noStockAtLocation
                 return (
                   <button
                     key={product.id}
                     onClick={() => void addProduct(product)}
-                    disabled={!hasOpenShift || modifierModalLoading}
+                    disabled={
+                      !hasOpenShift || modifierModalLoading || blockedByGridStock
+                    }
                     className={cn(
                       "relative flex flex-col items-start rounded-xl border border-gray-200 bg-white p-3 text-left transition-all hover:border-blue-300 hover:shadow-sm active:scale-[0.97]",
-                      !hasOpenShift && "cursor-not-allowed opacity-60"
+                      !hasOpenShift && "cursor-not-allowed opacity-60",
+                      blockedByGridStock && "cursor-not-allowed opacity-60"
                     )}
                   >
                     <span className="mb-2 flex h-16 w-full shrink-0 overflow-hidden rounded-lg border border-gray-100 bg-gray-50">
@@ -3079,6 +3099,11 @@ export default function TableOrderPage() {
                     <span className="mt-auto pt-2 text-sm font-bold text-blue-600">
                       {formatCurrency(product.salePrice)}
                     </span>
+                    {showSinStockEnLocal && (
+                      <span className="mt-1 text-xs font-semibold leading-snug text-red-600 sm:text-sm">
+                        Sin stock en este local
+                      </span>
+                    )}
                     {qty && (
                       <span className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-blue-500 text-[10px] font-bold text-white ring-2 ring-white">
                         {qty}

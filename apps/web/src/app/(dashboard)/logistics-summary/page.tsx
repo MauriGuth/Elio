@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useMemo } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { sileo } from "sileo"
@@ -54,6 +54,10 @@ const statusConfig = {
   },
 }
 
+function isWarehouseLocation(type?: string) {
+  return type === "WAREHOUSE" || String(type ?? "").toLowerCase() === "warehouse"
+}
+
 export default function LogisticsSummaryPage() {
   const router = useRouter()
   const [locations, setLocations] = useState<Array<{ id: string; name: string; type?: string }>>([])
@@ -90,6 +94,17 @@ export default function LogisticsSummaryPage() {
     }).catch(() => {})
   }, [])
 
+  const retailLocations = useMemo(
+    () => locations.filter((l) => !isWarehouseLocation(l.type)),
+    [locations],
+  )
+
+  useEffect(() => {
+    if (!locationId) return
+    const loc = locations.find((l) => l.id === locationId)
+    if (loc && isWarehouseLocation(loc.type)) setLocationId("")
+  }, [locations, locationId])
+
   const byLocation = items.reduce<Record<string, Item[]>>((acc, item) => {
     const key = item.locationId
     if (!acc[key]) acc[key] = []
@@ -103,8 +118,12 @@ export default function LogisticsSummaryPage() {
       return { id, name: first.location.name, type: first.location.type }
     })
     .sort((a, b) => {
-      const warehouseFirst = (t?: string) => t === "WAREHOUSE" ? 0 : 1
-      return warehouseFirst(a.type) - warehouseFirst(b.type) || a.name.localeCompare(b.name)
+      const isWh = (t?: string) =>
+        t === "WAREHOUSE" || String(t).toLowerCase() === "warehouse"
+      if (locationId) {
+        return isWh(a.type) - isWh(b.type) || a.name.localeCompare(b.name)
+      }
+      return a.name.localeCompare(b.name)
     })
 
   const filteredByLocation = locationOrder.map((loc) => ({
@@ -162,7 +181,7 @@ export default function LogisticsSummaryPage() {
             Resumen para logística
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Stock por local/depósito y sugerencia de pedido según mínimo y máximo. Base para reponer por demanda.
+            Stock por local y sugerencia de pedido (mín/máx y demanda). El depósito no aparece acá: esta vista es solo para sucursales / negocios.
           </p>
         </div>
         <Link
@@ -177,7 +196,7 @@ export default function LogisticsSummaryPage() {
       <div className="flex flex-wrap items-center gap-4 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
         <div>
           <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">
-            Local / Depósito
+            Local
           </label>
           <select
             value={locationId}
@@ -185,10 +204,10 @@ export default function LogisticsSummaryPage() {
             className="rounded-lg border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white px-3 py-2 text-sm"
             aria-label="Filtrar por local"
           >
-            <option value="">Todos</option>
-            {locations.map((loc) => (
+            <option value="">Todos los locales</option>
+            {retailLocations.map((loc) => (
               <option key={loc.id} value={loc.id}>
-                {loc.name} {loc.type === "WAREHOUSE" ? "(Depósito)" : ""}
+                {loc.name}
               </option>
             ))}
           </select>
@@ -208,7 +227,15 @@ export default function LogisticsSummaryPage() {
 
       {(error || orderError) && (
         <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/30 px-4 py-3 text-sm text-red-700 dark:text-red-300">
-          {error ?? orderError}
+          <p>{error ?? orderError}</p>
+          {orderError?.includes("Logística y Envíos") ? (
+            <Link
+              href="/logistics"
+              className="mt-2 inline-flex font-medium text-red-800 underline hover:text-red-900 dark:text-red-200 dark:hover:text-white"
+            >
+              Ir a Logística y Envíos
+            </Link>
+          ) : null}
         </div>
       )}
 

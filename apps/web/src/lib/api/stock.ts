@@ -10,11 +10,18 @@ export const stockApi = {
   getSummary: (locationId?: string) =>
     api.get<any>('/stock/summary', locationId ? { locationId } : undefined),
 
-  getLogisticsSummary: (locationId?: string) =>
+  getLogisticsSummary: (locationId?: string, purchaseOnly?: boolean) =>
     api.get<Array<{
       id: string;
       productId: string;
-      product: { id: string; name: string; sku: string | null; unit: string; avgCost: number };
+      product: {
+        id: string;
+        name: string;
+        sku: string | null;
+        unit: string;
+        avgCost: number;
+        category?: { name: string; slug?: string } | null;
+      };
       locationId: string;
       location: { id: string; name: string; type: string };
       quantity: number;
@@ -25,7 +32,13 @@ export const stockApi = {
       soldLast7Days: number;
       soldLast30Days: number;
       suggestedOrderQtyByDemand: number;
-    }>>('/stock/logistics-summary', locationId ? { locationId } : undefined),
+    }>>(
+      '/stock/logistics-summary',
+      {
+        ...(locationId ? { locationId } : {}),
+        ...(purchaseOnly ? { purchaseOnly: 'true' } : {}),
+      },
+    ),
 
   adjust: (data: { productId: string; locationId: string; quantity: number; reason: string; notes?: string }) =>
     api.post<any>('/stock/adjust', data),

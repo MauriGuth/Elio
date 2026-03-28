@@ -9,6 +9,7 @@ import { ordersApi } from "@/lib/api/orders"
 import { locationsApi } from "@/lib/api/locations"
 import { authApi } from "@/lib/api/auth"
 import { cashRegistersApi } from "@/lib/api/cash-registers"
+import { speakAnnouncement } from "@/lib/speech"
 import { getLocationKey, posStationSuffix } from "@/lib/api"
 import { cn, formatCurrency } from "@/lib/utils"
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input"
@@ -519,18 +520,18 @@ export default function TablesPage() {
       // Filter out already dismissed
       const fresh = items.filter((n: any) => !dismissedReadyRef.current.has(n.tableId))
       setReadyNotifications(fresh)
-      // Voice announce new ones (solo cajero/admin; mozo no escucha alerta por voz)
+      // Voice announce new ones (solo cajero/admin; misma voz que cocina/cafetería — @/lib/speech)
       if (!isMozo && fresh.length > 0 && typeof window !== "undefined" && window.speechSynthesis) {
+        const parts: string[] = []
         for (const n of fresh) {
           if (!dismissedReadyRef.current.has(`announced-${n.tableId}`)) {
             dismissedReadyRef.current.add(`announced-${n.tableId}`)
             const itemNames = n.items.map((i: any) => `${i.quantity} ${i.name}`).join(", ")
-            const text = `¡${n.tableName} lista! ${itemNames}`
-            const utt = new SpeechSynthesisUtterance(text)
-            utt.lang = "es-AR"
-            utt.rate = 1
-            window.speechSynthesis.speak(utt)
+            parts.push(`¡${n.tableName} lista! ${itemNames}`)
           }
+        }
+        if (parts.length > 0) {
+          speakAnnouncement(parts.join(". "), () => {})
         }
       }
     } catch { /* silently fail */ }

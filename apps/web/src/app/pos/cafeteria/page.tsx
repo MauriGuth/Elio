@@ -117,7 +117,7 @@ export default function PosCafeteriaPage() {
       const newItemMap = new Map<string, Set<string>>()
 
       // Incluir primera carga: si no hay prevIds, tratar todas las órdenes como nuevas para anunciar
-      const newOnes = prevIds.size > 0 ? list.filter((o: any) => !prevIds.has(o.id)) : list
+      const newOnes = prevIds.size > 0 ? list.filter((o: any) => !prevIds.has(o.id)) : []
       if (newOnes.length > 0) {
           const hasNewCafe = newOnes.some((o: any) =>
             (o.items ?? []).some(

@@ -8,6 +8,17 @@ export const productionApi = {
 
   getStats: (locationId?: string) => api.get<any>('/production/stats', locationId ? { locationId } : undefined),
 
+  getSuggestionsFromStock: (
+    locationId: string,
+    params?: { stockBand?: 'critical' | 'medium' | 'all' },
+  ) =>
+    api.get<{ data: any[] }>('/production/suggestions-from-stock', {
+      locationId,
+      ...(params?.stockBand && params.stockBand !== 'all'
+        ? { stockBand: params.stockBand }
+        : {}),
+    }),
+
   create: (data: any) => api.post<any>('/production', data),
 
   start: (id: string) => api.post<any>(`/production/${id}/start`),

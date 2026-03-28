@@ -116,7 +116,7 @@ export default function CafeteriaDisplayPage() {
       const newItemMap = new Map<string, Set<string>>()
 
       // Incluir primera carga: si no hay prevIds, tratar todas las órdenes actuales como nuevas para anunciar
-      const newOnes = prevIds.size > 0 ? list.filter((o: any) => !prevIds.has(o.id)) : list
+      const newOnes = prevIds.size > 0 ? list.filter((o: any) => !prevIds.has(o.id)) : []
       if (newOnes.length > 0) {
           const hasNew = newOnes.some((o: any) => (o.items ?? []).some((i: any) => i.status === "pending" && CAFE_SECTORS.includes(i.sector)))
           if (hasNew) { setHasNewOrders(true); setTimeout(() => setHasNewOrders(false), 5_000) }

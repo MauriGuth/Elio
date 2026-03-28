@@ -14,6 +14,9 @@ import {
   X,
   Loader2,
   Trash2,
+  ChevronUp,
+  ChevronDown,
+  Layers,
 } from "lucide-react"
 import { shipmentsApi } from "@/lib/api/shipments"
 import { locationsApi } from "@/lib/api/locations"
@@ -142,6 +145,17 @@ function TableSkeleton() {
   )
 }
 
+function routeSegments(shipment: any): string[] {
+  const o = shipment.origin?.name || "—"
+  if (shipment.isMultiStop && Array.isArray(shipment.stops) && shipment.stops.length > 0) {
+    const ordered = [...shipment.stops].sort(
+      (a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
+    )
+    return [o, ...ordered.map((s: any) => s.location?.name || "—")]
+  }
+  return [o, shipment.destination?.name || "—"]
+}
+
 // ---------- main page ----------
 
 export default function LogisticsPage() {
@@ -178,13 +192,33 @@ export default function LogisticsPage() {
   const [shipmentItems, setShipmentItems] = useState<
     Array<{ productId: string; sentQty: number }>
   >([{ productId: "", sentQty: 1 }])
+
+  type MultiStopDraft = {
+    locationId: string
+    items: Array<{ productId: string; sentQty: number }>
+  }
+  const emptyMultiStop = (): MultiStopDraft => ({
+    locationId: "",
+    items: [{ productId: "", sentQty: 1 }],
+  })
+  const [createMode, setCreateMode] = useState<"multi" | "single">("multi")
+  const [multiStops, setMultiStops] = useState<MultiStopDraft[]>([
+    emptyMultiStop(),
+    emptyMultiStop(),
+  ])
+
   const [estimateDurationMin, setEstimateDurationMin] = useState<number | null>(null)
   const [estimateReason, setEstimateReason] = useState<'no_api_key' | 'no_address' | null>(null)
   const [estimateLoading, setEstimateLoading] = useState(false)
 
-  // Estimate duration when origin/destination change (Google Maps opcional)
+  // Estimate duration when origin/destination change (Google Maps opcional) — solo envío simple
   useEffect(() => {
-    if (!showCreateModal || !newShipment.originId || !newShipment.destinationId) {
+    if (
+      !showCreateModal ||
+      createMode !== "single" ||
+      !newShipment.originId ||
+      !newShipment.destinationId
+    ) {
       setEstimateDurationMin(null)
       setEstimateReason(null)
       return
@@ -214,9 +248,9 @@ export default function LogisticsPage() {
     return () => {
       cancelled = true
     }
-  }, [showCreateModal, newShipment.originId, newShipment.destinationId])
+  }, [showCreateModal, createMode, newShipment.originId, newShipment.destinationId])
 
-  // Close modal on Escape
+  // Close modal on Escape (el formulario se limpia al volver a abrir con «Nuevo Envío»)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") setShowCreateModal(false)
@@ -323,6 +357,21 @@ export default function LogisticsPage() {
   const d = new Date()
   const minEstimatedArrival = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
 
+  const parseEstimatedArrival = () => {
+    if (!newShipment.estimatedArrival?.trim()) return undefined
+    const t = newShipment.estimatedArrival.trim()
+    return /^\d{4}-\d{2}-\d{2}$/.test(t) ? `${t}T12:00:00.000Z` : t
+  }
+
+  const resetCreateForm = () => {
+    setNewShipment({ originId: "", destinationId: "", estimatedArrival: "", notes: "" })
+    setEstimateDurationMin(null)
+    setEstimateReason(null)
+    setShipmentItems([{ productId: "", sentQty: 1 }])
+    setCreateMode("multi")
+    setMultiStops([emptyMultiStop(), emptyMultiStop()])
+  }
+
   // Handle create shipment
   const handleCreateShipment = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -334,34 +383,90 @@ export default function LogisticsPage() {
         return
       }
     }
+    if (!newShipment.originId) {
+      setCreateError("Seleccioná un origen.")
+      return
+    }
+
     setCreating(true)
     try {
-      const validItems = shipmentItems.filter((item) => item.productId && item.sentQty > 0)
-      if (validItems.length === 0) {
-        setCreateError("Debes agregar al menos un ítem al envío")
-        setCreating(false)
-        return
+      const estimatedArrival = parseEstimatedArrival()
+
+      if (createMode === "multi") {
+        if (multiStops.length < 2) {
+          setCreateError("La ruta multi-parada requiere al menos dos paradas.")
+          setCreating(false)
+          return
+        }
+        const seenLocs = new Set<string>()
+        for (let i = 0; i < multiStops.length; i++) {
+          const s = multiStops[i]
+          if (!s.locationId) {
+            setCreateError(`Elegí el local de la parada ${i + 1}.`)
+            setCreating(false)
+            return
+          }
+          if (s.locationId === newShipment.originId) {
+            setCreateError(`La parada ${i + 1} no puede ser el mismo local que el origen.`)
+            setCreating(false)
+            return
+          }
+          if (seenLocs.has(s.locationId)) {
+            setCreateError("No repetir el mismo local en dos paradas.")
+            setCreating(false)
+            return
+          }
+          seenLocs.add(s.locationId)
+          const valid = s.items.filter((it) => it.productId && it.sentQty > 0)
+          if (valid.length === 0) {
+            setCreateError(`Agregá al menos un ítem en la parada ${i + 1} (${locations.find((l) => l.id === s.locationId)?.name || "local"}).`)
+            setCreating(false)
+            return
+          }
+        }
+        const stopsPayload = multiStops.map((s) => ({
+          locationId: s.locationId,
+          items: s.items
+            .filter((it) => it.productId && it.sentQty > 0)
+            .map((it) => ({ productId: it.productId, sentQty: it.sentQty })),
+        }))
+        await shipmentsApi.createMulti({
+          originId: newShipment.originId,
+          estimatedArrival,
+          notes: newShipment.notes || undefined,
+          stops: stopsPayload,
+        })
+      } else {
+        if (!newShipment.destinationId) {
+          setCreateError("Seleccioná un destino.")
+          setCreating(false)
+          return
+        }
+        const validItems = shipmentItems.filter((item) => item.productId && item.sentQty > 0)
+        if (validItems.length === 0) {
+          setCreateError("Debes agregar al menos un ítem al envío")
+          setCreating(false)
+          return
+        }
+        await shipmentsApi.create({
+          originId: newShipment.originId,
+          destinationId: newShipment.destinationId,
+          estimatedArrival,
+          estimatedDurationMin: estimateDurationMin ?? undefined,
+          notes: newShipment.notes || undefined,
+          items: validItems,
+        })
       }
-      const estimatedArrival =
-        newShipment.estimatedArrival?.trim()
-          ? /^\d{4}-\d{2}-\d{2}$/.test(newShipment.estimatedArrival.trim())
-            ? `${newShipment.estimatedArrival.trim()}T12:00:00.000Z`
-            : newShipment.estimatedArrival.trim()
-          : undefined
-      await shipmentsApi.create({
-        originId: newShipment.originId,
-        destinationId: newShipment.destinationId,
-        estimatedArrival,
-        estimatedDurationMin: estimateDurationMin ?? undefined,
-        notes: newShipment.notes || undefined,
-        items: validItems,
-      })
+
       setShowCreateModal(false)
-      setNewShipment({ originId: "", destinationId: "", estimatedArrival: "", notes: "" })
-      setEstimateDurationMin(null)
-      setShipmentItems([{ productId: "", sentQty: 1 }])
+      resetCreateForm()
       fetchShipments()
-      sileo.success({ title: "Envío creado correctamente" })
+      sileo.success({
+        title:
+          createMode === "multi"
+            ? "Envío multi-parada creado correctamente"
+            : "Envío creado correctamente",
+      })
     } catch (err: any) {
       const msg = err.message || "Error al crear el envío"
       setCreateError(msg)
@@ -371,7 +476,7 @@ export default function LogisticsPage() {
     }
   }
 
-  // Items helpers
+  // Items helpers (un solo destino)
   const addItem = () => setShipmentItems([...shipmentItems, { productId: "", sentQty: 1 }])
   const removeItem = (index: number) => {
     if (shipmentItems.length > 1) {
@@ -381,6 +486,62 @@ export default function LogisticsPage() {
   const updateItem = (index: number, field: string, value: string | number) => {
     setShipmentItems(
       shipmentItems.map((item, i) => (i === index ? { ...item, [field]: value } : item))
+    )
+  }
+
+  const addMultiStop = () => setMultiStops((prev) => [...prev, emptyMultiStop()])
+  const removeMultiStop = (idx: number) => {
+    setMultiStops((prev) => {
+      if (prev.length <= 2) return prev
+      return prev.filter((_, i) => i !== idx)
+    })
+  }
+  const moveMultiStop = (idx: number, dir: -1 | 1) => {
+    const j = idx + dir
+    if (j < 0 || j >= multiStops.length) return
+    setMultiStops((prev) => {
+      const next = [...prev]
+      ;[next[idx], next[j]] = [next[j], next[idx]]
+      return next
+    })
+  }
+  const setStopLocation = (stopIdx: number, locationId: string) => {
+    setMultiStops((prev) =>
+      prev.map((s, i) => (i === stopIdx ? { ...s, locationId } : s)),
+    )
+  }
+  const addStopItem = (stopIdx: number) => {
+    setMultiStops((prev) =>
+      prev.map((s, i) =>
+        i === stopIdx ? { ...s, items: [...s.items, { productId: "", sentQty: 1 }] } : s,
+      ),
+    )
+  }
+  const removeStopItem = (stopIdx: number, itemIdx: number) => {
+    setMultiStops((prev) =>
+      prev.map((s, i) => {
+        if (i !== stopIdx) return s
+        if (s.items.length <= 1) return s
+        return { ...s, items: s.items.filter((_, j) => j !== itemIdx) }
+      }),
+    )
+  }
+  const updateStopItem = (
+    stopIdx: number,
+    itemIdx: number,
+    field: "productId" | "sentQty",
+    value: string | number,
+  ) => {
+    setMultiStops((prev) =>
+      prev.map((s, i) => {
+        if (i !== stopIdx) return s
+        return {
+          ...s,
+          items: s.items.map((it, j) =>
+            j === itemIdx ? { ...it, [field]: value } : it,
+          ),
+        }
+      }),
     )
   }
 
@@ -402,6 +563,7 @@ export default function LogisticsPage() {
             setCreateError(null)
             const d = new Date()
             const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+            resetCreateForm()
             setNewShipment((prev) => ({ ...prev, estimatedArrival: today }))
             setShowCreateModal(true)
           }}
@@ -521,8 +683,7 @@ export default function LogisticsPage() {
                 {filteredShipments.map((shipment) => {
                   const status = (shipment.status || "draft") as ShipmentStatus
                   const cfg = statusConfig[status] || statusConfig.draft
-                  const originName = shipment.origin?.name || "—"
-                  const destName = shipment.destination?.name || "—"
+                  const segments = routeSegments(shipment)
                   const totalItems =
                     shipment.totalItems ?? shipment._count?.items ?? 0
                   const createdByName =
@@ -544,15 +705,23 @@ export default function LogisticsPage() {
                           </span>
                         </td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-2 text-sm">
-                            <span className="font-medium text-gray-900 dark:text-white">
-                              {originName}
-                            </span>
-                            <ArrowRight className="h-3.5 w-3.5 text-gray-400" />
-                            <span className="font-medium text-gray-900 dark:text-white">
-                              {destName}
-                            </span>
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                            {segments.map((name, idx) => (
+                              <span key={`${shipment.id}-seg-${idx}`} className="flex items-center gap-2">
+                                {idx > 0 ? (
+                                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                                ) : null}
+                                <span className="font-medium text-gray-900 dark:text-white">
+                                  {name}
+                                </span>
+                              </span>
+                            ))}
                           </div>
+                          {shipment.isMultiStop ? (
+                            <p className="mt-1 text-[10px] text-gray-500 dark:text-gray-400">
+                              Ruta multi-parada (un envío, varios locales)
+                            </p>
+                          ) : null}
                         </td>
                         <td className="px-4 py-3 text-right text-sm tabular-nums text-gray-700 dark:text-gray-200">
                           {totalItems}
@@ -781,7 +950,7 @@ export default function LogisticsPage() {
           onClick={() => setShowCreateModal(false)}
         >
           <div
-            className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-white dark:bg-gray-800 shadow-2xl border border-gray-200 dark:border-gray-700"
+            className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-white dark:bg-gray-800 shadow-2xl border border-gray-200 dark:border-gray-700"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
@@ -792,7 +961,10 @@ export default function LogisticsPage() {
               <button
                 type="button"
                 aria-label="Cerrar"
-                onClick={() => setShowCreateModal(false)}
+                onClick={() => {
+                  setShowCreateModal(false)
+                  resetCreateForm()
+                }}
                 className="rounded-lg p-1 text-gray-400 transition-colors hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-white"
               >
                 <X className="h-5 w-5" />
@@ -808,13 +980,47 @@ export default function LogisticsPage() {
                   </div>
                 )}
 
+                <div className="flex flex-wrap gap-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900/40 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setCreateMode("multi")}
+                    className={cn(
+                      "inline-flex flex-1 min-w-[140px] items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                      createMode === "multi"
+                        ? "bg-white dark:bg-gray-800 text-blue-700 dark:text-blue-300 shadow-sm"
+                        : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white",
+                    )}
+                  >
+                    <Layers className="h-4 w-4 shrink-0" />
+                    Varias paradas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCreateMode("single")}
+                    className={cn(
+                      "inline-flex flex-1 min-w-[140px] items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                      createMode === "single"
+                        ? "bg-white dark:bg-gray-800 text-blue-700 dark:text-blue-300 shadow-sm"
+                        : "text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white",
+                    )}
+                  >
+                    <MapPin className="h-4 w-4 shrink-0" />
+                    Un destino
+                  </button>
+                </div>
+
+                {createMode === "multi" ? (
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    Un solo envío con varios locales en orden de visita (alineado con Google Maps en el detalle). Podés reordenar paradas con las flechas antes de crear.
+                  </p>
+                ) : null}
+
                 {/* Origin */}
                 <div>
                   <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
                     Origen <span className="text-red-500">*</span>
                   </label>
                   <select
-                    required
                     aria-label="Origen"
                     value={newShipment.originId}
                     onChange={(e) =>
@@ -831,53 +1037,255 @@ export default function LogisticsPage() {
                   </select>
                 </div>
 
-                {/* Destination */}
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
-                    Destino <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    required
-                    aria-label="Destino"
-                    value={newShipment.destinationId}
-                    onChange={(e) =>
-                      setNewShipment({ ...newShipment, destinationId: e.target.value })
-                    }
-                    className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                  >
-                    <option value="">Seleccionar destino...</option>
-                    {locations
-                      .filter((loc) => loc.id !== newShipment.originId)
-                      .map((loc) => (
-                        <option key={loc.id} value={loc.id}>
-                          {loc.name}
-                        </option>
-                      ))}
-                  </select>
-                </div>
+                {createMode === "single" ? (
+                  <>
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
+                        Destino <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        aria-label="Destino"
+                        value={newShipment.destinationId}
+                        onChange={(e) =>
+                          setNewShipment({ ...newShipment, destinationId: e.target.value })
+                        }
+                        className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      >
+                        <option value="">Seleccionar destino...</option>
+                        {locations
+                          .filter((loc) => loc.id !== newShipment.originId)
+                          .map((loc) => (
+                            <option key={loc.id} value={loc.id}>
+                              {loc.name}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
 
-                {/* Tiempo estimado (Google Maps) */}
-                {newShipment.originId && newShipment.destinationId && (
-                  <div className="rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-200">
-                    {estimateLoading ? (
-                      <span className="inline-flex items-center gap-1.5">
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        Estimando tiempo de ruta...
-                      </span>
-                    ) : estimateDurationMin != null ? (
-                      <span>
-                        Tiempo estimado de ruta: <strong>{estimateDurationMin} min</strong>
-                      </span>
-                    ) : (
-                      <span className="text-gray-500">
-                        {estimateReason === "no_api_key"
-                          ? "Sin estimación: configurá la variable GOOGLE_MAPS_API_KEY en la API (Railway)."
-                          : estimateReason === "no_address"
-                            ? "Sin estimación: cargá la dirección en Origen y Destino (Dashboard → Locales → editar cada local)."
-                            : "Sin estimación (configurá direcciones en los locales y GOOGLE_MAPS_API_KEY en la API)."}
-                      </span>
+                    {newShipment.originId && newShipment.destinationId && (
+                      <div className="rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-200">
+                        {estimateLoading ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            Estimando tiempo de ruta...
+                          </span>
+                        ) : estimateDurationMin != null ? (
+                          <span>
+                            Tiempo estimado de ruta: <strong>{estimateDurationMin} min</strong>
+                          </span>
+                        ) : (
+                          <span className="text-gray-500">
+                            {estimateReason === "no_api_key"
+                              ? "Sin estimación: configurá la variable GOOGLE_MAPS_API_KEY en la API (Railway)."
+                              : estimateReason === "no_address"
+                                ? "Sin estimación: cargá la dirección en Origen y Destino (Dashboard → Locales → editar cada local)."
+                                : "Sin estimación (configurá direcciones en los locales y GOOGLE_MAPS_API_KEY en la API)."}
+                          </span>
+                        )}
+                      </div>
                     )}
-                  </div>
+
+                    <div>
+                      <div className="mb-2 flex items-center justify-between">
+                        <label className="text-sm font-medium text-gray-700 dark:text-white">
+                          Ítems <span className="text-red-500">*</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={addItem}
+                          className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-blue-600 dark:text-blue-400 transition-colors hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                        >
+                          <Plus className="h-3.5 w-3.5" />
+                          Agregar ítem
+                        </button>
+                      </div>
+                      <div className="space-y-2">
+                        {shipmentItems.map((item, index) => (
+                          <div key={index} className="flex items-center gap-2">
+                            <select
+                              aria-label="Producto"
+                              value={item.productId}
+                              onChange={(e) => updateItem(index, "productId", e.target.value)}
+                              className="flex-1 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            >
+                              <option value="">Producto...</option>
+                              {productsList.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.sku} - {p.name}
+                                </option>
+                              ))}
+                            </select>
+                            <FormattedNumberInput
+                              value={item.sentQty}
+                              onChange={(n) =>
+                                updateItem(index, "sentQty", n)
+                              }
+                              placeholder="1"
+                              className="w-24 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                            <button
+                              type="button"
+                              aria-label="Eliminar ítem"
+                              onClick={() => removeItem(index)}
+                              disabled={shipmentItems.length <= 1}
+                              className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-red-50 dark:hover:bg-red-900/30 hover:text-red-500 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-400"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-sm font-medium text-gray-700 dark:text-white">
+                        Paradas <span className="text-red-500">*</span>
+                        <span className="ml-1 font-normal text-gray-500 dark:text-gray-400">
+                          (mín. 2, orden = ruta)
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={addMultiStop}
+                        className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-blue-600 dark:text-blue-400 transition-colors hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Agregar parada
+                      </button>
+                    </div>
+
+                    <div className="space-y-4">
+                      {multiStops.map((stop, stopIdx) => {
+                        const takenElsewhere = new Set(
+                          multiStops
+                            .map((s, i) => (i !== stopIdx ? s.locationId : ""))
+                            .filter(Boolean),
+                        )
+                        return (
+                          <div
+                            key={stopIdx}
+                            className="rounded-xl border border-gray-200 dark:border-gray-600 bg-gray-50/80 dark:bg-gray-900/30 p-4"
+                          >
+                            <div className="mb-3 flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+                                Parada {stopIdx + 1}
+                              </span>
+                              <div className="ml-auto flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  aria-label="Subir parada"
+                                  onClick={() => moveMultiStop(stopIdx, -1)}
+                                  disabled={stopIdx === 0}
+                                  className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30"
+                                >
+                                  <ChevronUp className="h-4 w-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-label="Bajar parada"
+                                  onClick={() => moveMultiStop(stopIdx, 1)}
+                                  disabled={stopIdx === multiStops.length - 1}
+                                  className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30"
+                                >
+                                  <ChevronDown className="h-4 w-4" />
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-label="Quitar parada"
+                                  onClick={() => removeMultiStop(stopIdx)}
+                                  disabled={multiStops.length <= 2}
+                                  className="rounded-lg p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 disabled:opacity-30"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </div>
+                            </div>
+                            <div className="mb-3">
+                              <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
+                                Local
+                              </label>
+                              <select
+                                aria-label={`Local parada ${stopIdx + 1}`}
+                                value={stop.locationId}
+                                onChange={(e) => setStopLocation(stopIdx, e.target.value)}
+                                className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              >
+                                <option value="">Seleccionar local...</option>
+                                {locations
+                                  .filter(
+                                    (loc) =>
+                                      loc.id !== newShipment.originId &&
+                                      (!takenElsewhere.has(loc.id) || loc.id === stop.locationId),
+                                  )
+                                  .map((loc) => (
+                                    <option key={loc.id} value={loc.id}>
+                                      {loc.name}
+                                    </option>
+                                  ))}
+                              </select>
+                            </div>
+                            <div className="mb-2 flex items-center justify-between">
+                              <span className="text-xs font-medium text-gray-600 dark:text-gray-300">
+                                Ítems en este local
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => addStopItem(stopIdx)}
+                                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                              >
+                                <Plus className="h-3 w-3" />
+                                Ítem
+                              </button>
+                            </div>
+                            <div className="space-y-2">
+                              {stop.items.map((item, itemIdx) => (
+                                <div key={itemIdx} className="flex items-center gap-2">
+                                  <select
+                                    aria-label="Producto"
+                                    value={item.productId}
+                                    onChange={(e) =>
+                                      updateStopItem(stopIdx, itemIdx, "productId", e.target.value)
+                                    }
+                                    className="flex-1 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  >
+                                    <option value="">Producto...</option>
+                                    {productsList.map((p) => (
+                                      <option key={p.id} value={p.id}>
+                                        {p.sku} - {p.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <FormattedNumberInput
+                                    value={item.sentQty}
+                                    onChange={(n) =>
+                                      updateStopItem(stopIdx, itemIdx, "sentQty", n)
+                                    }
+                                    placeholder="1"
+                                    className="w-24 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                  />
+                                  <button
+                                    type="button"
+                                    aria-label="Eliminar ítem"
+                                    onClick={() => removeStopItem(stopIdx, itemIdx)}
+                                    disabled={stop.items.length <= 1}
+                                    className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-red-50 dark:hover:bg-red-900/30 hover:text-red-500 disabled:opacity-30"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    <div className="rounded-lg border border-dashed border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20 px-3 py-2 text-xs text-blue-800 dark:text-blue-200">
+                      La ruta y tiempos con tráfico se calculan al preparar o despachar el envío desde el detalle.
+                    </div>
+                  </>
                 )}
 
                 {/* Estimated Arrival */}
@@ -912,66 +1320,16 @@ export default function LogisticsPage() {
                     className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
-
-                {/* Items */}
-                <div>
-                  <div className="mb-2 flex items-center justify-between">
-                    <label className="text-sm font-medium text-gray-700 dark:text-white">
-                      Ítems <span className="text-red-500">*</span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={addItem}
-                      className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-blue-600 dark:text-blue-400 transition-colors hover:bg-blue-50 dark:hover:bg-blue-900/30"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                      Agregar ítem
-                    </button>
-                  </div>
-                  <div className="space-y-2">
-                    {shipmentItems.map((item, index) => (
-                      <div key={index} className="flex items-center gap-2">
-                        <select
-                          aria-label="Producto"
-                          value={item.productId}
-                          onChange={(e) => updateItem(index, "productId", e.target.value)}
-                          className="flex-1 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        >
-                          <option value="">Producto...</option>
-                          {productsList.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.sku} - {p.name}
-                            </option>
-                          ))}
-                        </select>
-                        <FormattedNumberInput
-                          value={item.sentQty}
-                          onChange={(n) =>
-                            updateItem(index, "sentQty", n)
-                          }
-                          placeholder="1"
-                          className="w-24 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                        />
-                        <button
-                          type="button"
-                          aria-label="Eliminar ítem"
-                          onClick={() => removeItem(index)}
-                          disabled={shipmentItems.length <= 1}
-                          className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-red-50 dark:hover:bg-red-900/30 hover:text-red-500 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-400"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
               </div>
 
               {/* Footer */}
               <div className="flex items-center justify-end gap-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/80 px-6 py-4">
                 <button
                   type="button"
-                  onClick={() => setShowCreateModal(false)}
+                  onClick={() => {
+                    setShowCreateModal(false)
+                    resetCreateForm()
+                  }}
                   disabled={creating}
                   className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 transition-colors hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
                 >
@@ -983,7 +1341,11 @@ export default function LogisticsPage() {
                   className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
                 >
                   {creating && <Loader2 className="h-4 w-4 animate-spin" />}
-                  {creating ? "Creando..." : "Crear Envío"}
+                  {creating
+                    ? "Creando..."
+                    : createMode === "multi"
+                      ? "Crear envío multi-parada"
+                      : "Crear Envío"}
                 </button>
               </div>
             </form>

@@ -1,8 +1,13 @@
 import { api } from '../api';
 
 export const locationsApi = {
-  getAll: (params?: { type?: string; isActive?: boolean; search?: string }) =>
-    api.get<any[]>('/locations', params),
+  getAll: (params?: {
+    type?: string;
+    isActive?: boolean;
+    search?: string;
+    /** Solo ubicaciones con sala de producción (flag en local). */
+    isProduction?: boolean;
+  }) => api.get<any[]>('/locations', params),
 
   getById: (id: string) => api.get<any>(`/locations/${id}`),
 

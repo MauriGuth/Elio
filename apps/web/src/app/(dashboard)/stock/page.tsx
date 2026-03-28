@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { sileo } from "sileo"
-import { Search, Plus, Package, RefreshCw, X, Loader2, Pencil, Trash2, CheckSquare } from "lucide-react"
+import { Search, Plus, Package, RefreshCw, X, Loader2, Pencil, Trash2, CheckSquare, Download } from "lucide-react"
 import { authApi } from "@/lib/api/auth"
 import { productsApi } from "@/lib/api/products"
 import { categoriesApi } from "@/lib/api/categories"
@@ -19,6 +19,7 @@ import {
   getCategoryBadgeStyle,
 } from "@/lib/utils"
 import type { StockStatus } from "@/types"
+import { downloadCsv } from "@/lib/csv-download"
 
 // ---------- helpers ----------
 
@@ -115,6 +116,7 @@ interface ProcessedProduct {
   totalStock: number
   worstStatus: StockStatus
   preparationSector?: string | null
+  isSellable: boolean
 }
 
 type NewProductForm = {
@@ -205,6 +207,7 @@ function processProduct(p: ApiProduct): ProcessedProduct {
     totalStock,
     worstStatus,
     preparationSector: p.preparationSector ?? null,
+    isSellable: p.isSellable ?? false,
   }
 }
 
@@ -329,6 +332,8 @@ export default function StockPage() {
   const [showBulkEditModal, setShowBulkEditModal] = useState(false)
   const [bulkEditField, setBulkEditField] = useState<"category" | "familia" | "unit" | null>(null)
   const [bulkEditValue, setBulkEditValue] = useState("")
+  const [showExportModal, setShowExportModal] = useState(false)
+  const [exportIncludeSellable, setExportIncludeSellable] = useState(true)
   const [bulkProcessing, setBulkProcessing] = useState(false)
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false)
 
@@ -853,6 +858,58 @@ export default function StockPage() {
     }
   }
 
+  const handleBulkSellable = async (isSellable: boolean) => {
+    setBulkProcessing(true)
+    try {
+      await Promise.all(
+        [...selectedIds].map((id) => productsApi.update(id, { isSellable })),
+      )
+      sileo.success({
+        title: `${selectedIds.size} producto${selectedIds.size !== 1 ? "s" : ""} ${isSellable ? "marcados como vendibles" : "marcados como no vendibles"}`,
+      })
+      setSelectedIds(new Set())
+      fetchProducts(true)
+    } catch (err: any) {
+      sileo.error({ title: err.message || "Error al actualizar vendible" })
+    } finally {
+      setBulkProcessing(false)
+    }
+  }
+
+  const runSelectedProductsExport = () => {
+    const list = products.filter((p) => selectedIds.has(p.id))
+    if (list.length === 0) return
+    const headers = [
+      "SKU",
+      "Producto",
+      ...(exportIncludeSellable ? ["Vendible"] : []),
+      "Categoría",
+      "Familia",
+      "Unidad",
+      "Costo promedio",
+      "Stock total",
+      "Estado",
+    ]
+    const rows = list.map((p) => {
+      return [
+        p.sku,
+        p.name,
+        ...(exportIncludeSellable ? [p.isSellable ? "Sí" : "No"] : []),
+        getCategoryDisplayName(p.category?.name) || "",
+        p.familia ?? "",
+        p.unit,
+        p.avgCost,
+        p.totalStock,
+        getStockStatusLabel(p.worstStatus),
+      ]
+    })
+    const d = new Date()
+    const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+    downloadCsv(`productos-seleccionados-${ymd}.csv`, headers, rows)
+    setShowExportModal(false)
+    sileo.success({ title: `Listado descargado (${list.length} filas)` })
+  }
+
   const handleDeleteCategory = async (group: ManagedCategoryGroup) => {
     setDeletingCategory(true)
     setCategoryError(null)
@@ -1190,6 +1247,30 @@ export default function StockPage() {
               className="inline-flex items-center gap-1.5 rounded-lg border border-blue-300 dark:border-blue-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/50"
             >
               <Pencil className="h-3 w-3" /> Cambiar unidad
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowExportModal(true)}
+              disabled={bulkProcessing}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-blue-300 dark:border-blue-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/50 disabled:opacity-50"
+            >
+              <Download className="h-3 w-3" /> Descargar listado
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleBulkSellable(true)}
+              disabled={bulkProcessing}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 dark:border-emerald-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 disabled:opacity-50"
+            >
+              Marcar vendible
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleBulkSellable(false)}
+              disabled={bulkProcessing}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 dark:border-amber-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-xs font-medium text-amber-800 dark:text-amber-200 hover:bg-amber-50 dark:hover:bg-amber-900/20 disabled:opacity-50"
+            >
+              Marcar no vendible
             </button>
             <button
               type="button"
@@ -2280,6 +2361,66 @@ export default function StockPage() {
               <button type="button" onClick={handleBulkDelete} disabled={bulkProcessing} className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">
                 {bulkProcessing && <Loader2 className="h-4 w-4 animate-spin" />}
                 {bulkProcessing ? "Eliminando..." : "Eliminar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showExportModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setShowExportModal(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl border border-gray-200 bg-white shadow-2xl dark:border-gray-700 dark:bg-gray-800"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-700">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Descargar listado</h2>
+              <button
+                type="button"
+                onClick={() => setShowExportModal(false)}
+                className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="space-y-4 px-6 py-5">
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                Se exportarán{" "}
+                <span className="font-semibold text-gray-900 dark:text-white">
+                  {selectedIds.size} producto{selectedIds.size !== 1 ? "s" : ""}
+                </span>{" "}
+                en CSV (separador punto y coma, compatible con Excel).
+              </p>
+              <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-600 dark:bg-gray-900/40">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 accent-blue-600"
+                  checked={exportIncludeSellable}
+                  onChange={(e) => setExportIncludeSellable(e.target.checked)}
+                />
+                <span className="text-sm text-gray-700 dark:text-gray-200">
+                  Incluir columna <span className="font-medium">Vendible</span> (Sí / No)
+                </span>
+              </label>
+            </div>
+            <div className="flex items-center justify-end gap-3 border-t border-gray-200 bg-gray-50 px-6 py-4 dark:border-gray-700 dark:bg-gray-800/80">
+              <button
+                type="button"
+                onClick={() => setShowExportModal(false)}
+                className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={runSelectedProductsExport}
+                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                <Download className="h-4 w-4" />
+                Descargar CSV
               </button>
             </div>
           </div>

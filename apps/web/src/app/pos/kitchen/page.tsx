@@ -59,20 +59,18 @@ function formatWait(dateStr: string): string {
   return rem > 0 ? `${h}h ${rem}m` : `${h}h`
 }
 
-/* ── Voice announcement: solo anuncia items de sectores permitidos (ej. cocina) ── */
+/* ── Voice announcement: sectores cocina/delivery; la voz no usa el filtro de pestaña del tablero ── */
 function buildAnnouncement(
   order: any,
-  sectorFilter: string,
   allowedSectors?: string[]
 ): { text: string; sector: string } | null {
+  const sectorOk = (s: string) =>
+    allowedSectors?.length
+      ? allowedSectors.includes((s || "").toLowerCase())
+      : true
   let items = (order.items ?? []).filter(
-    (i: any) => !i.skipComanda && i.status === "pending"
-  )
-  if (allowedSectors?.length) {
-    items = items.filter((i: any) => allowedSectors.includes(i.sector))
-  }
-  items = items.filter(
-    (i: any) => sectorFilter === "all" || i.sector === sectorFilter
+    (i: any) =>
+      !i.skipComanda && i.status === "pending" && sectorOk(i.sector)
   )
   if (items.length === 0) return null
 
@@ -98,8 +96,9 @@ function buildAnnouncement(
   }
 
   for (const [sector, sectorItems] of bySector) {
-    const label = sectorLabels[sector] || sector
-    if (sectorFilter === "all" && bySector.size > 1) {
+    const sk = (sector || "").toLowerCase()
+    const label = sectorLabels[sk] || sector
+    if (bySector.size > 1) {
       parts.push(`${label}: ${sectorItems.join(", ")}`)
     } else {
       parts.push(sectorItems.join(", "))
@@ -321,6 +320,21 @@ export default function KitchenPage() {
     if (loc?.id) setLocationId(loc.id)
   }, [])
 
+  const processAnnouncementQueue = useCallback(() => {
+    if (announcementQueueRef.current.length === 0) {
+      isSpeakingRef.current = false
+      setSpeakingText(null)
+      return
+    }
+    isSpeakingRef.current = true
+    const next = announcementQueueRef.current.shift()!
+    setSpeakingText(next.text)
+    speakAnnouncementChunked(next.text, () => {
+      setSpeakingText(null)
+      setTimeout(processAnnouncementQueue, 350)
+    })
+  }, [])
+
   /* ── fetch orders ── */
   const fetchOrders = useCallback(async () => {
     if (!locationId) return
@@ -336,14 +350,14 @@ export default function KitchenPage() {
       const newItemMap = new Map<string, Set<string>>()
 
       // Incluir primera carga: si no hay prevIds, tratar todas las órdenes como nuevas para anunciar
-      const newOnes = prevIds.size > 0 ? list.filter((o: any) => !prevIds.has(o.id)) : list
+      const newOnes = prevIds.size > 0 ? list.filter((o: any) => !prevIds.has(o.id)) : []
       if (newOnes.length > 0) {
           setHasNewOrders(true)
           setTimeout(() => setHasNewOrders(false), 5_000)
 
           // Build announcements for new orders (solo items de cocina/delivery)
           for (const newOrder of newOnes) {
-            const ann = buildAnnouncement(newOrder, sectorFilter, KITCHEN_SECTORS)
+            const ann = buildAnnouncement(newOrder, KITCHEN_SECTORS)
             if (ann) {
               const item: AnnouncementItem = {
                 id: crypto.randomUUID(),
@@ -379,7 +393,7 @@ export default function KitchenPage() {
               i.status === "pending"
           )
           const addedKitchenItems = addedItems.filter((i: any) =>
-            KITCHEN_SECTORS.includes(i.sector)
+            KITCHEN_SECTORS.includes((i.sector || "").toLowerCase())
           )
           if (addedKitchenItems.length > 0) {
             setHasNewOrders(true)
@@ -425,22 +439,7 @@ export default function KitchenPage() {
     } finally {
       setLoading(false)
     }
-  }, [locationId])
-
-  const processAnnouncementQueue = useCallback(() => {
-    if (announcementQueueRef.current.length === 0) {
-      isSpeakingRef.current = false
-      setSpeakingText(null)
-      return
-    }
-    isSpeakingRef.current = true
-    const next = announcementQueueRef.current.shift()!
-    setSpeakingText(next.text)
-    speakAnnouncementChunked(next.text, () => {
-      setSpeakingText(null)
-      setTimeout(processAnnouncementQueue, 350)
-    })
-  }, [])
+  }, [locationId, voiceEnabled, processAnnouncementQueue])
 
   // Preload voices
   useEffect(() => {

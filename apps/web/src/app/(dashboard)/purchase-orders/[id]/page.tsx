@@ -12,8 +12,12 @@ import {
   MapPin,
   Truck,
   ChevronRight,
+  Plus,
+  Trash2,
+  X,
 } from "lucide-react"
 import { purchaseOrdersApi } from "@/lib/api/purchase-orders"
+import { productsApi } from "@/lib/api/products"
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input"
 import { cn, formatCurrency, triggerContentUpdateAnimation } from "@/lib/utils"
 
@@ -38,6 +42,14 @@ export default function PurchaseOrderDetailPage() {
   const [actionLoading, setActionLoading] = useState(false)
   const [editingQuantities, setEditingQuantities] = useState<Record<string, number>>({})
   const [savingItemId, setSavingItemId] = useState<string | null>(null)
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [addSearch, setAddSearch] = useState("")
+  const [addSearchLoading, setAddSearchLoading] = useState(false)
+  const [addResults, setAddResults] = useState<any[]>([])
+  const [addProduct, setAddProduct] = useState<any | null>(null)
+  const [addQty, setAddQty] = useState("1")
+  const [addSubmitting, setAddSubmitting] = useState(false)
+  const [removingItemId, setRemovingItemId] = useState<string | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -67,6 +79,73 @@ export default function PurchaseOrderDetailPage() {
       sileo.error({ title: err?.message ?? "Error" })
     } finally {
       setActionLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (!showAddModal) return
+    const q = addSearch.trim()
+    if (q.length < 2) {
+      setAddResults([])
+      return
+    }
+    const t = setTimeout(() => {
+      setAddSearchLoading(true)
+      productsApi
+        .getAll({ search: q, limit: 20, isActive: true })
+        .then((res) => setAddResults((res as any)?.data ?? []))
+        .catch(() => setAddResults([]))
+        .finally(() => setAddSearchLoading(false))
+    }, 350)
+    return () => clearTimeout(t)
+  }, [addSearch, showAddModal])
+
+  const handleRemoveItem = async (itemId: string) => {
+    if (!po?.id || po.status !== "draft") return
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm("¿Quitar este producto de la orden?")
+    )
+      return
+    setRemovingItemId(itemId)
+    try {
+      const updated = await purchaseOrdersApi.removeItem(po.id, itemId)
+      setPo(updated)
+      triggerContentUpdateAnimation()
+      sileo.success({ title: "Producto quitado de la orden" })
+    } catch (err: any) {
+      sileo.error({ title: err?.message ?? "Error al quitar el producto" })
+    } finally {
+      setRemovingItemId(null)
+    }
+  }
+
+  const handleAddItemSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!po?.id || !addProduct) return
+    const qty = parseFloat(String(addQty).replace(",", "."))
+    if (!Number.isFinite(qty) || qty < 0.001) {
+      sileo.error({ title: "Ingresá una cantidad mayor a 0" })
+      return
+    }
+    setAddSubmitting(true)
+    try {
+      const updated = await purchaseOrdersApi.addItem(po.id, {
+        productId: addProduct.id,
+        quantity: qty,
+      })
+      setPo(updated)
+      triggerContentUpdateAnimation()
+      sileo.success({ title: "Producto agregado" })
+      setShowAddModal(false)
+      setAddProduct(null)
+      setAddSearch("")
+      setAddQty("1")
+      setAddResults([])
+    } catch (err: any) {
+      sileo.error({ title: err?.message ?? "Error al agregar" })
+    } finally {
+      setAddSubmitting(false)
     }
   }
 
@@ -204,12 +283,33 @@ export default function PurchaseOrderDetailPage() {
 
         {/* Detalle de ítems: todos los artículos de la orden */}
         <div className="px-6 py-4">
-          <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">
-            Detalle
-          </h2>
-          <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
-            {Array.isArray(po.items) ? po.items.length : 0} artículo{(Array.isArray(po.items) ? po.items.length : 0) !== 1 ? "s" : ""} en esta orden
-          </p>
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-1">
+                Detalle
+              </h2>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                {Array.isArray(po.items) ? po.items.length : 0} artículo
+                {(Array.isArray(po.items) ? po.items.length : 0) !== 1 ? "s" : ""} en esta orden
+              </p>
+            </div>
+            {canPlace && (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddModal(true)
+                  setAddProduct(null)
+                  setAddSearch("")
+                  setAddQty("1")
+                  setAddResults([])
+                }}
+                className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm font-medium text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:bg-gray-800 dark:text-blue-300 dark:hover:bg-blue-950/40"
+              >
+                <Plus className="h-4 w-4" />
+                Agregar producto
+              </button>
+            )}
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -219,6 +319,11 @@ export default function PurchaseOrderDetailPage() {
                   <th className="px-4 py-2 text-right">Precio unit.</th>
                   <th className="px-4 py-2 text-right">Subtotal</th>
                   <th className="px-4 py-2">Precio vs último</th>
+                  {canPlace && (
+                    <th className="px-4 py-2 w-14 text-right" aria-label="Acciones">
+                      {" "}
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
@@ -269,6 +374,28 @@ export default function PurchaseOrderDetailPage() {
                         {item.lastKnownCost != null && ` (último: ${formatCurrency(item.lastKnownCost)})`}
                       </span>
                     </td>
+                    {canPlace && (
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveItem(item.id)}
+                          disabled={removingItemId === item.id || (po.items?.length ?? 0) <= 1}
+                          className="inline-flex rounded-lg p-1.5 text-gray-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-900/30 dark:hover:text-red-400"
+                          title={
+                            (po.items?.length ?? 0) <= 1
+                              ? "Debe quedar al menos un producto"
+                              : "Quitar de la orden"
+                          }
+                          aria-label={`Quitar ${item.product?.name ?? "producto"}`}
+                        >
+                          {removingItemId === item.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 )})}
               </tbody>
@@ -290,6 +417,129 @@ export default function PurchaseOrderDetailPage() {
           </div>
         )}
       </div>
+
+      {showAddModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="add-po-item-title"
+        >
+          <div className="relative w-full max-w-lg rounded-xl border border-gray-200 bg-white p-6 shadow-xl dark:border-gray-700 dark:bg-gray-800">
+            <button
+              type="button"
+              onClick={() => setShowAddModal(false)}
+              className="absolute right-3 top-3 rounded-lg p-1 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700"
+              aria-label="Cerrar"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <h2
+              id="add-po-item-title"
+              className="text-lg font-semibold text-gray-900 dark:text-white"
+            >
+              Agregar producto
+            </h2>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+              Proveedor de la orden: <strong>{po.supplier?.name ?? "—"}</strong>. El precio unitario se toma del vínculo con ese proveedor o del costo promedio del producto.
+            </p>
+            <form onSubmit={handleAddItemSubmit} className="mt-4 space-y-4">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
+                  Buscar producto
+                </label>
+                <input
+                  type="search"
+                  value={addSearch}
+                  onChange={(e) => setAddSearch(e.target.value)}
+                  placeholder="Nombre o SKU (mín. 2 caracteres)"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                  autoComplete="off"
+                />
+                {addSearchLoading && (
+                  <p className="mt-1 text-xs text-gray-500">Buscando…</p>
+                )}
+                {!addSearchLoading &&
+                  addSearch.trim().length >= 2 &&
+                  addResults.length > 0 && (
+                    <ul className="mt-2 max-h-48 overflow-auto rounded-lg border border-gray-200 dark:border-gray-600">
+                      {addResults.map((p: any) => (
+                        <li key={p.id}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAddProduct(p)
+                              setAddSearch("")
+                              setAddResults([])
+                            }}
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-700/50"
+                          >
+                            <span className="font-medium text-gray-900 dark:text-white">
+                              {p.name}
+                            </span>
+                            {p.sku && (
+                              <span className="ml-2 text-xs text-gray-500">{p.sku}</span>
+                            )}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+              </div>
+              {addProduct && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50/80 px-3 py-2 dark:border-blue-900/50 dark:bg-blue-950/30">
+                  <p className="text-xs font-medium text-blue-900 dark:text-blue-200">
+                    Seleccionado
+                  </p>
+                  <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                    {addProduct.name}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setAddProduct(null)}
+                    className="mt-1 text-xs text-blue-700 underline dark:text-blue-300"
+                  >
+                    Cambiar
+                  </button>
+                </div>
+              )}
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
+                  Cantidad
+                </label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={addQty}
+                  onChange={(e) => setAddQty(e.target.value)}
+                  className="w-full max-w-[160px] rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm tabular-nums dark:border-gray-600 dark:bg-gray-700 dark:text-white"
+                />
+              </div>
+              <div className="flex flex-wrap justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAddModal(false)}
+                  className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={addSubmitting || !addProduct}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {addSubmitting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Plus className="h-4 w-4" />
+                  )}
+                  Agregar a la orden
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

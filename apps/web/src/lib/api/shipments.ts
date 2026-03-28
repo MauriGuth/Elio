@@ -17,6 +17,26 @@ export const shipmentsApi = {
 
   create: (data: any) => api.post<any>('/shipments', data),
 
+  /** Varias paradas en orden; cada parada tiene sus ítems (mismo envío / mismo día operativo). */
+  createMulti: (data: {
+    originId: string;
+    notes?: string;
+    estimatedArrival?: string;
+    stops: Array<{ locationId: string; items: Array<{ productId: string; sentQty: number; unitCost?: number; lotNumber?: string; notes?: string }> }>;
+  }) => api.post<any>('/shipments/multi', data),
+
+  reorderStops: (shipmentId: string, stopIds: string[]) =>
+    api.patch<any>(`/shipments/${shipmentId}/stop-order`, { stopIds }),
+
+  markStopArrived: (shipmentId: string, stopId: string) =>
+    api.post<any>(`/shipments/${shipmentId}/stops/${stopId}/mark-arrived`, {}),
+
+  startStopReceptionControl: (shipmentId: string, stopId: string) =>
+    api.post<any>(`/shipments/${shipmentId}/stops/${stopId}/start-reception-control`, {}),
+
+  receiveStop: (shipmentId: string, stopId: string, data: any) =>
+    api.post<any>(`/shipments/${shipmentId}/stops/${stopId}/receive`, data),
+
   prepare: (id: string) => api.post<any>(`/shipments/${id}/prepare`),
 
   dispatch: (id: string) => api.post<any>(`/shipments/${id}/dispatch`),

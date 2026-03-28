@@ -4,9 +4,14 @@ import { useState, useEffect } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
 import { Package, User, DollarSign, ListChecks, ArrowLeft, Loader2 } from "lucide-react"
-import { formatCurrency, formatNumber, formatDate, formatTime } from "@/lib/utils"
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4010/api"
+import {
+  formatCurrency,
+  formatNumber,
+  formatDateTime,
+  formatDateLong,
+  addCalendarDaysLocal,
+} from "@/lib/utils"
+import { getApiUrl } from "@/lib/api"
 
 type BatchData = {
   id: string
@@ -21,7 +26,12 @@ type BatchData = {
     orderNumber: string
     estimatedCost?: number
     plannedQty?: number
-    recipe?: { name: string; yieldQty?: number; yieldUnit?: string }
+    recipe?: {
+      name: string
+      yieldQty?: number
+      yieldUnit?: string
+      shelfLifeDays?: number | null
+    }
     location?: { name: string }
     items?: Array<{
       id: string
@@ -47,7 +57,7 @@ export default function BatchPublicPage() {
     }
     setLoading(true)
     setError(null)
-    fetch(`${API_URL}/batch/${encodeURIComponent(code)}`, {
+    fetch(`${getApiUrl()}/batch/${encodeURIComponent(code)}`, {
       method: "GET",
       headers: { Accept: "application/json" },
     })
@@ -96,6 +106,16 @@ export default function BatchPublicPage() {
   const order = data.productionOrder
   const items = order?.items ?? []
   const estimatedCost = order?.estimatedCost ?? 0
+  const slRaw = order?.recipe?.shelfLifeDays
+  const shelfDays =
+    slRaw != null && Number.isFinite(Number(slRaw)) ? Math.round(Number(slRaw)) : null
+  const shelfLifePublic =
+    shelfDays != null ? `${shelfDays} ${shelfDays === 1 ? "día" : "días"}` : "No definida"
+  const producedInstant = data.producedAt
+  const expirationPublic =
+    shelfDays != null && shelfDays > 0 && producedInstant
+      ? addCalendarDaysLocal(producedInstant, shelfDays)
+      : null
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -134,15 +154,35 @@ export default function BatchPublicPage() {
                 <span className="font-medium">Producido por:</span>
                 <span className="text-gray-900">{producedByName}</span>
               </div>
-              {data.producedAt && (
-                <p className="text-sm text-gray-500">
-                  {formatDate(data.producedAt)}
-                  {formatTime(data.producedAt) ? ` ${formatTime(data.producedAt)}` : ""}
-                </p>
-              )}
               {order?.orderNumber && (
                 <p className="text-xs text-gray-400">Orden: {order.orderNumber}</p>
               )}
+            </section>
+
+            <section className="rounded-lg border border-amber-300/80 bg-amber-50 px-4 py-3">
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-amber-900/80">
+                Producción y caducidad
+              </p>
+              <div className="space-y-2">
+                <div>
+                  <p className="text-xs text-amber-900/75">Fecha y hora de producción</p>
+                  <p className="text-sm font-bold text-gray-900">
+                    {producedInstant ? formatDateTime(producedInstant) : "—"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-amber-900/75">Vida útil</p>
+                  <p className="text-sm font-bold text-gray-900">{shelfLifePublic}</p>
+                </div>
+                <div className="border-t border-amber-200/90 pt-2">
+                  <p className="text-xs font-medium text-green-800">
+                    Vencimiento (consumir antes de)
+                  </p>
+                  <p className="text-sm font-bold text-green-700">
+                    {expirationPublic ? formatDateLong(expirationPublic) : "—"}
+                  </p>
+                </div>
+              </div>
             </section>
 
             {/* Insumos calculados */}

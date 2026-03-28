@@ -13,11 +13,13 @@ import {
   ChevronDown,
   ChevronUp,
   MapPin,
+  Download,
 } from "lucide-react"
 import { recipesApi } from "@/lib/api/recipes"
 import { productsApi } from "@/lib/api/products"
 import { locationsApi } from "@/lib/api/locations"
 import { cn } from "@/lib/utils"
+import { downloadCsv } from "@/lib/csv-download"
 import {
   RecipeModifierStockBlock,
   type ModifierStockRow,
@@ -41,7 +43,7 @@ async function runBatched<T>(
   }
 }
 
-type ProductOption = { id: string; name: string; sku: string; unit?: string }
+type ProductOption = { id: string; name: string; sku: string; unit?: string; isSellable?: boolean }
 type IngredientRow = {
   productId: string
   productQuery: string
@@ -54,6 +56,8 @@ type FormState = {
   name: string
   yieldQty: number
   yieldUnit: string
+  /** Días de vida útil del elaborado; null = sin definir */
+  shelfLifeDays: number | null
   locationIds: string[]
   prepTimeByLocation: Record<string, number>
   productId: string
@@ -64,6 +68,7 @@ const emptyForm: FormState = {
   name: "",
   yieldQty: 1,
   yieldUnit: "porción",
+  shelfLifeDays: null,
   locationIds: [],
   prepTimeByLocation: {},
   productId: "",
@@ -92,6 +97,8 @@ export default function RecipesPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false)
+  const [showRecipeExportModal, setShowRecipeExportModal] = useState(false)
+  const [recipeExportIncludeSellable, setRecipeExportIncludeSellable] = useState(true)
   const [productOutputSearch, setProductOutputSearch] = useState("")
   const [productOutputDropdownOpen, setProductOutputDropdownOpen] = useState(false)
   const [openIngredientDropdownIndex, setOpenIngredientDropdownIndex] = useState<number | null>(null)
@@ -284,6 +291,7 @@ export default function RecipesPage() {
                 name: p.name,
                 sku: p.sku ?? "",
                 unit: p.unit ?? "Und",
+                isSellable: Boolean(p.isSellable),
               }))
               .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }))
           : []
@@ -335,6 +343,10 @@ export default function RecipesPage() {
         name: full.name ?? "",
         yieldQty: full.yieldQty ?? 1,
         yieldUnit: full.yieldUnit ?? "porción",
+        shelfLifeDays:
+          full.shelfLifeDays != null && Number.isFinite(Number(full.shelfLifeDays))
+            ? Math.round(Number(full.shelfLifeDays))
+            : null,
         locationIds: locIds,
         prepTimeByLocation: prepByLoc,
         productId: full.productId ?? full.product?.id ?? "",
@@ -546,13 +558,27 @@ export default function RecipesPage() {
       setFormError("La cantidad de rendimiento debe ser mayor a 0.")
       return
     }
+    if (
+      form.shelfLifeDays != null &&
+      (form.shelfLifeDays < 1 || form.shelfLifeDays > 3650)
+    ) {
+      setFormError("Los días de vida útil deben estar entre 1 y 3650, o dejá el campo vacío.")
+      return
+    }
     setFormError(null)
     setFormLoading(true)
     try {
+      const shelfLifeDays =
+        form.shelfLifeDays != null &&
+        Number.isFinite(form.shelfLifeDays) &&
+        form.shelfLifeDays >= 1
+          ? Math.round(form.shelfLifeDays)
+          : null
       const payload = {
         name: form.name.trim(),
         yieldQty: form.yieldQty,
         yieldUnit: form.yieldUnit.trim() || "porción",
+        shelfLifeDays,
         locationIds: form.locationIds,
         prepTimeByLocation: form.prepTimeByLocation,
         productId: form.productId || undefined,
@@ -641,6 +667,48 @@ export default function RecipesPage() {
       (a.name ?? "").localeCompare(b.name ?? "", "es", { sensitivity: "base" })
     )
   }, [recipes, searchQuery])
+
+  const runSelectedRecipesExport = () => {
+    const list = recipes.filter((r) => selectedIds.has(r.id))
+    if (list.length === 0) return
+    const headers = [
+      "Receta",
+      "Producto de salida",
+      "SKU salida",
+      "Cant. ingredientes",
+      "Vida útil (días)",
+      ...(recipeExportIncludeSellable ? ["Vendible (producto salida)"] : []),
+    ]
+    const rows = list.map((r) => {
+      const outId = r.productId ?? r.product?.id
+      const out = outId ? productsById.get(outId as string) : undefined
+      const ingCount = r._count?.ingredients ?? r.ingredients?.length ?? 0
+      const sl = r.shelfLifeDays
+      const shelf =
+        sl != null && Number.isFinite(Number(sl)) ? Math.round(Number(sl)) : ""
+      const vendible =
+        out && typeof out.isSellable === "boolean"
+          ? out.isSellable
+            ? "Sí"
+            : "No"
+          : outId
+            ? ""
+            : "—"
+      return [
+        r.name ?? "",
+        r.product?.name ?? "",
+        r.product?.sku ?? "",
+        ingCount,
+        shelf,
+        ...(recipeExportIncludeSellable ? [vendible] : []),
+      ]
+    })
+    const d = new Date()
+    const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+    downloadCsv(`recetas-seleccionadas-${ymd}.csv`, headers, rows)
+    setShowRecipeExportModal(false)
+    sileo.success({ title: `Listado descargado (${list.length} filas)` })
+  }
 
   const isModalOpen = modalMode === "create" || modalMode === "edit"
 
@@ -767,7 +835,15 @@ export default function RecipesPage() {
               <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
                 {selectedIds.size} receta{selectedIds.size !== 1 ? "s" : ""} seleccionada{selectedIds.size !== 1 ? "s" : ""}
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowRecipeExportModal(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50 dark:border-blue-600 dark:bg-gray-800 dark:text-blue-300 dark:hover:bg-blue-900/40"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Descargar listado
+                </button>
                 <button
                   type="button"
                   onClick={() => setSelectedIds(new Set())}
@@ -787,7 +863,7 @@ export default function RecipesPage() {
             </div>
           )}
           <div className="overflow-x-auto">
-            <table className="min-w-[720px] w-full text-sm">
+            <table className="min-w-[820px] w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
                   <th className="w-10 px-3 py-3">
@@ -805,13 +881,16 @@ export default function RecipesPage() {
                   <th className="px-4 py-3 text-left font-medium text-gray-600 dark:text-white">Receta</th>
                   <th className="px-4 py-3 text-left font-medium text-gray-600 dark:text-white">Producto de salida</th>
                   <th className="px-4 py-3 text-center font-medium text-gray-600 dark:text-white">Ingredientes</th>
+                  <th className="px-4 py-3 text-center font-medium text-gray-600 dark:text-white whitespace-nowrap">
+                    Vida útil
+                  </th>
                   <th className="px-4 py-3 text-right font-medium text-gray-600 dark:text-white">Acción</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-4 py-12 text-center text-gray-500 dark:text-gray-400">
+                    <td colSpan={6} className="px-4 py-12 text-center text-gray-500 dark:text-gray-400">
                       No hay recetas
                     </td>
                   </tr>
@@ -819,6 +898,11 @@ export default function RecipesPage() {
                   filtered.map((recipe) => {
                     const hasOutput = !!(recipe.productId || recipe.product?.id)
                     const ingCount = recipe._count?.ingredients ?? recipe.ingredients?.length ?? 0
+                    const sl = recipe.shelfLifeDays
+                    const shelfLifeLabel =
+                      sl != null && Number.isFinite(Number(sl))
+                        ? `${Math.round(Number(sl))} ${Math.round(Number(sl)) === 1 ? "día" : "días"}`
+                        : null
                     const isSelected = selectedIds.has(recipe.id)
                     return (
                       <tr key={recipe.id} className={cn("border-b border-gray-100 dark:border-gray-700 transition-colors hover:bg-gray-50 dark:hover:bg-gray-700/50", isSelected && "bg-blue-50/50 dark:bg-blue-900/10")}>
@@ -843,6 +927,17 @@ export default function RecipesPage() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-center text-gray-600 dark:text-gray-300">{ingCount}</td>
+                        <td className="px-4 py-3 text-center tabular-nums">
+                          <span
+                            className={
+                              shelfLifeLabel
+                                ? "text-gray-900 dark:text-white"
+                                : "text-gray-400 dark:text-gray-500"
+                            }
+                          >
+                            {shelfLifeLabel ?? "—"}
+                          </span>
+                        </td>
                         <td className="px-4 py-3 text-right">
                           <div className="inline-flex items-center gap-2">
                             <button
@@ -904,6 +999,66 @@ export default function RecipesPage() {
                 >
                   {bulkDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                   Eliminar {selectedIds.size} receta{selectedIds.size !== 1 ? "s" : ""}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {showRecipeExportModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div
+              className="absolute inset-0 bg-black/50"
+              aria-hidden
+              onClick={() => setShowRecipeExportModal(false)}
+            />
+            <div className="relative w-full max-w-md rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800">
+              <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4 dark:border-gray-700">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Descargar listado</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowRecipeExportModal(false)}
+                  className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700"
+                  aria-label="Cerrar"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+              <div className="space-y-4 px-6 py-5">
+                <p className="text-sm text-gray-600 dark:text-gray-300">
+                  Se exportarán{" "}
+                  <span className="font-semibold text-gray-900 dark:text-white">
+                    {selectedIds.size} receta{selectedIds.size !== 1 ? "s" : ""}
+                  </span>{" "}
+                  en CSV (punto y coma, Excel).
+                </p>
+                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-600 dark:bg-gray-900/40">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 h-4 w-4 rounded border-gray-300 accent-blue-600"
+                    checked={recipeExportIncludeSellable}
+                    onChange={(e) => setRecipeExportIncludeSellable(e.target.checked)}
+                  />
+                  <span className="text-sm text-gray-700 dark:text-gray-200">
+                    Incluir columna <span className="font-medium">Vendible</span> del producto de salida (Sí / No)
+                  </span>
+                </label>
+              </div>
+              <div className="flex items-center justify-end gap-3 border-t border-gray-200 bg-gray-50 px-6 py-4 dark:border-gray-700 dark:bg-gray-800/80">
+                <button
+                  type="button"
+                  onClick={() => setShowRecipeExportModal(false)}
+                  className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={runSelectedRecipesExport}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+                >
+                  <Download className="h-4 w-4" />
+                  Descargar CSV
                 </button>
               </div>
             </div>
@@ -974,6 +1129,37 @@ export default function RecipesPage() {
                     className="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-white">
+                  Días de vida útil
+                </label>
+                <p className="mb-1.5 text-xs text-gray-500 dark:text-gray-400">
+                  Opcional. Referencia de vencimiento del producto elaborado (1 a 3650 días).
+                </p>
+                <input
+                  type="number"
+                  min={1}
+                  max={3650}
+                  step={1}
+                  value={form.shelfLifeDays === null ? "" : form.shelfLifeDays}
+                  onChange={(e) => {
+                    const v = e.target.value.trim()
+                    if (v === "") {
+                      setForm((f) => ({ ...f, shelfLifeDays: null }))
+                      return
+                    }
+                    const n = parseInt(v, 10)
+                    setForm((f) => ({
+                      ...f,
+                      shelfLifeDays: Number.isFinite(n) ? n : null,
+                    }))
+                  }}
+                  placeholder="Ej: 7"
+                  aria-label="Días de vida útil"
+                  className="w-full max-w-[12rem] rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
               </div>
 
               <div>

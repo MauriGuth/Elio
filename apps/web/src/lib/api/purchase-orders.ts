@@ -20,6 +20,14 @@ export const purchaseOrdersApi = {
   updateItem: (purchaseOrderId: string, itemId: string, data: { quantity: number }) =>
     api.patch<any>(`/purchase-orders/${purchaseOrderId}/items/${itemId}`, data),
 
+  addItem: (
+    purchaseOrderId: string,
+    data: { productId: string; quantity: number; unitCost?: number },
+  ) => api.post<any>(`/purchase-orders/${purchaseOrderId}/items`, data),
+
+  removeItem: (purchaseOrderId: string, itemId: string) =>
+    api.delete<any>(`/purchase-orders/${purchaseOrderId}/items/${itemId}`),
+
   create: (data: {
     locationId: string;
     supplierId: string;

@@ -16,10 +16,20 @@ import {
   AlertCircle,
   Loader2,
   QrCode,
+  Printer,
 } from "lucide-react"
 import { QRCodeSVG } from "qrcode.react"
 import { productionApi } from "@/lib/api/production"
-import { cn, formatCurrency, formatNumber, formatDate, formatTime } from "@/lib/utils"
+import {
+  cn,
+  formatCurrency,
+  formatNumber,
+  formatDate,
+  formatTime,
+  formatDateTime,
+  formatDateLong,
+  addCalendarDaysLocal,
+} from "@/lib/utils"
 import type { ProductionStatus } from "@/types"
 
 // ---------- helpers ----------
@@ -152,6 +162,19 @@ export default function ProductionDetailPage() {
   useEffect(() => {
     if (typeof window !== "undefined") setQrBaseUrl(window.location.origin)
   }, [])
+
+  const handlePrintLoteQr = useCallback(() => {
+    document.documentElement.classList.add("print-lote-qr-active")
+    let finished = false
+    const cleanup = () => {
+      if (finished) return
+      finished = true
+      document.documentElement.classList.remove("print-lote-qr-active")
+    }
+    window.addEventListener("afterprint", cleanup, { once: true })
+    window.setTimeout(cleanup, 3000)
+    requestAnimationFrame(() => window.print())
+  }, [])
   // Actualizar cada segundo cuando la orden está en curso para el contador en vivo
   useEffect(() => {
     if (!order || order.status !== "in_progress" || !order.startedAt) return
@@ -282,6 +305,29 @@ export default function ProductionDetailPage() {
   // Extract data from API response, adapting from nested objects
   const recipeName = order.recipe?.name || order.recipeName || "—"
   const recipeVersion = order.recipe?.version || order.recipeVersion || ""
+  const shelfLifeDays =
+    order.recipe?.shelfLifeDays != null && Number.isFinite(Number(order.recipe.shelfLifeDays))
+      ? Math.round(Number(order.recipe.shelfLifeDays))
+      : null
+  const shelfLifeLabel =
+    shelfLifeDays != null ? `${shelfLifeDays} ${shelfLifeDays === 1 ? "día" : "días"}` : "No definida"
+  const batchesList = order.batches ?? order.productionBatches ?? []
+  const firstBatch = batchesList[0]
+  const productionInstantForSummary =
+    firstBatch?.producedAt ??
+    firstBatch?.createdAt ??
+    ((status === "completed" || status === "completed_adjusted") && order.completedAt
+      ? order.completedAt
+      : null)
+  const expirationDateSummary =
+    shelfLifeDays != null &&
+    shelfLifeDays > 0 &&
+    productionInstantForSummary
+      ? addCalendarDaysLocal(productionInstantForSummary, shelfLifeDays)
+      : null
+  const expirationSummaryDisplay = expirationDateSummary
+    ? formatDateLong(expirationDateSummary)
+    : null
   const locationName = order.location?.name || order.locationName || "—"
   const createdByName =
     order.createdBy?.firstName && order.createdBy?.lastName
@@ -447,6 +493,20 @@ export default function ProductionDetailPage() {
                 {createdByName}
               </p>
             </div>
+            <div>
+              <p className="text-xs text-gray-400 dark:text-white">Vida útil (receta)</p>
+              <p className="mt-0.5 font-semibold text-gray-900 dark:text-white">
+                {shelfLifeLabel}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-gray-400 dark:text-white">
+                Vencimiento (consumir antes de)
+              </p>
+              <p className="mt-0.5 font-semibold text-green-600 dark:text-green-400">
+                {expirationSummaryDisplay ?? "—"}
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -454,11 +514,23 @@ export default function ProductionDetailPage() {
       {/* -------- Lote y QR (siempre visible en órdenes completadas) -------- */}
       {(status === "completed" || status === "completed_adjusted") && (
         <div id="lote" className="rounded-xl border-2 border-blue-200 bg-white p-6 scroll-mt-4">
-          <div className="mb-4 flex items-center gap-2">
-            <QrCode className="h-5 w-5 text-blue-600" />
-            <h3 className="text-base font-semibold text-gray-900">
-              Lote de producción y QR
-            </h3>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <QrCode className="h-5 w-5 text-blue-600" />
+              <h3 className="text-base font-semibold text-gray-900">
+                Lote de producción y QR
+              </h3>
+            </div>
+            {(order.batches ?? order.productionBatches)?.length > 0 && (
+              <button
+                type="button"
+                onClick={handlePrintLoteQr}
+                className="lote-qr-no-print inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-sm font-medium text-blue-700 shadow-sm transition-colors hover:bg-blue-50"
+              >
+                <Printer className="h-4 w-4 shrink-0" aria-hidden />
+                Imprimir etiqueta
+              </button>
+            )}
           </div>
 
           {(order.batches ?? order.productionBatches)?.length > 0 ? (
@@ -468,39 +540,80 @@ export default function ProductionDetailPage() {
                 const producedByName = batch.producedBy
                   ? `${batch.producedBy.firstName ?? ""} ${batch.producedBy.lastName ?? ""}`.trim() || "—"
                   : "—"
+                const batchProducedAt =
+                  batch.producedAt ?? batch.createdAt ?? order.completedAt ?? null
+                const batchExpirationDate =
+                  shelfLifeDays != null &&
+                  shelfLifeDays > 0 &&
+                  batchProducedAt
+                    ? addCalendarDaysLocal(batchProducedAt, shelfLifeDays)
+                    : null
                 return (
                   <div
                     key={batch.id}
-                    className="flex items-start gap-4 rounded-lg border-2 border-blue-100 bg-blue-50/50 p-4"
+                    className="lote-qr-batch-card flex flex-col gap-3 rounded-lg border-2 border-blue-100 bg-blue-50/50 p-4"
                   >
-                    <div className="flex-shrink-0 rounded-lg border border-white bg-white p-2 shadow-sm">
-                      <QRCodeSVG
-                        value={qrBaseUrl ? `${qrBaseUrl}/batch/${batch.batchCode ?? batch.qrCode ?? ""}` : (batch.batchCode ?? batch.qrCode ?? "")}
-                        size={140}
-                        level="M"
-                        includeMargin={false}
-                      />
-                    </div>
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <p className="font-mono text-sm font-semibold text-gray-900">
-                        {batch.batchCode}
-                      </p>
-                      <p className="text-sm text-gray-700">
-                        <span className="text-gray-500">Producto:</span> {productName}
-                      </p>
-                      <p className="text-sm text-gray-700">
-                        <span className="text-gray-500">Cantidad:</span>{" "}
-                        {formatNumber(batch.quantity)} {batch.unit ?? ""}
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        <span className="text-gray-500">Producido por:</span> {producedByName}
-                      </p>
-                      {batch.createdAt && (
-                        <p className="text-xs text-gray-400">
-                          {formatDate(batch.createdAt)}
-                          {formatTime(batch.createdAt) ? ` ${formatTime(batch.createdAt)}` : ""}
+                    <div className="flex items-start gap-4">
+                      <div className="flex-shrink-0 rounded-lg border border-white bg-white p-2 shadow-sm">
+                        <QRCodeSVG
+                          value={qrBaseUrl ? `${qrBaseUrl}/batch/${batch.batchCode ?? batch.qrCode ?? ""}` : (batch.batchCode ?? batch.qrCode ?? "")}
+                          size={140}
+                          level="M"
+                          includeMargin={false}
+                        />
+                      </div>
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <p className="font-mono text-sm font-semibold text-gray-900">
+                          {batch.batchCode}
                         </p>
-                      )}
+                        {order.orderNumber && (
+                          <p className="text-sm text-gray-700">
+                            <span className="text-gray-500">Orden de producción:</span>{" "}
+                            {order.orderNumber}
+                          </p>
+                        )}
+                        <p className="text-sm text-gray-700">
+                          <span className="text-gray-500">Receta:</span> {recipeName}
+                        </p>
+                        <p className="text-sm text-gray-700">
+                          <span className="text-gray-500">Ubicación:</span> {locationName}
+                        </p>
+                        <p className="text-sm text-gray-700">
+                          <span className="text-gray-500">Producto:</span> {productName}
+                        </p>
+                        <p className="text-sm text-gray-700">
+                          <span className="text-gray-500">Cantidad:</span>{" "}
+                          {formatNumber(batch.quantity)} {batch.unit ?? ""}
+                        </p>
+                        <p className="text-sm text-gray-600">
+                          <span className="text-gray-500">Producido por:</span> {producedByName}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="lote-qr-caducidad-box rounded-lg border border-amber-300/80 bg-amber-50 px-3 py-3 sm:px-4">
+                      <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-amber-900/80">
+                        Producción y caducidad
+                      </p>
+                      <div className="space-y-2">
+                        <div>
+                          <p className="text-xs text-amber-900/75">Fecha y hora de producción</p>
+                          <p className="text-sm font-bold text-gray-900">
+                            {batchProducedAt ? formatDateTime(batchProducedAt) : "—"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-amber-900/75">Vida útil</p>
+                          <p className="text-sm font-bold text-gray-900">{shelfLifeLabel}</p>
+                        </div>
+                        <div className="border-t border-amber-200/90 pt-2">
+                          <p className="text-xs font-medium text-green-800">
+                            Vencimiento (consumir antes de)
+                          </p>
+                          <p className="text-sm font-bold text-green-700">
+                            {batchExpirationDate ? formatDateLong(batchExpirationDate) : "—"}
+                          </p>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )

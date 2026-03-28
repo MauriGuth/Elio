@@ -133,11 +133,9 @@ export default function KitchenDisplayPage() {
       const prevItemMap = prevItemIdsRef.current
       const newItemMap = new Map<string, Set<string>>()
 
-      // Incluir primera carga: si no hay prevIds, tratar todas las órdenes actuales como nuevas para anunciar
+      // Solo órdenes realmente nuevas respecto al poll anterior (en la 1ª carga no anunciar: evita colapsar la voz / 20 mensajes seguidos)
       const newOnes =
-        prevIds.size > 0
-          ? list.filter((o: any) => !prevIds.has(o.id))
-          : list
+        prevIds.size > 0 ? list.filter((o: any) => !prevIds.has(o.id)) : []
       if (newOnes.length > 0) {
           setHasNewOrders(true)
           setTimeout(() => setHasNewOrders(false), 5_000)
@@ -152,8 +150,7 @@ export default function KitchenDisplayPage() {
                   (i: any) =>
                     !i.skipComanda &&
                     i.status === "pending" &&
-                    KITCHEN_SECTORS.includes(i.sector) &&
-                    (sectorFilter === "all" || i.sector === sectorFilter)
+                    KITCHEN_SECTORS.includes((i.sector || "").toLowerCase())
                 )
                 .map((i: any) => {
                   const qty = i.quantity > 1 ? `${i.quantity} ` : ""
@@ -181,7 +178,7 @@ export default function KitchenDisplayPage() {
                 !i.skipComanda &&
                 !prevItemIds.has(i.id) &&
                 i.status === "pending" &&
-                KITCHEN_SECTORS.includes(i.sector)
+                KITCHEN_SECTORS.includes((i.sector || "").toLowerCase())
             )
             if (addedItems.length > 0) {
               setHasNewOrders(true)
@@ -215,7 +212,7 @@ export default function KitchenDisplayPage() {
     } finally {
       setLoading(false)
     }
-  }, [locationId, voiceEnabled, sectorFilter])
+  }, [locationId, voiceEnabled])
 
   const processQueue = useCallback(() => {
     if (announcementQueueRef.current.length === 0) {

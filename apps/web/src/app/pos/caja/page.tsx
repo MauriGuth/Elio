@@ -8,7 +8,13 @@ import { cashRegistersApi } from "@/lib/api/cash-registers"
 import { productsApi } from "@/lib/api/products"
 import { categoriesApi } from "@/lib/api/categories"
 import { stockReconciliationsApi } from "@/lib/api/stock-reconciliations"
-import { cn, formatCurrency, formatNumberInputDisplay, parseNumberInputInput } from "@/lib/utils"
+import {
+  cn,
+  formatCurrency,
+  formatNumberInputDisplay,
+  parseNumberInputInput,
+  isProductAvailableAtLocation,
+} from "@/lib/utils"
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input"
 import { sileo } from "sileo"
 import {
@@ -511,6 +517,7 @@ export default function PosCajaPage() {
       const list = res?.data ?? []
       setProducts(
         list
+          .filter((p: any) => isProductAvailableAtLocation(p, locationId))
           .map((p: any) => {
             const stockForLocation = Array.isArray(p.stockLevels)
               ? p.stockLevels.find((level: any) => level.locationId === locationId)
