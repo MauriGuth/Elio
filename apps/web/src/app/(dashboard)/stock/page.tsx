@@ -38,14 +38,14 @@ const allStatuses: { value: StockStatus | ""; label: string }[] = [
   { value: "excess", label: "Exceso" },
 ]
 
-/** Quita prefijos "Tipo:", "Familia:", "Agrupar:" del nombre de categoría para mostrar solo el valor. */
+/** Quita prefijos "Tipo:", "Familia:", "Subfamilia:", "Agrupar:" del nombre de categoría para mostrar solo el valor. */
 function getCategoryDisplayName(name: string | null | undefined): string {
   if (!name) return ""
-  return name.replace(/^(Tipo|Familia|Agrupar):\s*/i, "").trim() || name
+  return name.replace(/^(Tipo|Familia|Subfamilia|Agrupar):\s*/i, "").trim() || name
 }
 
 function renameCategoryPreservingPrefix(originalName: string, nextDisplayName: string): string {
-  const prefixMatch = originalName.match(/^(Tipo|Familia|Agrupar):\s*/i)
+  const prefixMatch = originalName.match(/^(Tipo|Familia|Subfamilia|Agrupar):\s*/i)
   return prefixMatch ? `${prefixMatch[1]}: ${nextDisplayName}` : nextDisplayName
 }
 
@@ -68,6 +68,7 @@ interface ApiProduct {
   description?: string
   categoryId: string
   familia?: string | null
+  subfamilia?: string | null
   unit: string
   imageUrl?: string | null
   avgCost: number
@@ -95,6 +96,7 @@ interface ProcessedProduct {
   sku: string
   name: string
   familia?: string | null
+  subfamilia?: string | null
   unit: string
   imageUrl?: string | null
   avgCost: number
@@ -124,6 +126,7 @@ type NewProductForm = {
   name: string
   categoryId: string
   familia: string
+  subfamilia: string
   locationIds: string[]
   unit: string
   imageUrl: string
@@ -199,6 +202,7 @@ function processProduct(p: ApiProduct): ProcessedProduct {
     sku: p.sku,
     name: p.name,
     familia: p.familia ?? undefined,
+    subfamilia: p.subfamilia ?? undefined,
     unit: p.unit,
     imageUrl: p.imageUrl ?? undefined,
     avgCost: p.avgCost,
@@ -277,6 +281,7 @@ export default function StockPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("")
   const [selectedCategory, setSelectedCategory] = useState("")
   const [selectedFamilia, setSelectedFamilia] = useState("")
+  const [selectedSubfamilia, setSelectedSubfamilia] = useState("")
   const [selectedStatus, setSelectedStatus] = useState<StockStatus | "">("")
   const [selectedLocation, setSelectedLocation] = useState("")
 
@@ -284,7 +289,14 @@ export default function StockPage() {
   const [products, setProducts] = useState<ProcessedProduct[]>([])
   const [productsTotal, setProductsTotal] = useState(0)
   const [categories, setCategories] = useState<
-    Array<{ id: string; name: string; slug: string; icon: string; color: string }>
+    Array<{
+      id: string
+      name: string
+      slug: string
+      icon: string
+      color: string
+      parentId?: string | null
+    }>
   >([])
   const [locations, setLocations] = useState<
     Array<{ id: string; name: string; type?: string }>
@@ -326,11 +338,22 @@ export default function StockPage() {
   const [savingFamilia, setSavingFamilia] = useState(false)
   const [deleteConfirmFamiliaId, setDeleteConfirmFamiliaId] = useState<string | null>(null)
   const [deletingFamilia, setDeletingFamilia] = useState(false)
+  const [showSubfamiliaModal, setShowSubfamiliaModal] = useState(false)
+  const [newSubfamiliaName, setNewSubfamiliaName] = useState("")
+  const [newSubfamiliaParentId, setNewSubfamiliaParentId] = useState("")
+  const [creatingSubfamilia, setCreatingSubfamilia] = useState(false)
+  const [subfamiliaError, setSubfamiliaError] = useState<string | null>(null)
+  const [showManageSubfamiliasModal, setShowManageSubfamiliasModal] = useState(false)
+  const [editingSubfamilia, setEditingSubfamilia] = useState<{ id: string; name: string } | null>(null)
+  const [editSubfamiliaName, setEditSubfamiliaName] = useState("")
+  const [savingSubfamilia, setSavingSubfamilia] = useState(false)
+  const [deleteConfirmSubfamiliaId, setDeleteConfirmSubfamiliaId] = useState<string | null>(null)
+  const [deletingSubfamilia, setDeletingSubfamilia] = useState(false)
 
   // Selección masiva
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBulkEditModal, setShowBulkEditModal] = useState(false)
-  const [bulkEditField, setBulkEditField] = useState<"category" | "familia" | "unit" | null>(null)
+  const [bulkEditField, setBulkEditField] = useState<"category" | "familia" | "subfamilia" | "unit" | null>(null)
   const [bulkEditValue, setBulkEditValue] = useState("")
   const [showExportModal, setShowExportModal] = useState(false)
   const [exportIncludeSellable, setExportIncludeSellable] = useState(true)
@@ -343,6 +366,7 @@ export default function StockPage() {
       name: "",
       categoryId: "",
       familia: "",
+      subfamilia: "",
       locationIds: [],
       unit: "unidad",
       imageUrl: "",
@@ -368,34 +392,64 @@ export default function StockPage() {
   const isLogisticsRole =
     user?.role === "LOGISTICS" || user?.role === "logistics"
 
-  // Familias = categorías con slug familia-* (para filtro y gestión), ordenadas alfabéticamente
+  // Familias raíz = categorías slug familia-* sin padre (gestión y filtro)
   const familias = useMemo(
     () =>
       categories
-        .filter((c) => c.slug.startsWith("familia-"))
+        .filter((c) => c.slug.startsWith("familia-") && !c.parentId)
         .sort((a, b) =>
           getCategoryDisplayName(a.name).localeCompare(getCategoryDisplayName(b.name), "es", { sensitivity: "base" })
         ),
     [categories]
   )
 
-  /** Filtro categoría en grilla: todas salvo familias (incluye tipo-insumo, rubros propios, etc.) */
-  const stockRubroCategories = useMemo(
-    () =>
-      categories
-        .filter((c) => !c.slug.startsWith("familia-"))
-        .sort((a, b) =>
-          getCategoryDisplayName(a.name).localeCompare(getCategoryDisplayName(b.name), "es", {
-            sensitivity: "base",
-          })
-        ),
-    [categories]
-  )
+  const subfamiliasList = useMemo(() => {
+    const ids = new Set(familias.map((f) => f.id))
+    return categories
+      .filter((c) => c.parentId && ids.has(c.parentId))
+      .sort((a, b) => {
+        const pa = familias.find((f) => f.id === a.parentId)
+        const pb = familias.find((f) => f.id === b.parentId)
+        const sa = `${getCategoryDisplayName(pa?.name)} ${getCategoryDisplayName(a.name)}`
+        const sb = `${getCategoryDisplayName(pb?.name)} ${getCategoryDisplayName(b.name)}`
+        return sa.localeCompare(sb, "es", { sensitivity: "base" })
+      })
+  }, [categories, familias])
+
+  const filteredSubfamiliasForFilter = useMemo(() => {
+    if (!selectedFamilia) return subfamiliasList
+    const fam = familias.find((f) => getCategoryDisplayName(f.name) === selectedFamilia)
+    if (!fam) return subfamiliasList
+    return subfamiliasList.filter((s) => s.parentId === fam.id)
+  }, [subfamiliasList, selectedFamilia, familias])
+
+  /** Filtro categoría en grilla: excluye familias, subfamilias y categorías hijas de una familia */
+  const stockRubroCategories = useMemo(() => {
+    const rootFamiliaIds = new Set(familias.map((f) => f.id))
+    return categories
+      .filter(
+        (c) =>
+          !c.slug.startsWith("familia-") &&
+          !c.slug.startsWith("subfamilia-") &&
+          !(c.parentId && rootFamiliaIds.has(c.parentId))
+      )
+      .sort((a, b) =>
+        getCategoryDisplayName(a.name).localeCompare(getCategoryDisplayName(b.name), "es", {
+          sensitivity: "base",
+        })
+      )
+  }, [categories, familias])
 
   const managedCategoryGroups = useMemo(() => {
     const groups = new Map<string, ManagedCategoryGroup>()
+    const rootFamiliaIds = new Set(familias.map((f) => f.id))
 
-    for (const category of categories.filter((c) => !c.slug.startsWith("familia-"))) {
+    for (const category of categories.filter(
+      (c) =>
+        !c.slug.startsWith("familia-") &&
+        !c.slug.startsWith("subfamilia-") &&
+        !(c.parentId && rootFamiliaIds.has(c.parentId))
+    )) {
       const displayName = getCategoryDisplayName(category.name)
       const key = displayName
         .normalize("NFD")
@@ -432,7 +486,7 @@ export default function StockPage() {
     return [...groups.values()].sort((a, b) =>
       a.displayName.localeCompare(b.displayName, "es", { sensitivity: "base" })
     )
-  }, [categories])
+  }, [categories, familias])
 
   const getNextProdSku = useCallback(async () => {
     const response = await productsApi.getAll({ limit: 5000 })
@@ -483,12 +537,31 @@ export default function StockPage() {
     }
   }, [selectedCategory, stockRubroCategories])
 
+  useEffect(() => {
+    if (
+      selectedSubfamilia &&
+      selectedSubfamilia !== "__none__" &&
+      !filteredSubfamiliasForFilter.some(
+        (s) => getCategoryDisplayName(s.name) === selectedSubfamilia
+      )
+    ) {
+      setSelectedSubfamilia("")
+    }
+  }, [selectedSubfamilia, filteredSubfamiliasForFilter])
+
+  const subfamiliasForNewProduct = useMemo(() => {
+    const fam = familias.find((f) => getCategoryDisplayName(f.name) === newProduct.familia)
+    if (!fam) return []
+    return subfamiliasList.filter((s) => s.parentId === fam.id)
+  }, [newProduct.familia, familias, subfamiliasList])
+
   const hasActiveFilters =
     !!searchQuery ||
     !!selectedStatus ||
     !!selectedLocation ||
     !!selectedCategory ||
-    !!selectedFamilia
+    !!selectedFamilia ||
+    !!selectedSubfamilia
 
   const clearFilters = useCallback(() => {
     setSearchQuery("")
@@ -497,13 +570,16 @@ export default function StockPage() {
     setSelectedLocation("")
     setSelectedCategory("")
     setSelectedFamilia("")
+    setSelectedSubfamilia("")
   }, [])
 
   // Close modals on Escape
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (deleteConfirmFamiliaId) setDeleteConfirmFamiliaId(null)
+        if (deleteConfirmSubfamiliaId) setDeleteConfirmSubfamiliaId(null)
+        else if (editingSubfamilia) setEditingSubfamilia(null)
+        else if (deleteConfirmFamiliaId) setDeleteConfirmFamiliaId(null)
         else if (editingFamilia) setEditingFamilia(null)
         else if (deleteConfirmId) setDeleteConfirmId(null)
         else if (editingCategory) setEditingCategory(null)
@@ -513,6 +589,8 @@ export default function StockPage() {
           setShowManageCategoriesModal(false)
           setShowFamiliaModal(false)
           setShowManageFamiliasModal(false)
+          setShowSubfamiliaModal(false)
+          setShowManageSubfamiliasModal(false)
         }
       }
     }
@@ -522,10 +600,14 @@ export default function StockPage() {
       showManageCategoriesModal ||
       showFamiliaModal ||
       showManageFamiliasModal ||
+      showSubfamiliaModal ||
+      showManageSubfamiliasModal ||
       editingCategory ||
       editingFamilia ||
+      editingSubfamilia ||
       deleteConfirmId ||
-      deleteConfirmFamiliaId
+      deleteConfirmFamiliaId ||
+      deleteConfirmSubfamiliaId
     if (open) {
       document.addEventListener("keydown", handleKeyDown)
       return () => document.removeEventListener("keydown", handleKeyDown)
@@ -536,10 +618,14 @@ export default function StockPage() {
     showManageCategoriesModal,
     showFamiliaModal,
     showManageFamiliasModal,
+    showSubfamiliaModal,
+    showManageSubfamiliasModal,
     editingCategory,
     editingFamilia,
+    editingSubfamilia,
     deleteConfirmId,
     deleteConfirmFamiliaId,
+    deleteConfirmSubfamiliaId,
     closeCreateProductModal,
   ])
 
@@ -560,6 +646,7 @@ export default function StockPage() {
           slug: c.slug,
           icon: c.icon ?? "",
           color: c.color ?? "",
+          parentId: c.parentId ?? null,
         }))
         mapped.sort((a: { name: string }, b: { name: string }) =>
           getCategoryDisplayName(a.name).localeCompare(getCategoryDisplayName(b.name), "es", { sensitivity: "base" })
@@ -608,6 +695,8 @@ export default function StockPage() {
       else if (selectedCategory) params.categoryId = selectedCategory
       if (selectedFamilia === "__none__") params.familia = "none"
       else if (selectedFamilia) params.familia = selectedFamilia
+      if (selectedSubfamilia === "__none__") params.subfamilia = "none"
+      else if (selectedSubfamilia) params.subfamilia = selectedSubfamilia
       if (forceRefresh) params._refresh = Date.now()
 
       const response = await productsApi.getAll(params)
@@ -624,7 +713,7 @@ export default function StockPage() {
     } finally {
       setLoading(false)
     }
-  }, [debouncedSearch, selectedCategory, selectedFamilia])
+  }, [debouncedSearch, selectedCategory, selectedFamilia, selectedSubfamilia])
 
   useEffect(() => {
     fetchProducts()
@@ -660,7 +749,8 @@ export default function StockPage() {
       !selectedLocation &&
       !debouncedSearch &&
       !selectedCategory &&
-      !selectedFamilia
+      !selectedFamilia &&
+      !selectedSubfamilia
     ) {
       return {
         critical: summary.critical,
@@ -690,6 +780,7 @@ export default function StockPage() {
     debouncedSearch,
     selectedCategory,
     selectedFamilia,
+    selectedSubfamilia,
   ])
 
   // Handle create product
@@ -721,6 +812,7 @@ export default function StockPage() {
         ...newProduct,
         imageUrl: imageUrl || undefined,
         familia: newProduct.familia || undefined,
+        subfamilia: newProduct.subfamilia?.trim() || undefined,
         preparationSector: newProduct.preparationSector || undefined,
         salePriceByLocation: newProduct.locationIds.length > 0 ? salePriceByLocation : undefined,
       })
@@ -814,21 +906,26 @@ export default function StockPage() {
     })
   }, [])
 
-  const openBulkEdit = useCallback((field: "category" | "familia" | "unit") => {
+  const BULK_EDIT_PICK = "__pick__"
+
+  const openBulkEdit = useCallback((field: "category" | "familia" | "subfamilia" | "unit") => {
     setBulkEditField(field)
-    setBulkEditValue("")
+    setBulkEditValue(BULK_EDIT_PICK)
     setShowBulkEditModal(true)
   }, [])
 
   const handleBulkEdit = async () => {
-    if (!bulkEditField || !bulkEditValue) return
+    if (!bulkEditField || bulkEditValue === BULK_EDIT_PICK) return
+    if ((bulkEditField === "category" || bulkEditField === "unit") && !bulkEditValue) return
     setBulkProcessing(true)
     try {
-      const payload: Record<string, string> =
+      const payload: Record<string, string | null> =
         bulkEditField === "category"
           ? { categoryId: bulkEditValue }
           : bulkEditField === "familia"
-          ? { familia: bulkEditValue }
+          ? { familia: bulkEditValue.trim() || null }
+          : bulkEditField === "subfamilia"
+          ? { subfamilia: bulkEditValue.trim() || null }
           : { unit: bulkEditValue }
 
       await Promise.all([...selectedIds].map((id) => productsApi.update(id, payload)))
@@ -885,6 +982,7 @@ export default function StockPage() {
       ...(exportIncludeSellable ? ["Vendible"] : []),
       "Categoría",
       "Familia",
+      "Subfamilia",
       "Unidad",
       "Costo promedio",
       "Stock total",
@@ -897,6 +995,7 @@ export default function StockPage() {
         ...(exportIncludeSellable ? [p.isSellable ? "Sí" : "No"] : []),
         getCategoryDisplayName(p.category?.name) || "",
         p.familia ?? "",
+        p.subfamilia ?? "",
         p.unit,
         p.avgCost,
         p.totalStock,
@@ -990,6 +1089,77 @@ export default function StockPage() {
       sileo.error({ title: msg })
     } finally {
       setDeletingFamilia(false)
+    }
+  }
+
+  const handleCreateSubfamilia = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const value = newSubfamiliaName.trim()
+    if (!value || value.length < 2) {
+      setSubfamiliaError("El nombre debe tener al menos 2 caracteres")
+      return
+    }
+    if (!newSubfamiliaParentId) {
+      setSubfamiliaError("Seleccioná la familia padre")
+      return
+    }
+    setCreatingSubfamilia(true)
+    setSubfamiliaError(null)
+    try {
+      await categoriesApi.create({
+        name: `Subfamilia: ${value}`,
+        parentId: newSubfamiliaParentId,
+      })
+      setShowSubfamiliaModal(false)
+      setNewSubfamiliaName("")
+      setNewSubfamiliaParentId("")
+      refreshCategories()
+      sileo.success({ title: "Subfamilia creada" })
+    } catch (err: any) {
+      const msg = err.message || "Error al crear la subfamilia"
+      setSubfamiliaError(msg)
+      sileo.error({ title: msg })
+    } finally {
+      setCreatingSubfamilia(false)
+    }
+  }
+
+  const handleUpdateSubfamilia = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingSubfamilia) return
+    const value = editSubfamiliaName.trim()
+    if (value.length < 2) return
+    setSavingSubfamilia(true)
+    setSubfamiliaError(null)
+    try {
+      await categoriesApi.update(editingSubfamilia.id, { name: `Subfamilia: ${value}` })
+      setEditingSubfamilia(null)
+      setEditSubfamiliaName("")
+      refreshCategories()
+      sileo.success({ title: "Subfamilia actualizada" })
+    } catch (err: any) {
+      const msg = err.message || "Error al actualizar"
+      setSubfamiliaError(msg)
+      sileo.error({ title: msg })
+    } finally {
+      setSavingSubfamilia(false)
+    }
+  }
+
+  const handleDeleteSubfamilia = async (id: string) => {
+    setDeletingSubfamilia(true)
+    setSubfamiliaError(null)
+    try {
+      await categoriesApi.delete(id)
+      setDeleteConfirmSubfamiliaId(null)
+      refreshCategories()
+      sileo.success({ title: "Subfamilia eliminada" })
+    } catch (err: any) {
+      const msg = err.message || "Error al eliminar"
+      setSubfamiliaError(msg)
+      sileo.error({ title: msg })
+    } finally {
+      setDeletingSubfamilia(false)
     }
   }
 
@@ -1124,7 +1294,10 @@ export default function StockPage() {
         <select
           aria-label="Filtrar por familia"
           value={selectedFamilia}
-          onChange={(e) => setSelectedFamilia(e.target.value)}
+          onChange={(e) => {
+            setSelectedFamilia(e.target.value)
+            setSelectedSubfamilia("")
+          }}
           className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
         >
           <option value="">Todas las familias</option>
@@ -1134,6 +1307,27 @@ export default function StockPage() {
               {getCategoryDisplayName(cat.name)}
             </option>
           ))}
+        </select>
+
+        <select
+          aria-label="Filtrar por subfamilia"
+          value={selectedSubfamilia}
+          onChange={(e) => setSelectedSubfamilia(e.target.value)}
+          className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+        >
+          <option value="">Todas las subfamilias</option>
+          <option value="__none__">— Sin subfamilia</option>
+          {filteredSubfamiliasForFilter.map((cat) => {
+            const parent = familias.find((f) => f.id === cat.parentId)
+            const label = parent
+              ? `${getCategoryDisplayName(parent.name)} · ${getCategoryDisplayName(cat.name)}`
+              : getCategoryDisplayName(cat.name)
+            return (
+              <option key={cat.id} value={getCategoryDisplayName(cat.name)}>
+                {label}
+              </option>
+            )
+          })}
         </select>
 
         <button
@@ -1178,6 +1372,31 @@ export default function StockPage() {
             >
               <Pencil className="h-4 w-4" />
               Gestionar familias
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSubfamiliaError(null)
+                setNewSubfamiliaParentId(familias[0]?.id ?? "")
+                setShowSubfamiliaModal(true)
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm font-medium text-gray-700 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-700"
+            >
+              <Plus className="h-4 w-4" />
+              Nueva subfamilia
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSubfamiliaError(null)
+                setDeleteConfirmSubfamiliaId(null)
+                setEditingSubfamilia(null)
+                setShowManageSubfamiliasModal(true)
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm font-medium text-gray-700 dark:text-white hover:bg-gray-50 dark:hover:bg-gray-700"
+            >
+              <Pencil className="h-4 w-4" />
+              Gestionar subfamilias
             </button>
           </>
         )}
@@ -1240,6 +1459,13 @@ export default function StockPage() {
               className="inline-flex items-center gap-1.5 rounded-lg border border-blue-300 dark:border-blue-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/50"
             >
               <Pencil className="h-3 w-3" /> Cambiar familia
+            </button>
+            <button
+              type="button"
+              onClick={() => openBulkEdit("subfamilia")}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-blue-300 dark:border-blue-600 bg-white dark:bg-gray-800 px-3 py-1.5 text-xs font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/50"
+            >
+              <Pencil className="h-3 w-3" /> Cambiar subfamilia
             </button>
             <button
               type="button"
@@ -1322,6 +1548,9 @@ export default function StockPage() {
                   </th>
                   <th className="w-32 px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-white">
                     Familia
+                  </th>
+                  <th className="w-32 px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-white">
+                    Subfamilia
                   </th>
                   <th className="w-20 px-3 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-white">
                     Unidad
@@ -1407,6 +1636,16 @@ export default function StockPage() {
                           <span className="text-gray-400 dark:text-gray-500 text-xs">—</span>
                         )}
                       </td>
+                      <td className="px-3 py-3 align-middle">
+                        {product.subfamilia &&
+                        subfamiliasList.some((s) => getCategoryDisplayName(s.name) === product.subfamilia) ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200">
+                            {product.subfamilia}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 dark:text-gray-500 text-xs">—</span>
+                        )}
+                      </td>
                       <td className="px-3 py-3 align-middle text-sm text-gray-600 dark:text-gray-300">
                         {product.unit}
                       </td>
@@ -1439,7 +1678,7 @@ export default function StockPage() {
                 {filteredProducts.length === 0 && (
                   <tr>
                     <td
-                      colSpan={10}
+                      colSpan={11}
                       className="px-4 py-12 text-center text-sm text-gray-400 dark:text-gray-400"
                     >
                       <Package className="mx-auto mb-2 h-8 w-8 text-gray-300 dark:text-gray-500" />
@@ -1588,8 +1827,8 @@ export default function StockPage() {
                   )}
                 </div>
 
-                {/* Category + Familia + Unit row */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {/* Category + Familia + Subfamilia + Unit */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
                       Categoría (tipo)
@@ -1618,7 +1857,11 @@ export default function StockPage() {
                       aria-label="Familia"
                       value={newProduct.familia}
                       onChange={(e) =>
-                        setNewProduct({ ...newProduct, familia: e.target.value })
+                        setNewProduct({
+                          ...newProduct,
+                          familia: e.target.value,
+                          subfamilia: "",
+                        })
                       }
                       className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     >
@@ -1626,6 +1869,33 @@ export default function StockPage() {
                       {familias.map((familia) => (
                         <option key={familia.id} value={getCategoryDisplayName(familia.name)}>
                           {getCategoryDisplayName(familia.name)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
+                      Subfamilia
+                    </label>
+                    <select
+                      aria-label="Subfamilia"
+                      value={newProduct.subfamilia}
+                      onChange={(e) =>
+                        setNewProduct({ ...newProduct, subfamilia: e.target.value })
+                      }
+                      disabled={!newProduct.familia || subfamiliasForNewProduct.length === 0}
+                      className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+                    >
+                      <option value="">
+                        {!newProduct.familia
+                          ? "Elegí primero una familia"
+                          : subfamiliasForNewProduct.length === 0
+                            ? "Sin subfamilias en esta familia"
+                            : "Opcional"}
+                      </option>
+                      {subfamiliasForNewProduct.map((sf) => (
+                        <option key={sf.id} value={getCategoryDisplayName(sf.name)}>
+                          {getCategoryDisplayName(sf.name)}
                         </option>
                       ))}
                     </select>
@@ -2278,13 +2548,265 @@ export default function StockPage() {
         </div>
       )}
 
+      {/* -------- Nueva subfamilia Modal -------- */}
+      {showSubfamiliaModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-xl bg-white dark:bg-gray-800 shadow-2xl border border-gray-200 dark:border-gray-700">
+            <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Nueva subfamilia</h2>
+              <button
+                type="button"
+                aria-label="Cerrar"
+                onClick={() => setShowSubfamiliaModal(false)}
+                className="rounded-lg p-1 text-gray-400 transition-colors hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form onSubmit={handleCreateSubfamilia}>
+              <div className="space-y-4 px-6 py-5">
+                {subfamiliaError && (
+                  <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/30 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+                    {subfamiliaError}
+                  </div>
+                )}
+                {familias.length === 0 ? (
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    Primero creá una familia con &quot;Nueva familia&quot;.
+                  </p>
+                ) : (
+                  <>
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
+                        Familia <span className="text-red-500">*</span>
+                      </label>
+                      <select
+                        value={newSubfamiliaParentId}
+                        onChange={(e) => setNewSubfamiliaParentId(e.target.value)}
+                        className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      >
+                        {familias.map((f) => (
+                          <option key={f.id} value={f.id}>
+                            {getCategoryDisplayName(f.name)}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-white">
+                        Nombre de la subfamilia <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={newSubfamiliaName}
+                        onChange={(e) => setNewSubfamiliaName(e.target.value)}
+                        placeholder="Ej: Frutos secos, Pastas secas"
+                        className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="flex items-center justify-end gap-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/80 px-6 py-4">
+                <button
+                  type="button"
+                  onClick={() => setShowSubfamiliaModal(false)}
+                  disabled={creatingSubfamilia}
+                  className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 transition-colors hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingSubfamilia || familias.length === 0}
+                  className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {creatingSubfamilia && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {creatingSubfamilia ? "Creando..." : "Crear subfamilia"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* -------- Gestionar subfamilias Modal -------- */}
+      {showManageSubfamiliasModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => {
+            if (!editingSubfamilia && !deleteConfirmSubfamiliaId) setShowManageSubfamiliasModal(false)
+          }}
+        >
+          <div
+            className="w-full max-w-lg rounded-xl bg-white dark:bg-gray-800 shadow-2xl border border-gray-200 dark:border-gray-700 max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4 shrink-0">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Gestionar subfamilias</h2>
+              <button
+                type="button"
+                aria-label="Cerrar"
+                onClick={() => setShowManageSubfamiliasModal(false)}
+                className="rounded-lg p-1 text-gray-400 transition-colors hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-600 dark:hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
+              {subfamiliaError && (
+                <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/30 px-4 py-3 text-sm text-red-700 dark:text-red-300">
+                  {subfamiliaError}
+                </div>
+              )}
+              <ul className="space-y-1">
+                {subfamiliasList.map((cat) => {
+                  const parent = familias.find((f) => f.id === cat.parentId)
+                  return (
+                    <li
+                      key={cat.id}
+                      className="rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50/50 dark:bg-gray-700/30 px-3 py-2"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <span className="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200 truncate max-w-full">
+                            {getCategoryDisplayName(cat.name)}
+                          </span>
+                          {parent && (
+                            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400 truncate">
+                              Familia: {getCategoryDisplayName(parent.name)}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDeleteConfirmSubfamiliaId(null)
+                              setEditingSubfamilia({ id: cat.id, name: cat.name })
+                              setEditSubfamiliaName(getCategoryDisplayName(cat.name))
+                              setSubfamiliaError(null)
+                            }}
+                            className="rounded p-1.5 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600 hover:text-blue-600 dark:hover:text-blue-400"
+                            title="Editar"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingSubfamilia(null)
+                              setEditSubfamiliaName("")
+                              setDeleteConfirmSubfamiliaId(cat.id)
+                              setSubfamiliaError(null)
+                            }}
+                            className="rounded p-1.5 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-600 hover:text-red-600 dark:hover:text-red-400"
+                            title="Eliminar"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {editingSubfamilia?.id === cat.id ? (
+                        <form
+                          onSubmit={handleUpdateSubfamilia}
+                          className="mt-3 space-y-3 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-900/20 p-3"
+                        >
+                          <p className="text-sm font-medium text-gray-700 dark:text-white">Editar subfamilia</p>
+                          <input
+                            type="text"
+                            value={editSubfamiliaName}
+                            onChange={(e) => setEditSubfamiliaName(e.target.value)}
+                            placeholder="Nombre"
+                            className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingSubfamilia(null)
+                                setEditSubfamiliaName("")
+                              }}
+                              disabled={savingSubfamilia}
+                              className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={savingSubfamilia || editSubfamiliaName.trim().length < 2}
+                              className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                            >
+                              {savingSubfamilia ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                              Guardar
+                            </button>
+                          </div>
+                        </form>
+                      ) : null}
+
+                      {deleteConfirmSubfamiliaId === cat.id ? (
+                        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/30 px-4 py-3">
+                          <span className="text-sm text-amber-800 dark:text-amber-200">
+                            ¿Eliminar la subfamilia &quot;{getCategoryDisplayName(cat.name)}&quot;?
+                          </span>
+                          <div className="flex gap-2 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setDeleteConfirmSubfamiliaId(null)}
+                              disabled={deletingSubfamilia}
+                              className="rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSubfamilia(cat.id)}
+                              disabled={deletingSubfamilia}
+                              className="inline-flex items-center gap-1 rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                            >
+                              {deletingSubfamilia ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                              Eliminar
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </li>
+                  )
+                })}
+              </ul>
+              {subfamiliasList.length === 0 && (
+                <p className="text-sm text-gray-500 dark:text-gray-400 py-4 text-center">
+                  No hay subfamilias. Creá una desde &quot;Nueva subfamilia&quot; (necesitás al menos una familia).
+                </p>
+              )}
+            </div>
+            <div className="border-t border-gray-200 dark:border-gray-700 px-6 py-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowManageSubfamiliasModal(false)}
+                className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* -------- Bulk Edit Modal -------- */}
       {showBulkEditModal && bulkEditField && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowBulkEditModal(false)}>
-          <div className="w-full max-w-sm rounded-xl bg-white dark:bg-gray-800 shadow-2xl border border-gray-200 dark:border-gray-700" onClick={(e) => e.stopPropagation()}>
+          <div className="w-full max-w-md rounded-xl bg-white dark:bg-gray-800 shadow-2xl border border-gray-200 dark:border-gray-700" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-gray-200 dark:border-gray-700 px-6 py-4">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-                {bulkEditField === "category" ? "Cambiar categoría" : bulkEditField === "familia" ? "Cambiar familia" : "Cambiar unidad"}
+                {bulkEditField === "category"
+                  ? "Cambiar categoría"
+                  : bulkEditField === "familia"
+                    ? "Cambiar familia"
+                    : bulkEditField === "subfamilia"
+                      ? "Cambiar subfamilia"
+                      : "Cambiar unidad"}
               </h2>
               <button type="button" onClick={() => setShowBulkEditModal(false)} className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700">
                 <X className="h-5 w-5" />
@@ -2300,7 +2822,7 @@ export default function StockPage() {
                   onChange={(e) => setBulkEditValue(e.target.value)}
                   className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none"
                 >
-                  <option value="">Seleccionar categoría...</option>
+                  <option value={BULK_EDIT_PICK}>Seleccionar categoría...</option>
                   {stockRubroCategories.map((c) => (
                     <option key={c.id} value={c.id}>{getCategoryDisplayName(c.name)}</option>
                   ))}
@@ -2312,10 +2834,32 @@ export default function StockPage() {
                   onChange={(e) => setBulkEditValue(e.target.value)}
                   className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none"
                 >
+                  <option value={BULK_EDIT_PICK}>Seleccionar...</option>
                   <option value="">Sin familia</option>
                   {familias.map((f) => (
                     <option key={f.id} value={getCategoryDisplayName(f.name)}>{getCategoryDisplayName(f.name)}</option>
                   ))}
+                </select>
+              )}
+              {bulkEditField === "subfamilia" && (
+                <select
+                  value={bulkEditValue}
+                  onChange={(e) => setBulkEditValue(e.target.value)}
+                  className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none"
+                >
+                  <option value={BULK_EDIT_PICK}>Seleccionar...</option>
+                  <option value="">Sin subfamilia</option>
+                  {subfamiliasList.map((s) => {
+                    const parent = familias.find((f) => f.id === s.parentId)
+                    const label = parent
+                      ? `${getCategoryDisplayName(parent.name)} · ${getCategoryDisplayName(s.name)}`
+                      : getCategoryDisplayName(s.name)
+                    return (
+                      <option key={s.id} value={getCategoryDisplayName(s.name)}>
+                        {label}
+                      </option>
+                    )
+                  })}
                 </select>
               )}
               {bulkEditField === "unit" && (
@@ -2324,7 +2868,7 @@ export default function StockPage() {
                   onChange={(e) => setBulkEditValue(e.target.value)}
                   className="w-full rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none"
                 >
-                  <option value="">Seleccionar unidad...</option>
+                  <option value={BULK_EDIT_PICK}>Seleccionar unidad...</option>
                   {unitOptions.map((u) => (
                     <option key={u.value} value={u.value}>{u.label}</option>
                   ))}
@@ -2335,7 +2879,7 @@ export default function StockPage() {
               <button type="button" onClick={() => setShowBulkEditModal(false)} disabled={bulkProcessing} className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50">
                 Cancelar
               </button>
-              <button type="button" onClick={handleBulkEdit} disabled={bulkProcessing || !bulkEditValue} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+              <button type="button" onClick={handleBulkEdit} disabled={bulkProcessing || bulkEditValue === BULK_EDIT_PICK || ((bulkEditField === "category" || bulkEditField === "unit") && !bulkEditValue)} className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
                 {bulkProcessing && <Loader2 className="h-4 w-4 animate-spin" />}
                 {bulkProcessing ? "Aplicando..." : "Aplicar"}
               </button>

@@ -125,10 +125,10 @@ const unitOptions = [
   { value: "ml", label: "Mililitro (ml)" },
 ]
 
-/** Quita prefijos "Tipo:", "Familia:", "Agrupar:" del nombre de categoría para mostrar solo el valor. */
+/** Quita prefijos "Tipo:", "Familia:", "Subfamilia:", "Agrupar:" del nombre de categoría para mostrar solo el valor. */
 function getCategoryDisplayName(name: string | null | undefined): string {
   if (!name) return ""
-  return name.replace(/^(Tipo|Familia|Agrupar):\s*/i, "").trim() || name
+  return name.replace(/^(Tipo|Familia|Subfamilia|Agrupar):\s*/i, "").trim() || name
 }
 
 const PREPARATION_SECTOR_FORM_OPTIONS: { value: string; label: string }[] = [
@@ -159,6 +159,7 @@ interface ApiProduct {
   description?: string
   categoryId: string
   familia?: string | null
+  subfamilia?: string | null
   unit: string
   imageUrl?: string | null
   avgCost: number
@@ -215,6 +216,7 @@ interface ProcessedProduct {
   sku: string
   name: string
   familia?: string | null
+  subfamilia?: string | null
   unit: string
   imageUrl?: string | null
   avgCost: number
@@ -293,6 +295,7 @@ function processProduct(p: ApiProduct): ProcessedProduct {
     sku: p.sku,
     name: p.name,
     familia: p.familia ?? undefined,
+    subfamilia: p.subfamilia ?? undefined,
     unit: p.unit,
     imageUrl: p.imageUrl ?? undefined,
     avgCost: p.avgCost ?? 0,
@@ -429,7 +432,9 @@ export default function ProductDetailPage() {
 
   const [product, setProduct] = useState<ProcessedProduct | null>(null)
   const [movements, setMovements] = useState<ProcessedMovement[]>([])
-  const [categories, setCategories] = useState<Array<{ id: string; name: string; slug: string; icon: string; color: string }>>([])
+  const [categories, setCategories] = useState<
+    Array<{ id: string; name: string; slug: string; icon: string; color: string; parentId?: string | null }>
+  >([])
   const [locations, setLocations] = useState<Array<{ id: string; name: string; type?: string }>>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -443,6 +448,7 @@ export default function ProductDetailPage() {
     name: "",
     categoryId: "",
     familia: "" as string,
+    subfamilia: "" as string,
     locationIds: [] as string[],
     unit: "unidad",
     imageUrl: "" as string,
@@ -469,29 +475,47 @@ export default function ProductDetailPage() {
   const isLogisticsRole =
     user?.role === "LOGISTICS" || user?.role === "logistics"
 
-  // Familias = categorías con slug familia-* (para selector en editar producto)
   const familias = useMemo(
     () =>
       categories
-        .filter((c) => c.slug.startsWith("familia-"))
+        .filter((c) => c.slug.startsWith("familia-") && !c.parentId)
         .sort((a, b) =>
           getCategoryDisplayName(a.name).localeCompare(getCategoryDisplayName(b.name), "es", { sensitivity: "base" })
         ),
     [categories]
   )
 
-  /** Rubros para categoría del producto: igual que el filtro de la grilla (excluye solo familia-*). Incluye tipo-insumo y rubros propios (ej. INSUMOS). */
-  const stockRubroCategories = useMemo(
-    () =>
-      categories
-        .filter((c) => !c.slug.startsWith("familia-"))
-        .sort((a, b) =>
-          getCategoryDisplayName(a.name).localeCompare(getCategoryDisplayName(b.name), "es", {
-            sensitivity: "base",
-          })
-        ),
-    [categories]
-  )
+  const subfamiliasList = useMemo(() => {
+    const ids = new Set(familias.map((f) => f.id))
+    return categories
+      .filter((c) => c.parentId && ids.has(c.parentId))
+      .sort((a, b) =>
+        getCategoryDisplayName(a.name).localeCompare(getCategoryDisplayName(b.name), "es", { sensitivity: "base" })
+      )
+  }, [categories, familias])
+
+  const subfamiliasForEdit = useMemo(() => {
+    const fam = familias.find((f) => getCategoryDisplayName(f.name) === editForm.familia)
+    if (!fam) return []
+    return subfamiliasList.filter((s) => s.parentId === fam.id)
+  }, [editForm.familia, familias, subfamiliasList])
+
+  /** Rubros: excluye familias, subfamilias y categorías hijas de familia */
+  const stockRubroCategories = useMemo(() => {
+    const rootFamiliaIds = new Set(familias.map((f) => f.id))
+    return categories
+      .filter(
+        (c) =>
+          !c.slug.startsWith("familia-") &&
+          !c.slug.startsWith("subfamilia-") &&
+          !(c.parentId && rootFamiliaIds.has(c.parentId))
+      )
+      .sort((a, b) =>
+        getCategoryDisplayName(a.name).localeCompare(getCategoryDisplayName(b.name), "es", {
+          sensitivity: "base",
+        })
+      )
+  }, [categories, familias])
 
   /** Si el producto tenía otra categoría (legacy), mostrarla al final para no perder el valor. */
   const rubroCategoriesForEdit = useMemo(() => {
@@ -540,12 +564,13 @@ export default function ProductDetailPage() {
     if (categories.length === 0) {
       categoriesApi.getAll({ isActive: true }).then((res: any) => {
         const list = Array.isArray(res) ? res : res?.data ?? []
-        const mapped = (list as Array<{ id: string; name: string; slug: string; icon?: string; color?: string }>).map((c) => ({
+        const mapped = (list as Array<{ id: string; name: string; slug: string; icon?: string; color?: string; parentId?: string | null }>).map((c) => ({
           id: c.id,
           name: c.name,
           slug: c.slug,
           icon: c.icon ?? "",
           color: c.color ?? "",
+          parentId: c.parentId ?? null,
         }))
         mapped.sort((a, b) =>
           getCategoryDisplayName(a.name).localeCompare(getCategoryDisplayName(b.name), "es", { sensitivity: "base" })
@@ -580,6 +605,7 @@ export default function ProductDetailPage() {
       name: product.name,
       categoryId: product.category.id,
       familia: product.familia ?? "",
+      subfamilia: product.subfamilia ?? "",
       locationIds: product.stockByLocation.map((stock) => stock.locationId),
       unit: product.unit,
       imageUrl: product.imageUrl ?? "",
@@ -623,7 +649,8 @@ export default function ProductDetailPage() {
         sku: editForm.sku,
         name: editForm.name,
         categoryId: editForm.categoryId,
-        familia: editForm.familia || undefined,
+        familia: editForm.familia?.trim() ? editForm.familia.trim() : null,
+        subfamilia: editForm.subfamilia?.trim() ? editForm.subfamilia.trim() : null,
         locationIds: editForm.locationIds,
         unit: editForm.unit,
         imageUrl,
@@ -694,7 +721,7 @@ export default function ProductDetailPage() {
           </p>
           <button
             type="button"
-            onClick={fetchData}
+            onClick={() => void fetchData(true)}
             className="mt-6 inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
           >
             <RefreshCw className="h-4 w-4" />
@@ -782,6 +809,11 @@ export default function ProductDetailPage() {
                 {product.familia && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-700 dark:text-slate-300">
                     {product.familia}
+                  </span>
+                )}
+                {product.subfamilia && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-0.5 text-xs font-medium text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-200">
+                    {product.subfamilia}
                   </span>
                 )}
                 <span
@@ -982,7 +1014,7 @@ export default function ProductDetailPage() {
                   id="edit-familia"
                   value={editForm.familia}
                   onChange={(e) =>
-                    setEditForm((f) => ({ ...f, familia: e.target.value }))
+                    setEditForm((f) => ({ ...f, familia: e.target.value, subfamilia: "" }))
                   }
                   className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   aria-label="Familia del producto"
@@ -991,6 +1023,34 @@ export default function ProductDetailPage() {
                   {familias.map((fam) => (
                     <option key={fam.id} value={getCategoryDisplayName(fam.name)}>
                       {getCategoryDisplayName(fam.name)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="edit-subfamilia" className="block text-sm font-medium text-gray-700 dark:text-white">
+                  Subfamilia
+                </label>
+                <select
+                  id="edit-subfamilia"
+                  value={editForm.subfamilia}
+                  onChange={(e) =>
+                    setEditForm((f) => ({ ...f, subfamilia: e.target.value }))
+                  }
+                  disabled={!editForm.familia || subfamiliasForEdit.length === 0}
+                  className="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-50"
+                  aria-label="Subfamilia del producto"
+                >
+                  <option value="">
+                    {!editForm.familia
+                      ? "Elegí primero una familia"
+                      : subfamiliasForEdit.length === 0
+                        ? "Sin subfamilias en esta familia"
+                        : "Opcional"}
+                  </option>
+                  {subfamiliasForEdit.map((sf) => (
+                    <option key={sf.id} value={getCategoryDisplayName(sf.name)}>
+                      {getCategoryDisplayName(sf.name)}
                     </option>
                   ))}
                 </select>

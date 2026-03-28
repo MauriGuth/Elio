@@ -3052,6 +3052,9 @@ export default function TableOrderPage() {
                 const qty = pendingItems
                   .filter((i) => i.productId === product.id)
                   .reduce((s, i) => s + i.quantity, 0)
+                /* ── Pruebas mesas/comandas: condición de stock en grilla desactivada.
+                    Para volver a bloquear ítems sin stock en el local, descomentar el bloque
+                    y eliminar las dos líneas `const blockedByGridStock = false` / `showSinStockEnLocal`.
                 const stockLocationId = table?.location?.id || locationId || ""
                 const locationStockQty = Array.isArray(product.stockLevels)
                   ? Number(
@@ -3064,6 +3067,9 @@ export default function TableOrderPage() {
                 const noStockAtLocation = locationStockQty <= 0
                 const blockedByGridStock = noStockAtLocation
                 const showSinStockEnLocal = noStockAtLocation
+                ── */
+                const blockedByGridStock = false
+                const showSinStockEnLocal = false
                 return (
                   <button
                     key={product.id}

@@ -1,7 +1,7 @@
 import { api } from '../api';
 
 export const categoriesApi = {
-  getAll: (params?: { search?: string; isActive?: boolean }) =>
+  getAll: (params?: { search?: string; isActive?: boolean; parentId?: string }) =>
     api.get<any[]>('/categories', params),
 
   getById: (id: string) => api.get<any>(`/categories/${id}`),
