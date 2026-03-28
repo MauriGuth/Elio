@@ -27,8 +27,8 @@ import {
 import { ModifierGroupsManagerDialog } from "@/components/ModifierGroupsManagerDialog"
 
 /**
- * Tras guardar la receta se persisten stock/precios por **cada opción** de modificador.
- * En remoto, un `await` por opción suma latencias (p. ej. 50 opciones × 200 ms ≈ 10 s).
+ * Persistencia de modificadores al guardar receta: solo grupos vinculados en ingredientes
+ * (el catálogo global puede tener cientos de opciones; antes se hacía un request por cada una).
  */
 const MODIFIER_PERSIST_CONCURRENCY = 12
 
@@ -51,6 +51,16 @@ type IngredientRow = {
   unit: string
   /** Grupo de variantes del plato (producto de salida): consumo por opción, no por cantidad fija de esta fila */
   modifierGroupId?: string
+}
+
+/** Grupos de modificadores asignados a alguna fila de ingrediente de esta receta (no todo el catálogo global). */
+function modifierGroupIdsLinkedInRecipe(ingredients: IngredientRow[]): Set<string> {
+  const ids = new Set<string>()
+  for (const row of ingredients) {
+    const id = row.modifierGroupId?.trim()
+    if (id) ids.add(id)
+  }
+  return ids
 }
 type FormState = {
   name: string
@@ -525,9 +535,11 @@ export default function RecipesPage() {
 
   const persistModifierStockLines = async () => {
     if (!form.productId) return
+    const linkedGroupIds = modifierGroupIdsLinkedInRecipe(form.ingredients)
     type StockTask = { optionId: string; lines: { productId: string; quantity: number }[] }
     const tasks: StockTask[] = []
     for (const g of modifierGroupsData) {
+      if (!linkedGroupIds.has(g.id)) continue
       for (const o of g.options || []) {
         const rows = modifierLinesByOption[o.id] ?? []
         const merged = new Map<string, number>()
@@ -547,14 +559,16 @@ export default function RecipesPage() {
     )
   }
 
-  /** Precio Δ y visibilidad de sub-receta en POS (un PATCH por opción). */
+  /** Precio Δ y visibilidad de sub-receta en POS (un PATCH por opción vinculada a la receta). */
   const persistModifierOptionPosFields = async () => {
+    const linkedGroupIds = modifierGroupIdsLinkedInRecipe(form.ingredients)
     type Task = {
       optionId: string
       body: { priceDelta: number; showSubRecipeInPos: boolean }
     }
     const tasks: Task[] = []
     for (const g of modifierGroupsData) {
+      if (!linkedGroupIds.has(g.id)) continue
       for (const o of g.options || []) {
         const p = optionPriceById[o.id]
         tasks.push({

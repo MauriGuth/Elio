@@ -465,6 +465,29 @@ function applyLicuado450LiquidOptionFilter(
   return orderIds.map((id) => byId.get(id)).filter((g): g is any => Boolean(g))
 }
 
+/**
+ * Grupos que el modal muestra tras aplicar `visibilityRule` + el mismo fallback que la UI
+ * (si las reglas dejan 0 grupos, se muestran los sin regla o todos). Debe coincidir con
+ * `effectiveModifierGroupsForPosModal` antes del filtro Licuado 450.
+ */
+function resolveModifierGroupsAfterVisibilityRules(
+  vis: any[],
+  selections: Record<string, string | string[]>
+): any[] {
+  const visibleIdList = computeVisibleModifierGroupIdsForPos(vis, selections)
+  const visIdSet = new Set(visibleIdList)
+  let afterRule = vis.filter((g) => visIdSet.has(g.id))
+  /**
+   * Si todas las reglas `visibilityRule` dejan la lista vacía (cadena rota o prior mal resuelto),
+   * el modal quedaba en blanco. Mostramos primero grupos sin regla; si no hay, todos los de la receta.
+   */
+  if (afterRule.length === 0 && vis.length > 0) {
+    const noRule = vis.filter((g) => g.visibilityRule == null)
+    afterRule = noRule.length > 0 ? noRule : vis
+  }
+  return afterRule
+}
+
 function effectiveModifierGroupsForPosModal(
   product: { sku?: string },
   groups: any[],
@@ -477,17 +500,7 @@ function effectiveModifierGroupsForPosModal(
     recipeIngredients,
     excludedIngredientIds
   )
-  const visibleIdList = computeVisibleModifierGroupIdsForPos(vis, selections)
-  const visIdSet = new Set(visibleIdList)
-  let afterRule = vis.filter((g) => visIdSet.has(g.id))
-  /**
-   * Si todas las reglas `visibilityRule` dejan la lista vacía (cadena rota o prior mal resuelto),
-   * el modal quedaba en blanco. Mostramos primero grupos sin regla; si no hay, todos los de la receta.
-   */
-  if (afterRule.length === 0 && vis.length > 0) {
-    const noRule = vis.filter((g) => g.visibilityRule == null)
-    afterRule = noRule.length > 0 ? noRule : vis
-  }
+  const afterRule = resolveModifierGroupsAfterVisibilityRules(vis, selections)
   return applyLicuado450LiquidOptionFilter(product?.sku, afterRule, selections)
 }
 
@@ -564,7 +577,8 @@ function reconcileModifierSelectionsAfterChange(
     recipeIngredients,
     excludedIngredientIds
   )
-  const effIds = new Set(computeVisibleModifierGroupIdsForPos(vis, next))
+  const afterVisibility = resolveModifierGroupsAfterVisibilityRules(vis, next)
+  const effIds = new Set(afterVisibility.map((g: any) => g.id))
   const cleaned: Record<string, string | string[]> = {}
   for (const k of Object.keys(next)) {
     if (effIds.has(k)) cleaned[k] = next[k]!
