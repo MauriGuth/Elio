@@ -74,73 +74,17 @@ export async function getRecipePosContext(
   }
 
   /**
-   * Productos que no deben listarse en «Incluye» (solo receta base del plato vendible):
-   * - insumos ligados a opciones del POS (`product_modifier_stock_line`);
-   * - insumos base de la receta activa de cada producto en filas con `modifierGroupId`
-   *   (ej. semi-elaborado «tostadas» en la receta del desayuno → harina/leche van ahí, no al checklist del desayuno).
+   * Todas las filas de la receta van al POS: las que tienen `modifierGroupId` sirven para
+   * ocultar grupos si el cliente saca ese ingrediente; las sin grupo son el checklist «Incluye».
+   * No se excluyen por stock_lines ni sub-recetas: si panceta/salchicha están como base sin
+   * variantes, tienen que listarse aunque el mismo producto figure en otra parte.
    */
-  const baseChecklistExcludeProductIds = new Set<string>();
-  if (modifierGroupIds.length > 0) {
-    const options = await prisma.productModifierOption.findMany({
-      where: { groupId: { in: modifierGroupIds } },
-      select: { id: true },
-    });
-    const optionIds = options.map((o: { id: string }) => o.id);
-    if (optionIds.length > 0) {
-      const stockLines = await prisma.productModifierStockLine.findMany({
-        where: { optionId: { in: optionIds } },
-        select: { productId: true },
-      });
-      for (const line of stockLines) {
-        baseChecklistExcludeProductIds.add(line.productId);
-      }
-    }
-  }
-
-  const variantSlotProductIds = [
-    ...new Set(
-      ingredientsRows
-        .filter((r) => r.modifierGroupId != null)
-        .map((r) => r.productId),
-    ),
-  ];
-  if (variantSlotProductIds.length > 0) {
-    const subRecipeIds = await Promise.all(
-      variantSlotProductIds.map((pid) => findActiveRecipeId(prisma, pid)),
-    );
-    const uniqueSubRecipeIds = [
-      ...new Set(subRecipeIds.filter((id): id is string => id != null)),
-    ];
-    if (uniqueSubRecipeIds.length > 0) {
-      const subBaseIngredients = await prisma.recipeIngredient.findMany({
-        where: {
-          recipeId: { in: uniqueSubRecipeIds },
-          modifierGroupId: null,
-        },
-        select: { productId: true },
-      });
-      for (const row of subBaseIngredients) {
-        baseChecklistExcludeProductIds.add(row.productId);
-      }
-    }
-  }
-
-  const ingredients: RecipePosIngredientRow[] = ingredientsRows
-    .filter((r) => {
-      if (r.modifierGroupId != null) {
-        return true;
-      }
-      if (baseChecklistExcludeProductIds.has(r.productId)) {
-        return false;
-      }
-      return true;
-    })
-    .map((r) => ({
-      id: r.id,
-      productId: r.productId,
-      name: r.product?.name ?? 'Producto',
-      modifierGroupId: r.modifierGroupId,
-    }));
+  const ingredients: RecipePosIngredientRow[] = ingredientsRows.map((r) => ({
+    id: r.id,
+    productId: r.productId,
+    name: r.product?.name ?? 'Producto',
+    modifierGroupId: r.modifierGroupId,
+  }));
 
   return { recipeId, modifierGroupIds, ingredients };
 }
