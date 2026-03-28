@@ -189,6 +189,29 @@ function hiddenModifierGroupIdsFromExcludedIngredients(
   return hidden
 }
 
+/**
+ * Ingredientes de receta en el modal del POS: solo si el producto tiene
+ * «descontar insumos al vender» (`consumeRecipeOnSale`). Así no se muestran
+ * recetas de opciones anidadas (ej. tipo de tostadas) ni se abre modal vacío solo por insumos.
+ */
+function recipeIngredientsForPosModal(
+  product: { consumeRecipeOnSale?: boolean } | null | undefined,
+  ingredientsFromApi: Array<{
+    id: string
+    productId: string
+    name: string
+    modifierGroupId?: string | null
+  }>
+): Array<{
+  id: string
+  productId: string
+  name: string
+  modifierGroupId?: string | null
+}> {
+  if (!product || product.consumeRecipeOnSale !== true) return []
+  return ingredientsFromApi ?? []
+}
+
 function visibleModifierGroupsForPosModal(
   groups: any[],
   recipeIngredients: { id: string; modifierGroupId?: string | null }[],
@@ -1287,8 +1310,12 @@ export default function TableOrderPage() {
         groups,
         posCtx.modifierGroupIds ?? []
       )
+      const recipeIngs = recipeIngredientsForPosModal(
+        match.product,
+        posCtx.ingredients ?? []
+      )
       const needsModifierModal =
-        groupsFiltered.length > 0 || (posCtx.ingredients?.length ?? 0) > 0
+        groupsFiltered.length > 0 || recipeIngs.length > 0
 
       if (needsModifierModal) {
         modalQueue.push({
@@ -1297,7 +1324,7 @@ export default function TableOrderPage() {
           sector: match.sector,
           notes: match.notes || "",
           groups: groupsFiltered,
-          recipeIngredients: posCtx.ingredients ?? [],
+          recipeIngredients: recipeIngs,
         })
         continue
       }
@@ -1669,8 +1696,11 @@ export default function TableOrderPage() {
         groups,
         posCtx.modifierGroupIds ?? []
       )
-      const openModal =
-        filtered.length > 0 || (posCtx.ingredients?.length ?? 0) > 0
+      const recipeIngs = recipeIngredientsForPosModal(
+        product,
+        posCtx.ingredients ?? []
+      )
+      const openModal = filtered.length > 0 || recipeIngs.length > 0
 
       if (openModal) {
         voiceModifierQueueRef.current = []
@@ -1680,10 +1710,10 @@ export default function TableOrderPage() {
           selections: buildInitialModifierSelections(
             product,
             filtered,
-            posCtx.ingredients ?? [],
+            recipeIngs,
             []
           ),
-          recipeIngredients: posCtx.ingredients ?? [],
+          recipeIngredients: recipeIngs,
           excludedIngredientIds: [],
           excludedModifierStockLineIds: [],
         })
