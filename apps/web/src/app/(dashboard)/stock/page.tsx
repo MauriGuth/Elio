@@ -931,7 +931,6 @@ export default function StockPage() {
       await Promise.all([...selectedIds].map((id) => productsApi.update(id, payload)))
       sileo.success({ title: `${selectedIds.size} producto${selectedIds.size !== 1 ? "s" : ""} actualizado${selectedIds.size !== 1 ? "s" : ""}` })
       setShowBulkEditModal(false)
-      setSelectedIds(new Set())
       fetchProducts(true)
     } catch (err: any) {
       sileo.error({ title: err.message || "Error al actualizar" })
@@ -964,7 +963,6 @@ export default function StockPage() {
       sileo.success({
         title: `${selectedIds.size} producto${selectedIds.size !== 1 ? "s" : ""} ${isSellable ? "marcados como vendibles" : "marcados como no vendibles"}`,
       })
-      setSelectedIds(new Set())
       fetchProducts(true)
     } catch (err: any) {
       sileo.error({ title: err.message || "Error al actualizar vendible" })

@@ -283,6 +283,11 @@ model ProductModifierOption {
   sortOrder  Int      @default(0) @map("sort_order")
   /** Variación de precio unitario sugerida (el POS puede sumarla al cargar la línea). */
   priceDelta Float    @default(0) @map("price_delta")
+  /**
+   * Si false, en mesas/comandas no se muestra el desglose «Incluye» de insumos de esta opción
+   * (ej. pan molde negro); el consumo por stock_lines sigue aplicando al cerrar.
+   */
+  showSubRecipeInPos Boolean @default(true) @map("show_sub_recipe_in_pos")
 
   group      ProductModifierGroup       @relation(fields: [groupId], references: [id], onDelete: Cascade)
   stockLines ProductModifierStockLine[]

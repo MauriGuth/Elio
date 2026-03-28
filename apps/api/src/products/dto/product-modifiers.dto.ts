@@ -111,6 +111,10 @@ export class CreateProductModifierOptionDto {
   @IsOptional()
   @IsNumber()
   priceDelta?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  showSubRecipeInPos?: boolean;
 }
 
 /** Crea opción POS + insumos por venta a partir de ingredientes base de una receta (sin crear otra receta). */
@@ -129,6 +133,10 @@ export class CreateModifierOptionFromRecipeDto {
   @IsOptional()
   @IsNumber()
   priceDelta?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  showSubRecipeInPos?: boolean;
 }
 
 export class UpdateProductModifierOptionDto {
@@ -143,6 +151,10 @@ export class UpdateProductModifierOptionDto {
   @IsOptional()
   @IsNumber()
   priceDelta?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  showSubRecipeInPos?: boolean;
 }
 
 export class ModifierStockLineInputDto {

@@ -113,6 +113,7 @@ export default function RecipesPage() {
     null,
   )
   const [optionPriceById, setOptionPriceById] = useState<Record<string, number>>({})
+  const [showSubRecipeInPosById, setShowSubRecipeInPosById] = useState<Record<string, boolean>>({})
   /** Borradores para crear grupo/variante desde la receta (clave = índice de fila) */
   const [newOptionLabelByRow, setNewOptionLabelByRow] = useState<Record<string, string>>({})
   const [newOptionPriceDeltaByRow, setNewOptionPriceDeltaByRow] = useState<Record<string, string>>({})
@@ -174,10 +175,18 @@ export default function RecipesPage() {
         }
       }
       setOptionPriceById(prices)
+      const showSub: Record<string, boolean> = {}
+      for (const gr of groups) {
+        for (const o of gr.options || []) {
+          showSub[o.id] = o.showSubRecipeInPos !== false
+        }
+      }
+      setShowSubRecipeInPosById(showSub)
     } catch {
       setModifierGroupsData([])
       setModifierLinesByOption({})
       setOptionPriceById({})
+      setShowSubRecipeInPosById({})
     } finally {
       setModifiersLoading(false)
     }
@@ -188,6 +197,7 @@ export default function RecipesPage() {
       setModifierGroupsData([])
       setModifierLinesByOption({})
       setOptionPriceById({})
+      setShowSubRecipeInPosById({})
       setNewOptionLabelByRow({})
       setNewOptionPriceDeltaByRow({})
       setModifierGroupQueryByRow({})
@@ -197,6 +207,7 @@ export default function RecipesPage() {
       setModifierGroupsData([])
       setModifierLinesByOption({})
       setOptionPriceById({})
+      setShowSubRecipeInPosById({})
       return
     }
     void loadProductModifiers()
@@ -322,6 +333,7 @@ export default function RecipesPage() {
     setModifierGroupsData([])
     setModifierLinesByOption({})
     setOptionPriceById({})
+    setShowSubRecipeInPosById({})
     setNewOptionLabelByRow({})
     setNewOptionPriceDeltaByRow({})
   }
@@ -389,6 +401,7 @@ export default function RecipesPage() {
     setModifierLinesByOption({})
     setOpenModifierStockDropdownKey(null)
     setOptionPriceById({})
+    setShowSubRecipeInPosById({})
     setNewOptionLabelByRow({})
     setNewOptionPriceDeltaByRow({})
   }
@@ -534,18 +547,27 @@ export default function RecipesPage() {
     )
   }
 
-  const persistOptionPrices = async () => {
-    type PriceTask = { optionId: string; priceDelta: number }
-    const tasks: PriceTask[] = []
+  /** Precio Δ y visibilidad de sub-receta en POS (un PATCH por opción). */
+  const persistModifierOptionPosFields = async () => {
+    type Task = {
+      optionId: string
+      body: { priceDelta: number; showSubRecipeInPos: boolean }
+    }
+    const tasks: Task[] = []
     for (const g of modifierGroupsData) {
       for (const o of g.options || []) {
         const p = optionPriceById[o.id]
-        if (p === undefined) continue
-        tasks.push({ optionId: o.id, priceDelta: p })
+        tasks.push({
+          optionId: o.id,
+          body: {
+            priceDelta: p !== undefined ? p : Number(o.priceDelta) || 0,
+            showSubRecipeInPos: showSubRecipeInPosById[o.id] !== false,
+          },
+        })
       }
     }
     await runBatched(tasks, MODIFIER_PERSIST_CONCURRENCY, (t) =>
-      productsApi.updateModifierOption(t.optionId, { priceDelta: t.priceDelta }),
+      productsApi.updateModifierOption(t.optionId, t.body),
     )
   }
 
@@ -599,9 +621,10 @@ export default function RecipesPage() {
       if (form.productId) {
         try {
           await persistModifierStockLines()
-          await persistOptionPrices()
+          await persistModifierOptionPosFields()
         } catch (e: any) {
-          const msg = e?.message || "Error al guardar opciones de carta (insumos o precios)"
+          const msg =
+            e?.message || "Error al guardar opciones de carta (insumos, precios o visibilidad POS)"
           setFormError(msg)
           sileo.error({ title: msg })
           setFormLoading(false)
@@ -1689,6 +1712,10 @@ export default function RecipesPage() {
                                     optionPrices={optionPriceById}
                                     onOptionPriceChange={(oid, p) =>
                                       setOptionPriceById((s) => ({ ...s, [oid]: p }))
+                                    }
+                                    showSubRecipeInPosByOption={showSubRecipeInPosById}
+                                    onShowSubRecipeInPosChange={(oid, show) =>
+                                      setShowSubRecipeInPosById((s) => ({ ...s, [oid]: show }))
                                     }
                                     hideGroupTitles
                                   />

@@ -521,6 +521,9 @@ export class ProductsService {
         label: dto.label,
         sortOrder: dto.sortOrder ?? 0,
         priceDelta: dto.priceDelta ?? 0,
+        ...(dto.showSubRecipeInPos !== undefined
+          ? { showSubRecipeInPos: dto.showSubRecipeInPos }
+          : {}),
       },
     });
   }
@@ -583,6 +586,9 @@ export class ProductsService {
           label,
           sortOrder: dto.sortOrder ?? 0,
           priceDelta: dto.priceDelta ?? 0,
+          ...(dto.showSubRecipeInPos !== undefined
+            ? { showSubRecipeInPos: dto.showSubRecipeInPos }
+            : {}),
         },
       });
       await tx.productModifierStockLine.createMany({
@@ -609,6 +615,9 @@ export class ProductsService {
         ...(dto.label !== undefined ? { label: dto.label } : {}),
         ...(dto.sortOrder !== undefined ? { sortOrder: dto.sortOrder } : {}),
         ...(dto.priceDelta !== undefined ? { priceDelta: dto.priceDelta } : {}),
+        ...(dto.showSubRecipeInPos !== undefined
+          ? { showSubRecipeInPos: dto.showSubRecipeInPos }
+          : {}),
       },
     });
   }

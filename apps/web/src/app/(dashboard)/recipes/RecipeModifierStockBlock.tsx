@@ -1,7 +1,6 @@
 "use client"
 
 import { Trash2, ChevronDown } from "lucide-react"
-import { cn } from "@/lib/utils"
 
 export type ProductOption = { id: string; name: string; sku: string; unit?: string }
 export type ModifierStockRow = {
@@ -14,7 +13,12 @@ export type ModifierStockRow = {
 type ModifierGroup = {
   id: string
   name: string
-  options: Array<{ id: string; label: string; priceDelta?: number }>
+  options: Array<{
+    id: string
+    label: string
+    priceDelta?: number
+    showSubRecipeInPos?: boolean
+  }>
 }
 
 type Props = {
@@ -40,6 +44,9 @@ type Props = {
   dropdownKeyPrefix?: string
   optionPrices?: Record<string, number>
   onOptionPriceChange?: (optionId: string, price: number) => void
+  /** Si la sub-receta (insumos de la opción) se lista en el modal de mesas/comandas */
+  showSubRecipeInPosByOption?: Record<string, boolean>
+  onShowSubRecipeInPosChange?: (optionId: string, show: boolean) => void
   /** Oculta títulos de grupo (una sola columna anidada bajo un ingrediente) */
   hideGroupTitles?: boolean
 }
@@ -61,6 +68,8 @@ export function RecipeModifierStockBlock({
   dropdownKeyPrefix = "",
   optionPrices,
   onOptionPriceChange,
+  showSubRecipeInPosByOption,
+  onShowSubRecipeInPosChange,
   hideGroupTitles = false,
 }: Props) {
   const keyP = dropdownKeyPrefix || ""
@@ -99,6 +108,9 @@ export function RecipeModifierStockBlock({
                 optionPrices && optionPrices[opt.id] !== undefined
                   ? optionPrices[opt.id]
                   : Number(opt.priceDelta) || 0
+              const showSubRecipeChecked =
+                showSubRecipeInPosByOption?.[opt.id] ??
+                (opt.showSubRecipeInPos !== false)
               return (
                 <div
                   key={opt.id}
@@ -129,6 +141,22 @@ export function RecipeModifierStockBlock({
                         </span>
                       ) : null}
                     </div>
+                    {onShowSubRecipeInPosChange ? (
+                      <label className="flex cursor-pointer items-center gap-2 rounded-md border border-gray-200 dark:border-gray-600 bg-white/60 dark:bg-gray-900/40 px-2 py-1.5 text-xs text-gray-700 dark:text-gray-200">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 shrink-0 rounded border-gray-400 text-amber-600 focus:ring-amber-500"
+                          checked={showSubRecipeChecked}
+                          onChange={(e) =>
+                            onShowSubRecipeInPosChange(opt.id, e.target.checked)
+                          }
+                        />
+                        <span>
+                          Mostrar insumos de esta variante en el POS (mesa/comanda). Desactivá para opciones
+                          como pan molde donde no hace falta el detalle.
+                        </span>
+                      </label>
+                    ) : null}
                   </div>
                   <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
                     Cantidad por <strong>una</strong> unidad vendida con esta opción (mismo criterio que el

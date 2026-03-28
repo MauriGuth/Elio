@@ -189,13 +189,8 @@ function hiddenModifierGroupIdsFromExcludedIngredients(
   return hidden
 }
 
-/**
- * Ingredientes de receta en el modal del POS: solo si el producto tiene
- * «descontar insumos al vender» (`consumeRecipeOnSale`). Así no se muestran
- * recetas de opciones anidadas (ej. tipo de tostadas) ni se abre modal vacío solo por insumos.
- */
+/** Ingredientes base de receta en el modal POS: siempre los que devuelve el contexto (sin filtrar por producto). */
 function recipeIngredientsForPosModal(
-  product: { consumeRecipeOnSale?: boolean } | null | undefined,
   ingredientsFromApi: Array<{
     id: string
     productId: string
@@ -208,8 +203,13 @@ function recipeIngredientsForPosModal(
   name: string
   modifierGroupId?: string | null
 }> {
-  if (!product || product.consumeRecipeOnSale !== true) return []
   return ingredientsFromApi ?? []
+}
+
+/** Sub-receta «Incluye» por opción: configurable en Recetas (mostrar en mesa/comanda). */
+function optionShowsSubRecipeBreakdownInPos(opt: any): boolean {
+  if (opt == null) return true
+  return opt.showSubRecipeInPos !== false
 }
 
 function visibleModifierGroupsForPosModal(
@@ -239,6 +239,7 @@ function isPreparationModifierGroupPos(g: { name?: string }): boolean {
 }
 
 function getPrepOptionStockLinesForChecklist(opt: any): Array<{ id: string; label: string }> {
+  if (!optionShowsSubRecipeBreakdownInPos(opt)) return []
   const lines = opt?.stockLines || []
   const out: Array<{ id: string; label: string }> = []
   for (const sl of lines) {
@@ -259,6 +260,7 @@ function collectModifierStockLineIdsFromSelections(
     const optId = Array.isArray(sel) ? sel[0] : sel
     if (!optId) continue
     const opt = (g.options || []).find((o: any) => o.id === optId)
+    if (!optionShowsSubRecipeBreakdownInPos(opt)) continue
     for (const sl of opt?.stockLines || []) {
       if (sl?.id) ids.add(sl.id as string)
     }
@@ -288,6 +290,7 @@ function summaryExcludedModifierStockLines(
     const optId = Array.isArray(sel) ? sel[0] : sel
     if (!optId) continue
     const opt = (g.options || []).find((o: any) => o.id === optId)
+    if (!optionShowsSubRecipeBreakdownInPos(opt)) continue
     for (const sl of opt?.stockLines || []) {
       if (sl?.id && sl?.product?.name) nameByLineId.set(sl.id as string, String(sl.product.name))
     }
@@ -476,7 +479,15 @@ function effectiveModifierGroupsForPosModal(
   )
   const visibleIdList = computeVisibleModifierGroupIdsForPos(vis, selections)
   const visIdSet = new Set(visibleIdList)
-  const afterRule = vis.filter((g) => visIdSet.has(g.id))
+  let afterRule = vis.filter((g) => visIdSet.has(g.id))
+  /**
+   * Si todas las reglas `visibilityRule` dejan la lista vacía (cadena rota o prior mal resuelto),
+   * el modal quedaba en blanco. Mostramos primero grupos sin regla; si no hay, todos los de la receta.
+   */
+  if (afterRule.length === 0 && vis.length > 0) {
+    const noRule = vis.filter((g) => g.visibilityRule == null)
+    afterRule = noRule.length > 0 ? noRule : vis
+  }
   return applyLicuado450LiquidOptionFilter(product?.sku, afterRule, selections)
 }
 
@@ -1310,10 +1321,7 @@ export default function TableOrderPage() {
         groups,
         posCtx.modifierGroupIds ?? []
       )
-      const recipeIngs = recipeIngredientsForPosModal(
-        match.product,
-        posCtx.ingredients ?? []
-      )
+      const recipeIngs = recipeIngredientsForPosModal(posCtx.ingredients ?? [])
       const needsModifierModal =
         groupsFiltered.length > 0 || recipeIngs.length > 0
 
@@ -1696,10 +1704,7 @@ export default function TableOrderPage() {
         groups,
         posCtx.modifierGroupIds ?? []
       )
-      const recipeIngs = recipeIngredientsForPosModal(
-        product,
-        posCtx.ingredients ?? []
-      )
+      const recipeIngs = recipeIngredientsForPosModal(posCtx.ingredients ?? [])
       const openModal = filtered.length > 0 || recipeIngs.length > 0
 
       if (openModal) {
@@ -3568,6 +3573,30 @@ export default function TableOrderPage() {
                       )
                     })}
                   </ul>
+                </div>
+              ) : null}
+
+              {modifierModal.groups.length === 0 &&
+              !modifierModal.recipeIngredients.some((ing) => !ing.modifierGroupId) ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100">
+                  <p className="font-medium text-amber-900 dark:text-amber-50">
+                    No hay opciones cargadas para este plato
+                  </p>
+                  <ul className="mt-2 list-disc space-y-1.5 pl-4 text-amber-900/90 dark:text-amber-100/90">
+                    <li>
+                      La lista <strong>Incluye</strong> (insumos base) sale de la{" "}
+                      <strong>receta activa</strong> del plato (ingredientes <em>sin</em> grupo de variantes).
+                      Si no ves nada, revisá que la receta tenga esas filas cargadas.
+                    </li>
+                    <li>
+                      Para radios/checks (pan, punto, etc.), los grupos de la receta deben coincidir con el
+                      catálogo de modificadores; si la receta referencia grupos inexistentes, no se muestra
+                      nada.
+                    </li>
+                  </ul>
+                  <p className="mt-3 text-xs text-amber-800/80 dark:text-amber-200/80">
+                    Podés usar <strong>Agregar al pedido</strong> igual para seguir probando.
+                  </p>
                 </div>
               ) : null}
 
