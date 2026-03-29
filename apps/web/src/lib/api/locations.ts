@@ -3,6 +3,7 @@ import { api } from '../api';
 export const locationsApi = {
   getAll: (params?: {
     type?: string;
+    /** `false` lista solo inactivos; omitir = solo activos (comportamiento API por defecto). */
     isActive?: boolean;
     search?: string;
     /** Solo ubicaciones con sala de producción (flag en local). */

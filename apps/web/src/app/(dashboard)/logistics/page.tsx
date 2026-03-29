@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo, useCallback, useRef } from "react"
+import { useState, useEffect, useMemo, useCallback, useRef, Fragment } from "react"
 import { useRouter } from "next/navigation"
 import { sileo } from "sileo"
 import {
@@ -197,7 +197,124 @@ const RETIRO_MERCADERIA_SLUG = "retiro-mercaderia-proveedor"
 /** Valor de <select> para «ir a / salir de un proveedor» (elige proveedor abajo). */
 const PROVEEDOR_SENTINEL = "__proveedor__"
 
-type LogisticsLocLite = { id: string; name: string; type?: string; slug?: string }
+type LogisticsLocLite = {
+  id: string
+  name: string
+  type?: string
+  slug?: string
+  mapConfig?: Record<string, unknown> | null
+}
+
+type LogisticsHubSaved = {
+  offsetXPx: number
+  offsetYPx: number
+  lineEndDx: number
+  lineEndDy: number
+}
+
+function readLogisticsHub(mapConfig: unknown): LogisticsHubSaved | null {
+  if (!mapConfig || typeof mapConfig !== "object" || Array.isArray(mapConfig)) return null
+  const hub = (mapConfig as Record<string, unknown>).logisticsHub
+  if (!hub || typeof hub !== "object" || Array.isArray(hub)) return null
+  const h = hub as Record<string, unknown>
+  const x = h.offsetXPx
+  const y = h.offsetYPx
+  if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) {
+    return null
+  }
+  const dx = h.lineEndDx
+  const dy = h.lineEndDy
+  const lineEndDx = typeof dx === "number" && Number.isFinite(dx) ? dx : 0
+  const lineEndDy = typeof dy === "number" && Number.isFinite(dy) ? dy : 0
+  return { offsetXPx: x, offsetYPx: y, lineEndDx, lineEndDy }
+}
+
+function readExtraLocationIds(mapConfig: unknown): string[] {
+  if (!mapConfig || typeof mapConfig !== "object" || Array.isArray(mapConfig)) return []
+  const raw = (mapConfig as Record<string, unknown>).logisticsHubMapSettings
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return []
+  const ids = (raw as Record<string, unknown>).extraLocationIds
+  if (!Array.isArray(ids)) return []
+  return ids.filter((x): x is string => typeof x === "string" && x.length > 0)
+}
+
+function normalizeLocationFromApi(l: any): LogisticsLocLite {
+  return {
+    id: l.id,
+    name: l.name,
+    type: l.type,
+    slug: l.slug,
+    mapConfig:
+      l.mapConfig && typeof l.mapConfig === "object" && !Array.isArray(l.mapConfig)
+        ? (l.mapConfig as Record<string, unknown>)
+        : l.mapConfig ?? null,
+  }
+}
+
+type HubDraftEntry = {
+  x: number
+  y: number
+  lineEndDx: number
+  lineEndDy: number
+}
+
+function defaultHubRadial(index: number, total: number, label: string): { x: number; y: number } {
+  const angle = (360 / total) * index - 90
+  const radians = (angle * Math.PI) / 180
+  const isExpress =
+    label.toLowerCase().includes("microcentro") || label.toLowerCase().includes("express")
+  const lineLength = isExpress ? 260 : 220
+  return {
+    x: Math.cos(radians) * lineLength,
+    y: Math.sin(radians) * lineLength,
+  }
+}
+
+function resolveHubNodeCoords(
+  dest: Pick<LogisticsLocLite, "id" | "name" | "mapConfig">,
+  index: number,
+  total: number,
+  draft: Record<string, Pick<HubDraftEntry, "x" | "y"> | HubDraftEntry>,
+): { x: number; y: number } {
+  const fromDraft = draft[dest.id]
+  if (fromDraft) return { x: fromDraft.x, y: fromDraft.y }
+  const saved = readLogisticsHub(dest.mapConfig)
+  if (saved) return { x: saved.offsetXPx, y: saved.offsetYPx }
+  return defaultHubRadial(index, total, dest.name ?? "")
+}
+
+function resolveLineEndOffset(
+  dest: Pick<LogisticsLocLite, "id" | "mapConfig">,
+  draft: Record<string, Partial<HubDraftEntry> & { x?: number; y?: number }>,
+): { dx: number; dy: number } {
+  const e = draft[dest.id]
+  const saved = readLogisticsHub(dest.mapConfig)
+  if (e) {
+    return {
+      dx: typeof e.lineEndDx === "number" ? e.lineEndDx : (saved?.lineEndDx ?? 0),
+      dy: typeof e.lineEndDy === "number" ? e.lineEndDy : (saved?.lineEndDy ?? 0),
+    }
+  }
+  if (saved) return { dx: saved.lineEndDx, dy: saved.lineEndDy }
+  return { dx: 0, dy: 0 }
+}
+
+function clampHubRadius(x: number, y: number, minR: number, maxR: number): { x: number; y: number } {
+  const len = Math.hypot(x, y)
+  if (len < 1e-6) return { x: minR, y: 0 }
+  if (len < minR) {
+    const f = minR / len
+    return { x: x * f, y: y * f }
+  }
+  if (len > maxR) {
+    const f = maxR / len
+    return { x: x * f, y: y * f }
+  }
+  return { x, y }
+}
+
+/** Límite del punto de enganche de la línea respecto al centro del nodo (px). */
+const HUB_LINE_ATTACH_MAX = 88
 
 function locationsWithoutRetiroSystem(locs: LogisticsLocLite[], retiroId?: string) {
   return locs.filter(
@@ -479,6 +596,31 @@ export default function LogisticsPage() {
   const [locations, setLocations] = useState<LogisticsLocLite[]>([])
   /** Id del local de sistema «retiro mercadería / proveedor» (GET dedicado; no depende del listado). */
   const [systemRetiroLocationId, setSystemRetiroLocationId] = useState("")
+
+  /** Mapa hub: modo edición y borrador de posiciones (px desde el centro). */
+  const [hubEditMode, setHubEditMode] = useState(false)
+  const [hubDraft, setHubDraft] = useState<Record<string, HubDraftEntry>>({})
+  const [hubDragging, setHubDragging] = useState<{
+    id: string
+    startClientX: number
+    startClientY: number
+    startX: number
+    startY: number
+  } | null>(null)
+  const [hubAttachDragging, setHubAttachDragging] = useState<{
+    id: string
+    startClientX: number
+    startClientY: number
+    startDx: number
+    startDy: number
+    nodeX: number
+    nodeY: number
+  } | null>(null)
+  const [hubSaving, setHubSaving] = useState(false)
+  /** Locales inactivos (p. ej. «Dorado») para agregarlos al mapa. */
+  const [inactiveLocations, setInactiveLocations] = useState<LogisticsLocLite[]>([])
+  /** En modo edición: ids extra guardados en el depósito (`logisticsHubMapSettings`). */
+  const [hubExtraLocationIdsDraft, setHubExtraLocationIdsDraft] = useState<string[] | null>(null)
 
   // Products for create modal
   const [productsList, setProductsList] = useState<{ id: string; name: string; sku: string }[]>([])
@@ -778,22 +920,28 @@ export default function LogisticsPage() {
     }
   }, [showCreateModal])
 
-  // Load locations on mount
+  // Load locations on mount (activos + inactivos para el mapa / agregar «Dorado», etc.)
   useEffect(() => {
     async function loadLocations() {
       try {
-        const res = await locationsApi.getAll()
-        const locs = Array.isArray(res) ? res : (res as any).data || []
-        setLocations(
-          locs.map((l: any) => ({
-            id: l.id,
-            name: l.name,
-            type: l.type,
-            slug: l.slug,
-          })),
-        )
+        const [activeRes, inactiveRes] = await Promise.all([
+          locationsApi.getAll(),
+          locationsApi.getAll({ isActive: false }),
+        ])
+        const activeLocs = Array.isArray(activeRes) ? activeRes : (activeRes as any).data || []
+        const inactiveLocs = Array.isArray(inactiveRes)
+          ? inactiveRes
+          : (inactiveRes as any).data || []
+        setLocations(activeLocs.map(normalizeLocationFromApi))
+        setInactiveLocations(inactiveLocs.map(normalizeLocationFromApi))
       } catch {
-        // Non-critical
+        try {
+          const res = await locationsApi.getAll()
+          const locs = Array.isArray(res) ? res : (res as any).data || []
+          setLocations(locs.map(normalizeLocationFromApi))
+        } catch {
+          // Non-critical
+        }
       }
     }
     loadLocations()
@@ -874,23 +1022,298 @@ export default function LogisticsPage() {
       s.status === "reception_control"
   )
 
-  // Destinos para el mapa: todos los locales excepto el depósito (type === WAREHOUSE). Si type no viene, se muestra igual.
+  const locationCatalog = useMemo(() => {
+    const m = new Map<string, LogisticsLocLite>()
+    for (const l of locations) m.set(l.id, l)
+    for (const l of inactiveLocations) {
+      if (!m.has(l.id)) m.set(l.id, l)
+    }
+    return m
+  }, [locations, inactiveLocations])
+
+  /** Depósito: guarda `logisticsHubMapSettings.extraLocationIds` para locales extra en el mapa. */
+  const warehouseLocation = useMemo(
+    () => locations.find((l) => l.type === "WAREHOUSE" || l.type === "warehouse"),
+    [locations],
+  )
+
+  const resolvedExtraLocationIds = useMemo(() => {
+    if (hubEditMode && hubExtraLocationIdsDraft !== null) return hubExtraLocationIdsDraft
+    return readExtraLocationIds(warehouseLocation?.mapConfig ?? null)
+  }, [hubEditMode, hubExtraLocationIdsDraft, warehouseLocation])
+
+  // Destinos para el mapa: locales no depósito + extras configurados (p. ej. inactivos como «Dorado»).
   const destinations = useMemo(() => {
+    const isWarehouse = (t?: string) => t === "WAREHOUSE" || t === "warehouse"
+    let base: LogisticsLocLite[] = []
+    if (locations.length > 0) {
+      const list = locations.filter((l) => !isWarehouse(l.type))
+      base = list.length > 0 ? list : [...locations]
+    } else {
+      const seen = new Set<string>()
+      base = shipmentsList
+        .map((s) => s.destination)
+        .filter((d) => {
+          if (!d?.id || seen.has(d.id)) return false
+          seen.add(d.id)
+          return true
+        })
+        .map((d: any) => ({
+          id: d.id,
+          name: d.name ?? "—",
+          type: d.type,
+          slug: d.slug,
+          mapConfig: null,
+        }))
+    }
+    const seen = new Set(base.map((b) => b.id))
+    const extras: LogisticsLocLite[] = []
+    for (const id of resolvedExtraLocationIds) {
+      if (seen.has(id)) continue
+      const row = locationCatalog.get(id)
+      if (row && !isWarehouse(row.type)) {
+        extras.push(row)
+        seen.add(id)
+      }
+    }
+    return [...base, ...extras]
+  }, [locations, shipmentsList, locationCatalog, resolvedExtraLocationIds])
+
+  const hubMapPersistable =
+    locations.length > 0 &&
+    destinations.every((d) => locationCatalog.has(d.id))
+
+  const addableHubLocations = useMemo(() => {
+    const isWarehouse = (t?: string) => t === "WAREHOUSE" || t === "warehouse"
+    const onMap = new Set(destinations.map((d) => d.id))
+    return [...locationCatalog.values()]
+      .filter((l) => !isWarehouse(l.type) && !onMap.has(l.id))
+      .sort((a, b) => a.name.localeCompare(b.name, "es"))
+  }, [locationCatalog, destinations])
+
+  /** Para el desplegable: nodos ya dibujados (p. ej. Dorado no se ofrece «agregar» otra vez). */
+  const destinationsSortedForHubSelect = useMemo(
+    () => [...destinations].sort((a, b) => a.name.localeCompare(b.name, "es")),
+    [destinations],
+  )
+
+  const baseHubDestinationIds = useMemo(() => {
     const isWarehouse = (t?: string) => t === "WAREHOUSE" || t === "warehouse"
     if (locations.length > 0) {
       const list = locations.filter((l) => !isWarehouse(l.type))
-      if (list.length > 0) return list
-      return locations
+      const base = list.length > 0 ? list : locations
+      return new Set(base.map((b) => b.id))
     }
     const seen = new Set<string>()
-    return shipmentsList
-      .map((s) => s.destination)
-      .filter((d) => {
-        if (!d?.id || seen.has(d.id)) return false
-        seen.add(d.id)
-        return true
-      })
+    for (const s of shipmentsList) {
+      const d = s.destination
+      if (d?.id) seen.add(d.id)
+    }
+    return seen
   }, [locations, shipmentsList])
+
+  useEffect(() => {
+    if (!hubDragging) return
+    const onMove = (e: PointerEvent) => {
+      const dx = e.clientX - hubDragging.startClientX
+      const dy = e.clientY - hubDragging.startClientY
+      const nx = hubDragging.startX + dx
+      const ny = hubDragging.startY + dy
+      const clamped = clampHubRadius(nx, ny, 72, 292)
+      const id = hubDragging.id
+      setHubDraft((prev) => {
+        const loc =
+          locations.find((l) => l.id === id) ?? inactiveLocations.find((l) => l.id === id)
+        const saved = readLogisticsHub(loc?.mapConfig)
+        const prevE = prev[id]
+        return {
+          ...prev,
+          [id]: {
+            x: clamped.x,
+            y: clamped.y,
+            lineEndDx: prevE?.lineEndDx ?? saved?.lineEndDx ?? 0,
+            lineEndDy: prevE?.lineEndDy ?? saved?.lineEndDy ?? 0,
+          },
+        }
+      })
+    }
+    const onUp = () => setHubDragging(null)
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+    window.addEventListener("pointercancel", onUp)
+    return () => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+      window.removeEventListener("pointercancel", onUp)
+    }
+  }, [hubDragging, locations, inactiveLocations])
+
+  useEffect(() => {
+    if (!hubAttachDragging) return
+    const onMove = (e: PointerEvent) => {
+      const dx = e.clientX - hubAttachDragging.startClientX
+      const dy = e.clientY - hubAttachDragging.startClientY
+      let ndx = hubAttachDragging.startDx + dx
+      let ndy = hubAttachDragging.startDy + dy
+      ndx = Math.max(-HUB_LINE_ATTACH_MAX, Math.min(HUB_LINE_ATTACH_MAX, ndx))
+      ndy = Math.max(-HUB_LINE_ATTACH_MAX, Math.min(HUB_LINE_ATTACH_MAX, ndy))
+      const { id, nodeX, nodeY } = hubAttachDragging
+      setHubDraft((prev) => ({
+        ...prev,
+        [id]: {
+          x: nodeX,
+          y: nodeY,
+          lineEndDx: ndx,
+          lineEndDy: ndy,
+        },
+      }))
+    }
+    const onUp = () => setHubAttachDragging(null)
+    window.addEventListener("pointermove", onMove)
+    window.addEventListener("pointerup", onUp)
+    window.addEventListener("pointercancel", onUp)
+    return () => {
+      window.removeEventListener("pointermove", onMove)
+      window.removeEventListener("pointerup", onUp)
+      window.removeEventListener("pointercancel", onUp)
+    }
+  }, [hubAttachDragging])
+
+  const exitHubEdit = useCallback(() => {
+    setHubEditMode(false)
+    setHubDraft({})
+    setHubDragging(null)
+    setHubAttachDragging(null)
+    setHubExtraLocationIdsDraft(null)
+  }, [])
+
+  const handleHubSave = useCallback(async () => {
+    if (!hubMapPersistable) return
+    const w = warehouseLocation
+    const oldExtras = readExtraLocationIds(w?.mapConfig ?? null)
+    const draftExtrasList = hubExtraLocationIdsDraft
+    const extraSaveNeeded =
+      w != null &&
+      draftExtrasList !== null &&
+      [...draftExtrasList].sort().join("\0") !== [...oldExtras].sort().join("\0")
+    if (Object.keys(hubDraft).length === 0 && !extraSaveNeeded) {
+      exitHubEdit()
+      return
+    }
+    setHubSaving(true)
+    try {
+      if (extraSaveNeeded && w && hubExtraLocationIdsDraft !== null) {
+        const whBase =
+          w.mapConfig && typeof w.mapConfig === "object" && !Array.isArray(w.mapConfig)
+            ? { ...(w.mapConfig as Record<string, unknown>) }
+            : {}
+        whBase.logisticsHubMapSettings = { extraLocationIds: [...hubExtraLocationIdsDraft] }
+        await locationsApi.update(w.id, { mapConfig: whBase })
+        setLocations((prev) =>
+          prev.map((l) => (l.id === w.id ? { ...l, mapConfig: whBase } : l)),
+        )
+      }
+      for (const id of Object.keys(hubDraft)) {
+        const loc =
+          locations.find((l) => l.id === id) ?? inactiveLocations.find((l) => l.id === id)
+        if (!loc) continue
+        const entry = hubDraft[id]
+        const base =
+          loc.mapConfig && typeof loc.mapConfig === "object" && !Array.isArray(loc.mapConfig)
+            ? { ...(loc.mapConfig as Record<string, unknown>) }
+            : {}
+        base.logisticsHub = {
+          offsetXPx: entry.x,
+          offsetYPx: entry.y,
+          lineEndDx: entry.lineEndDx,
+          lineEndDy: entry.lineEndDy,
+        }
+        await locationsApi.update(id, { mapConfig: base })
+      }
+      const applyEntry = (l: LogisticsLocLite): LogisticsLocLite => {
+        const entry = hubDraft[l.id]
+        if (!entry) return l
+        const base =
+          l.mapConfig && typeof l.mapConfig === "object" && !Array.isArray(l.mapConfig)
+            ? { ...(l.mapConfig as Record<string, unknown>) }
+            : {}
+        base.logisticsHub = {
+          offsetXPx: entry.x,
+          offsetYPx: entry.y,
+          lineEndDx: entry.lineEndDx,
+          lineEndDy: entry.lineEndDy,
+        }
+        return { ...l, mapConfig: base }
+      }
+      setLocations((prev) => prev.map(applyEntry))
+      setInactiveLocations((prev) => prev.map(applyEntry))
+      exitHubEdit()
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "No se pudo guardar el mapa"
+      sileo.error({ title: msg })
+    } finally {
+      setHubSaving(false)
+    }
+  }, [
+    hubMapPersistable,
+    hubDraft,
+    locations,
+    inactiveLocations,
+    warehouseLocation,
+    hubExtraLocationIdsDraft,
+    exitHubEdit,
+  ])
+
+  const handleHubResetRadial = useCallback(async () => {
+    if (!hubMapPersistable) return
+    setHubSaving(true)
+    try {
+      for (const dest of destinations) {
+        const loc = locations.find((l) => l.id === dest.id)
+        if (!loc) continue
+        const hadHub =
+          readLogisticsHub(loc.mapConfig) != null || hubDraft[dest.id] != null
+        if (!hadHub) continue
+        const base =
+          loc.mapConfig && typeof loc.mapConfig === "object" && !Array.isArray(loc.mapConfig)
+            ? { ...(loc.mapConfig as Record<string, unknown>) }
+            : {}
+        delete base.logisticsHub
+        await locationsApi.update(dest.id, {
+          mapConfig: Object.keys(base).length > 0 ? base : {},
+        })
+      }
+      setLocations((prev) =>
+        prev.map((l) => {
+          const base =
+            l.mapConfig && typeof l.mapConfig === "object" && !Array.isArray(l.mapConfig)
+              ? { ...(l.mapConfig as Record<string, unknown>) }
+              : {}
+          delete base.logisticsHub
+          return {
+            ...l,
+            mapConfig: Object.keys(base).length > 0 ? base : null,
+          }
+        }),
+      )
+      setHubDraft({})
+      exitHubEdit()
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "No se pudo restaurar el mapa"
+      sileo.error({ title: msg })
+    } finally {
+      setHubSaving(false)
+    }
+  }, [hubMapPersistable, destinations, locations, hubDraft, exitHubEdit])
+
+  useEffect(() => {
+    if (!hubEditMode || showCreateModal) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") exitHubEdit()
+    }
+    document.addEventListener("keydown", onKey)
+    return () => document.removeEventListener("keydown", onKey)
+  }, [hubEditMode, showCreateModal, exitHubEdit])
 
   // Fecha mínima para llegada estimada (hoy, en fecha local)
   const d = new Date()
@@ -1452,8 +1875,8 @@ export default function LogisticsPage() {
 
       {/* -------- Active Shipments Map -------- */}
       {!loading && (
-        <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-800/50 px-5 py-4">
+        <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-800/50 px-5 py-4">
             <div className="flex items-center gap-2">
               <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-100 dark:bg-blue-900/50">
                 <MapPin className="h-4 w-4 text-blue-600 dark:text-blue-400" />
@@ -1463,16 +1886,108 @@ export default function LogisticsPage() {
                 <p className="text-xs text-gray-500 dark:text-white">Depósito y destinos</p>
               </div>
             </div>
-            <span
-              className={cn(
-                "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium",
-                activeShipments.length > 0
-                  ? "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-200"
-                  : "bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-white"
-              )}
-            >
-              {activeShipments.length} activo{activeShipments.length !== 1 ? "s" : ""}
-            </span>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {destinations.length > 0 && hubMapPersistable ? (
+                hubEditMode ? (
+                  <>
+                    {warehouseLocation ? (
+                      <label className="inline-flex max-w-full flex-col gap-0.5 text-xs text-gray-600 dark:text-gray-300 sm:max-w-[min(100%,22rem)]">
+                        <span className="sr-only">Locales en el mapa y agregar al mapa</span>
+                        <select
+                          className="w-full min-w-0 rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-xs font-medium text-gray-800 shadow-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                          value=""
+                          onChange={(e) => {
+                            const id = e.target.value
+                            if (!id) return
+                            setHubExtraLocationIdsDraft((prev) => {
+                              const cur =
+                                prev ?? readExtraLocationIds(warehouseLocation.mapConfig ?? null)
+                              if (cur.includes(id)) return cur
+                              return [...cur, id]
+                            })
+                            e.target.value = ""
+                          }}
+                        >
+                          <option value="">+ Agregar local al mapa…</option>
+                          {destinationsSortedForHubSelect.length > 0 ? (
+                            <optgroup label="Ya están en el diagrama (no se eligen acá)">
+                              {destinationsSortedForHubSelect.map((l) => (
+                                <option key={`on-${l.id}`} value={l.id} disabled>
+                                  {l.name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ) : null}
+                          {addableHubLocations.length > 0 ? (
+                            <optgroup label="Se pueden agregar al mapa">
+                              {addableHubLocations.map((l) => (
+                                <option key={l.id} value={l.id}>
+                                  {l.name}
+                                </option>
+                              ))}
+                            </optgroup>
+                          ) : null}
+                        </select>
+                        <span className="text-[10px] leading-snug text-gray-500 dark:text-gray-400">
+                          Los que ya son nodos (p. ej. Dorado) aparecen arriba en gris: no hace falta
+                          agregarlos. Los nombres salen del alta en Locales; si ves uno de prueba,
+                          renombralo o eliminalo ahí.
+                        </span>
+                      </label>
+                    ) : null}
+                    <button
+                      type="button"
+                      disabled={hubSaving}
+                      onClick={() => void handleHubSave()}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-800 transition-colors hover:bg-blue-100 disabled:opacity-50 dark:border-blue-800 dark:bg-blue-950/50 dark:text-blue-200 dark:hover:bg-blue-900/40"
+                    >
+                      {hubSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                      Guardar disposición
+                    </button>
+                    <button
+                      type="button"
+                      disabled={hubSaving}
+                      onClick={exitHubEdit}
+                      className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      disabled={hubSaving}
+                      onClick={() => void handleHubResetRadial()}
+                      className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-900 transition-colors hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-900/30"
+                    >
+                      Círculo automático
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHubEditMode(true)
+                      setHubDraft({})
+                      setHubExtraLocationIdsDraft(
+                        readExtraLocationIds(warehouseLocation?.mapConfig ?? null),
+                      )
+                    }}
+                    className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                  >
+                    Editar mapa
+                  </button>
+                )
+              ) : null}
+              <span
+                className={cn(
+                  "inline-flex items-center rounded-full px-3 py-1 text-xs font-medium",
+                  activeShipments.length > 0
+                    ? "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-200"
+                    : "bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-white"
+                )}
+              >
+                {activeShipments.length} activo{activeShipments.length !== 1 ? "s" : ""}
+              </span>
+            </div>
           </div>
 
           <div className="flex flex-col bg-gradient-to-b from-slate-50 to-white dark:from-gray-800 dark:to-gray-900">
@@ -1484,10 +1999,10 @@ export default function LogisticsPage() {
               </div>
             ) : (
               <>
-                <div className="relative min-h-[380px] flex min-w-0 items-center justify-center overflow-auto px-6 py-10">
+                <div className="relative flex min-h-[min(32rem,90vh)] min-w-0 items-center justify-center overflow-auto px-4 py-20 sm:px-8 sm:py-24">
                 {/* Líneas desde el centro hasta cada destino (destinos al final de la línea para no amontonar) */}
                 <svg
-                  className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+                  className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 overflow-visible"
                   width={600}
                   height={600}
                   viewBox="0 0 600 600"
@@ -1499,14 +2014,18 @@ export default function LogisticsPage() {
                         (s.status === "in_transit" || s.status === "dispatched" || s.status === "prepared")
                     )
                     const isActive = activeToThis.length > 0
-                    const angle = (360 / destinations.length) * i - 90
-                    const radians = (angle * Math.PI) / 180
                     const cx = 300
                     const cy = 300
-                    const isExpressMicrocentro = dest.name?.toLowerCase().includes("microcentro") || dest.name?.toLowerCase().includes("express")
-                    const lineLength = isExpressMicrocentro ? 260 : 220
-                    const x2 = cx + Math.cos(radians) * lineLength
-                    const y2 = cy + Math.sin(radians) * lineLength
+                    const draftLayer = hubEditMode ? hubDraft : {}
+                    const { x: ox, y: oy } = resolveHubNodeCoords(
+                      dest,
+                      i,
+                      destinations.length,
+                      draftLayer,
+                    )
+                    const { dx: adx, dy: ady } = resolveLineEndOffset(dest, draftLayer)
+                    const x2 = cx + ox + adx
+                    const y2 = cy + oy + ady
                     return (
                       <g key={dest.id} className={!isActive ? "text-slate-300 dark:text-slate-500" : ""}>
                         <line
@@ -1529,13 +2048,15 @@ export default function LogisticsPage() {
                   })}
                 </svg>
 
-                {/* Central hub: compacto para no solaparse con destinos */}
-                <div className="absolute left-1/2 top-1/2 z-10 flex h-16 w-16 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-xl border-2 border-blue-300 dark:border-blue-600 bg-white dark:bg-gray-800 shadow-md shadow-blue-100/50 dark:shadow-none">
-                  <Package className="h-6 w-6 text-blue-600 dark:text-blue-400" />
-                  <span className="mt-0.5 text-[9px] font-semibold leading-tight text-blue-800 dark:text-blue-200">Depósito Central</span>
+                {/* Central hub */}
+                <div className="absolute left-1/2 top-1/2 z-10 flex w-[5.75rem] -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-xl border-2 border-blue-300 bg-white px-2 py-2 text-center shadow-md shadow-blue-100/50 dark:border-blue-600 dark:bg-gray-800 dark:shadow-none sm:w-[6.25rem]">
+                  <Package className="h-6 w-6 shrink-0 text-blue-600 dark:text-blue-400" />
+                  <span className="mt-1 block text-balance text-[9px] font-semibold leading-snug text-blue-800 dark:text-blue-200">
+                    Depósito Central
+                  </span>
                 </div>
 
-                {/* Nodos al final de cada línea para buena separación */}
+                {/* Nodos y punto de enganche de la línea (modo edición) */}
                 {destinations.map((dest, i) => {
                   const activeToThis = shipmentsList.filter(
                     (s) =>
@@ -1543,48 +2064,127 @@ export default function LogisticsPage() {
                       (s.status === "in_transit" || s.status === "dispatched" || s.status === "prepared")
                   )
                   const isActive = activeToThis.length > 0
-                  const angle = (360 / destinations.length) * i - 90
-                  const radians = (angle * Math.PI) / 180
-                  const isExpressMicrocentro = dest.name?.toLowerCase().includes("microcentro") || dest.name?.toLowerCase().includes("express")
-                  const lineLength = isExpressMicrocentro ? 260 : 220
-                  const nodeDistance = lineLength
-                  const x = Math.cos(radians) * nodeDistance
-                  const y = Math.sin(radians) * nodeDistance
+                  const draftLayer = hubEditMode ? hubDraft : {}
+                  const { x, y } = resolveHubNodeCoords(dest, i, destinations.length, draftLayer)
+                  const { dx: adx, dy: ady } = resolveLineEndOffset(dest, draftLayer)
+                  const canDragHub = hubEditMode && hubMapPersistable
+                  const isExtraOnlyOnMap =
+                    resolvedExtraLocationIds.includes(dest.id) && !baseHubDestinationIds.has(dest.id)
                   return (
-                    <div
-                      key={dest.id}
-                      className="absolute left-1/2 top-1/2 z-10"
-                      style={{
-                        transform: `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`,
-                      }}
-                    >
+                    <Fragment key={dest.id}>
+                      {canDragHub ? (
+                        <div
+                          className="absolute left-1/2 top-1/2 z-[11] flex h-6 w-6 cursor-grab items-center justify-center rounded-full border-2 border-amber-200 bg-amber-400 shadow-md active:cursor-grabbing touch-none dark:border-amber-700 dark:bg-amber-500"
+                          style={{
+                            transform: `translate(calc(-50% + ${x + adx}px), calc(-50% + ${y + ady}px))`,
+                          }}
+                          title="Arrastrá para cambiar dónde se conecta la línea al local"
+                          aria-label={`Punto de conexión de la línea hacia ${dest.name}`}
+                          onPointerDown={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            setHubAttachDragging({
+                              id: dest.id,
+                              startClientX: e.clientX,
+                              startClientY: e.clientY,
+                              startDx: adx,
+                              startDy: ady,
+                              nodeX: x,
+                              nodeY: y,
+                            })
+                          }}
+                        />
+                      ) : null}
                       <div
-                        className={cn(
-                          "flex min-w-[100px] max-w-[140px] -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-xl border-2 px-3 py-2.5 shadow-sm transition-all",
-                          isActive
-                            ? "border-blue-300 dark:border-blue-600 bg-white dark:bg-gray-800 shadow-blue-100/50 dark:shadow-none"
-                            : "border-gray-200 dark:border-gray-600 bg-white/90 dark:bg-gray-800/90"
-                        )}
+                        className="absolute left-1/2 top-1/2 z-10"
+                        style={{
+                          transform: `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`,
+                        }}
                       >
-                        <span
+                        <div
+                          role={canDragHub ? "button" : undefined}
+                          tabIndex={canDragHub ? 0 : undefined}
+                          onPointerDown={(e) => {
+                            if (!canDragHub) return
+                            e.preventDefault()
+                            e.stopPropagation()
+                            const cur = resolveHubNodeCoords(
+                              dest,
+                              i,
+                              destinations.length,
+                              hubDraft,
+                            )
+                            setHubDragging({
+                              id: dest.id,
+                              startClientX: e.clientX,
+                              startClientY: e.clientY,
+                              startX: cur.x,
+                              startY: cur.y,
+                            })
+                          }}
+                          onKeyDown={(e) => {
+                            if (!canDragHub) return
+                            if (e.key === "Enter" || e.key === " ") e.preventDefault()
+                          }}
+                          aria-label={canDragHub ? `Mover ${dest.name} en el mapa` : undefined}
                           className={cn(
-                            "text-center text-xs font-semibold leading-tight",
-                            isActive ? "text-blue-800 dark:text-blue-200" : "text-gray-600 dark:text-white"
+                            "relative flex min-w-[100px] max-w-[140px] -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-xl border-2 px-3 py-2.5 shadow-sm transition-all touch-none select-none",
+                            isActive
+                              ? "border-blue-300 dark:border-blue-600 bg-white dark:bg-gray-800 shadow-blue-100/50 dark:shadow-none"
+                              : "border-gray-200 dark:border-gray-600 bg-white/90 dark:bg-gray-800/90",
+                            canDragHub &&
+                              "cursor-grab active:cursor-grabbing ring-2 ring-amber-400/60 ring-offset-2 ring-offset-transparent dark:ring-amber-500/50"
                           )}
                         >
-                          {dest.name}
-                        </span>
-                        {isActive && (
-                          <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-blue-50 dark:bg-blue-900/50 px-2 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-200">
-                            <Truck className="h-3 w-3" />
-                            {activeToThis.length} envío{activeToThis.length > 1 ? "s" : ""}
+                          {canDragHub && isExtraOnlyOnMap ? (
+                            <button
+                              type="button"
+                              className="absolute -right-1 -top-1 z-[1] flex h-5 w-5 items-center justify-center rounded-full border border-red-200 bg-red-50 text-red-600 shadow-sm hover:bg-red-100 dark:border-red-800 dark:bg-red-950 dark:text-red-300"
+                              title="Quitar del mapa"
+                              aria-label={`Quitar ${dest.name} del mapa`}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setHubExtraLocationIdsDraft((prev) => {
+                                  const cur =
+                                    prev ?? readExtraLocationIds(warehouseLocation?.mapConfig ?? null)
+                                  return cur.filter((x) => x !== dest.id)
+                                })
+                              }}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          ) : null}
+                          <span
+                            className={cn(
+                              "text-center text-xs font-semibold leading-tight",
+                              isActive ? "text-blue-800 dark:text-blue-200" : "text-gray-600 dark:text-white"
+                            )}
+                          >
+                            {dest.name}
                           </span>
-                        )}
+                          {isActive && (
+                            <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-blue-50 dark:bg-blue-900/50 px-2 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-200">
+                              <Truck className="h-3 w-3" />
+                              {activeToThis.length} envío{activeToThis.length > 1 ? "s" : ""}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    </Fragment>
                   )
                 })}
                 </div>
+
+                {hubEditMode && hubMapPersistable && (
+                  <div className="border-t border-amber-200/70 bg-amber-50/90 px-4 py-2.5 text-center dark:border-amber-900/50 dark:bg-amber-950/25">
+                    <p className="text-xs font-medium text-amber-950 dark:text-amber-100">
+                      Arrastrá el recuadro del local para moverlo; el círculo ámbar ajusta dónde llega la línea punteada.
+                      Podés agregar locales con el selector (se guardan en el depósito).
+                      «Guardar disposición» persiste en cada local sin borrar el plano del salón.
+                    </p>
+                  </div>
+                )}
 
                 {activeShipments.length === 0 && (
                   <div className="border-t border-gray-100 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-800/50 px-4 py-4 text-center">
