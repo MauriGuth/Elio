@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import OpenAI from 'openai';
 import { PrismaService } from '../prisma/prisma.service';
+import { getPrepMinutesByProductIdsForLocation } from '../recipes/recipes-pos.helper';
 import { OpenRegisterDto } from './dto/open-register.dto';
 import { CloseRegisterDto } from './dto/close-register.dto';
 
@@ -97,6 +98,23 @@ export class CashRegistersService {
       );
     }
 
+    let openingAmount = data.openingAmount;
+    let openingDenominations: Record<string, number> | null = null;
+    if (
+      data.denominations &&
+      typeof data.denominations === 'object' &&
+      Object.keys(data.denominations).length > 0
+    ) {
+      openingDenominations = data.denominations as Record<string, number>;
+      openingAmount = 0;
+      for (const [denomStr, qty] of Object.entries(openingDenominations)) {
+        const denom = parseFloat(denomStr);
+        const n = typeof qty === 'number' ? qty : parseInt(String(qty), 10) || 0;
+        if (!Number.isNaN(denom) && n >= 0) openingAmount += denom * n;
+      }
+      openingAmount = Math.round(openingAmount * 100) / 100;
+    }
+
     return this.prisma.cashRegister.create({
       data: {
         locationId: data.locationId,
@@ -105,7 +123,10 @@ export class CashRegistersService {
         shift: data.shift ?? undefined,
         openedAt: new Date(),
         openedById: userId,
-        openingAmount: data.openingAmount,
+        openingAmount,
+        ...(openingDenominations
+          ? { openingDenominations: openingDenominations as object }
+          : {}),
       },
       include: {
         location: { select: { id: true, name: true } },
@@ -467,10 +488,11 @@ Indica variación en ventas y en cantidad de órdenes (porcentaje y monto). Menc
         closedAt: { gte: from, lte: to },
       },
       include: {
-        table: { select: { id: true, tableType: true } },
+        table: { select: { id: true, name: true, tableType: true } },
         items: {
           select: {
             id: true,
+            productId: true,
             skipComanda: true,
             createdAt: true,
             readyAt: true,
@@ -493,7 +515,19 @@ Indica variación en ventas y en cantidad de órdenes (porcentaje y monto). Menc
     let normalOrderCount = 0;
     let normalTotal = 0;
     const delayMinutesList: number[] = [];
-    const delayDetails: { productName: string; delayMinutes: number; createdAt: string; readyAt: string }[] = [];
+    const delayDetails: {
+      orderId: string;
+      orderNumber: string;
+      tableName: string | null;
+      itemId: string;
+      productId: string;
+      productName: string;
+      delayMinutes: number;
+      expectedPrepMinutes: number | null;
+      exceededExpected: boolean;
+      createdAt: string;
+      readyAt: string;
+    }[] = [];
 
     for (const order of orders) {
       const type = tableType(order);
@@ -520,12 +554,30 @@ Indica variación en ventas y en cantidad de órdenes (porcentaje y monto). Menc
         const delayMin = Math.round((ready - created) / 60000);
         delayMinutesList.push(delayMin);
         delayDetails.push({
+          orderId: order.id,
+          orderNumber: String(order.orderNumber ?? ''),
+          tableName: order.table?.name ?? null,
+          itemId: item.id,
+          productId: item.productId,
           productName: item.product?.name ?? 'Producto',
           delayMinutes: delayMin,
+          expectedPrepMinutes: null,
+          exceededExpected: false,
           createdAt: new Date(item.createdAt).toISOString(),
           readyAt: new Date(item.readyAt).toISOString(),
         });
       }
+    }
+
+    const prepByProduct = await getPrepMinutesByProductIdsForLocation(
+      this.prisma,
+      [...new Set(delayDetails.map((d) => d.productId))],
+      register.locationId,
+    );
+    for (const d of delayDetails) {
+      const exp = prepByProduct.get(d.productId) ?? null;
+      d.expectedPrepMinutes = exp;
+      d.exceededExpected = exp != null && exp > 0 && d.delayMinutes > exp;
     }
 
     const totalBilling = normalTotal + errorsTotal + trashTotal;
@@ -538,6 +590,7 @@ Indica variación en ventas y en cantidad de órdenes (porcentaje y monto). Menc
     const maxDelay =
       delayMinutesList.length > 0 ? Math.max(...delayMinutesList) : null;
     const countWithDelayOver15 = delayMinutesList.filter((d) => d > 15).length;
+    const countExceededExpected = delayDetails.filter((d) => d.exceededExpected).length;
 
     return {
       shiftFrom: from.toISOString(),
@@ -564,7 +617,8 @@ Indica variación en ventas y en cantidad de órdenes (porcentaje y monto). Menc
         maxMinutes: maxDelay,
         itemCount: delayMinutesList.length,
         countOver15Minutes: countWithDelayOver15,
-        details: delayDetails.sort((a, b) => b.delayMinutes - a.delayMinutes).slice(0, 50),
+        countExceededExpected,
+        details: delayDetails.sort((a, b) => b.delayMinutes - a.delayMinutes).slice(0, 100),
       },
     };
   }

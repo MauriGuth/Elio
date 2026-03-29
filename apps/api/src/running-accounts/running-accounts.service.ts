@@ -61,6 +61,7 @@ export class RunningAccountsService {
           email: c.email,
           phone: c.phone,
           creditLimit: c.creditLimit,
+          accountKind: c.accountKind ?? 'client',
           pendingTotal: pending._sum.total ?? 0,
           ordersCount: count,
           locationId: c.locationId,

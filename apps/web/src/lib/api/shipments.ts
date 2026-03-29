@@ -9,10 +9,20 @@ export const shipmentsApi = {
   updateItem: (shipmentId: string, itemId: string, data: { sentQty: number }) =>
     api.patch<any>(`/shipments/${shipmentId}/items/${itemId}`, data),
 
-  getEstimateDuration: (originId: string, destinationId: string) =>
+  getEstimateDuration: (
+    originId: string,
+    destinationId: string,
+    pickupSupplierId?: string,
+    destinationSupplierId?: string,
+  ) =>
     api.get<{ durationMin: number | null; reason?: 'no_api_key' | 'no_address' }>(
       '/shipments/estimate-duration',
-      { originId, destinationId }
+      {
+        originId,
+        destinationId,
+        ...(pickupSupplierId ? { pickupSupplierId } : {}),
+        ...(destinationSupplierId ? { destinationSupplierId } : {}),
+      },
     ),
 
   create: (data: any) => api.post<any>('/shipments', data),
@@ -20,9 +30,14 @@ export const shipmentsApi = {
   /** Varias paradas en orden; cada parada tiene sus ítems (mismo envío / mismo día operativo). */
   createMulti: (data: {
     originId: string;
+    pickupSupplierId?: string;
     notes?: string;
     estimatedArrival?: string;
-    stops: Array<{ locationId: string; items: Array<{ productId: string; sentQty: number; unitCost?: number; lotNumber?: string; notes?: string }> }>;
+    stops: Array<{
+      locationId: string;
+      pickupSupplierId?: string;
+      items: Array<{ productId: string; sentQty: number; unitCost?: number; lotNumber?: string; notes?: string }>;
+    }>;
   }) => api.post<any>('/shipments/multi', data),
 
   reorderStops: (shipmentId: string, stopIds: string[]) =>

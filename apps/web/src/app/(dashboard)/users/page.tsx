@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { sileo } from "sileo"
 import {
   Users,
@@ -68,6 +68,13 @@ function getInitials(firstName?: string, lastName?: string): string {
   return f + l || "?"
 }
 
+/** Local lógico solo para envíos (retiro en proveedor): no se asigna a usuarios. */
+function isUserAssignableLocation(loc: { type?: string; slug?: string }): boolean {
+  if (loc.type === "SUPPLIER_PICKUP") return false
+  if ((loc.slug || "").toLowerCase() === "retiro-mercaderia-proveedor") return false
+  return true
+}
+
 function getAvatarColor(name: string): string {
   const colors = [
     "bg-blue-600",
@@ -130,17 +137,20 @@ function UserModal({
   useEffect(() => {
     if (!open) return
     setValidationError(null)
+    const allowedIds = new Set(locations.map((l: any) => l.id))
     if (user) {
       const ids =
         (user.locations?.length && user.locations.map((l: any) => l.id)) ||
         (user.locationId || user.location?.id ? [user.locationId || user.location?.id] : [])
+      const raw = Array.isArray(ids) ? ids : []
+      const locationIds = raw.filter((id) => allowedIds.has(id))
       setForm({
         firstName: user.firstName ?? "",
         lastName: user.lastName ?? "",
         email: user.email ?? "",
         password: "",
         role: user.role ?? "CASHIER",
-        locationIds: Array.isArray(ids) ? ids : [],
+        locationIds,
         phone: formatPhoneNumber(user.phone ?? ""),
         avatarUrl: user.avatarUrl ?? "",
       })
@@ -157,7 +167,7 @@ function UserModal({
         avatarUrl: "",
       })
     }
-  }, [user, open])
+  }, [user, open, locations])
 
   // Cámara en vivo para "Tomar foto"
   useEffect(() => {
@@ -585,6 +595,11 @@ export default function UsersPage() {
   const [total, setTotal] = useState(0)
   const [locations, setLocations] = useState<any[]>([])
 
+  const locationsAssignable = useMemo(
+    () => locations.filter(isUserAssignableLocation),
+    [locations],
+  )
+
   // Filters
   const [searchQuery, setSearchQuery] = useState("")
   const [filterRole, setFilterRole] = useState("")
@@ -765,7 +780,7 @@ export default function UsersPage() {
           className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
         >
           <option value="">Todas las ubicaciones</option>
-          {locations.map((loc: any) => (
+          {locationsAssignable.map((loc: any) => (
             <option key={loc.id} value={loc.id}>
               {loc.name}
             </option>
@@ -1056,7 +1071,7 @@ export default function UsersPage() {
         }}
         onSave={handleSave}
         user={editingUser}
-        locations={locations}
+        locations={locationsAssignable}
         saving={saving}
         saveError={saveError}
         clearSaveError={() => setSaveError(null)}

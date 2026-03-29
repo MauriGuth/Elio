@@ -5,12 +5,87 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { GoogleMapsService } from '../google-maps/google-maps.service';
-import { CreateShipmentDto } from './dto/create-shipment.dto';
-import { CreateMultiShipmentDto } from './dto/create-multi-shipment.dto';
+import {
+  CreateShipmentDto,
+  CreateShipmentItemDto,
+} from './dto/create-shipment.dto';
+import {
+  CreateMultiShipmentDto,
+  CreateShipmentStopDto,
+} from './dto/create-multi-shipment.dto';
 import { ReorderShipmentStopsDto } from './dto/reorder-shipment-stops.dto';
 import { ReceiveShipmentDto } from './dto/receive-shipment.dto';
 import { UpdateShipmentItemDto } from './dto/update-shipment-item.dto';
 import { Prisma } from '../../generated/prisma';
+import { randomBytes } from 'crypto';
+
+/** Local tipo retiro en proveedor (misma convención que migración / web). */
+const SUPPLIER_PICKUP_ORIGIN_SLUG = 'retiro-mercaderia-proveedor';
+
+type ProductSupplierLinkRow = {
+  supplierId: string;
+  isPreferred: boolean;
+};
+
+function locationRoutePoint(loc: {
+  address?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+}): string | null {
+  if (loc.latitude != null && loc.longitude != null) {
+    return `${loc.latitude},${loc.longitude}`;
+  }
+  const a = loc.address?.trim();
+  return a || null;
+}
+
+function mergeStopLineItemsByProductId(
+  items: CreateShipmentItemDto[],
+): CreateShipmentItemDto[] {
+  const m = new Map<string, CreateShipmentItemDto>();
+  for (const it of items) {
+    const cur = m.get(it.productId);
+    if (cur) {
+      m.set(it.productId, {
+        ...cur,
+        sentQty: cur.sentQty + it.sentQty,
+      });
+    } else {
+      m.set(it.productId, { ...it });
+    }
+  }
+  return [...m.values()];
+}
+
+function mergeDbShipmentItemsByProductId(
+  items: Array<{
+    productId: string;
+    sentQty: number;
+    unitCost: number | null;
+    lotNumber: string | null;
+    notes: string | null;
+  }>,
+): Array<{
+  productId: string;
+  sentQty: number;
+  unitCost: number | null;
+  lotNumber: string | null;
+  notes: string | null;
+}> {
+  const m = new Map<string, (typeof items)[0]>();
+  for (const it of items) {
+    const cur = m.get(it.productId);
+    if (cur) {
+      m.set(it.productId, {
+        ...cur,
+        sentQty: cur.sentQty + it.sentQty,
+      });
+    } else {
+      m.set(it.productId, { ...it });
+    }
+  }
+  return [...m.values()];
+}
 
 const SHIPMENT_DETAIL_INCLUDE = {
   items: {
@@ -39,13 +114,56 @@ const SHIPMENT_DETAIL_INCLUDE = {
     orderBy: { sortOrder: 'asc' as const },
     include: {
       location: {
-        select: { id: true, name: true, type: true, address: true },
+        select: {
+          id: true,
+          name: true,
+          slug: true,
+          type: true,
+          address: true,
+          latitude: true,
+          longitude: true,
+        },
+      },
+      pickupSupplier: {
+        select: {
+          id: true,
+          name: true,
+          address: true,
+          latitude: true,
+          longitude: true,
+        },
       },
     },
   },
-  origin: { select: { id: true, name: true, type: true, address: true } },
+  origin: {
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      address: true,
+      slug: true,
+      latitude: true,
+      longitude: true,
+    },
+  },
+  pickupSupplier: {
+    select: {
+      id: true,
+      name: true,
+      address: true,
+      latitude: true,
+      longitude: true,
+    },
+  },
   destination: {
-    select: { id: true, name: true, type: true, address: true },
+    select: {
+      id: true,
+      name: true,
+      type: true,
+      address: true,
+      latitude: true,
+      longitude: true,
+    },
   },
   createdBy: {
     select: { id: true, firstName: true, lastName: true },
@@ -71,6 +189,590 @@ export class ShipmentsService {
     private readonly prisma: PrismaService,
     private readonly googleMaps: GoogleMapsService,
   ) {}
+
+  /**
+   * Número único: secuencia del día + sufijo aleatorio (evita P2002 por carrera o
+   * reintentos que repiten el mismo `count + 1` tras rollback).
+   */
+  private async allocateShipmentNumber(
+    dateStr: string,
+    todayStart: Date,
+    todayEnd: Date,
+  ): Promise<{ shipmentNumber: string; qrCode: string }> {
+    const todayCount = await this.prisma.shipment.count({
+      where: { createdAt: { gte: todayStart, lt: todayEnd } },
+    });
+    const seq = String(todayCount + 1).padStart(3, '0');
+    const entropy = randomBytes(3).toString('hex');
+    const shipmentNumber = `SH-${dateStr}-${seq}-${entropy}`;
+    const qrCode = `ELIO-SH-${shipmentNumber}-${Date.now()}`;
+    return { shipmentNumber, qrCode };
+  }
+
+  /** Parada en el local de sistema de retiro (slug, id o nombre típico). */
+  private stopIsRetiroPickupPlaceholder(
+    stop: {
+      locationId: string;
+      location?: { slug?: string | null; name?: string | null } | null;
+    },
+    retiro: { id: string },
+  ): boolean {
+    if (stop.locationId === retiro.id) return true;
+    if (stop.location?.slug === SUPPLIER_PICKUP_ORIGIN_SLUG) return true;
+    const n = (stop.location?.name ?? '').toLowerCase();
+    return (
+      n.includes('retiro') &&
+      (n.includes('proveedor') || n.includes('mercader'))
+    );
+  }
+
+  private async buildProductSupplierLinkMap(
+    productIds: string[],
+  ): Promise<Map<string, ProductSupplierLinkRow[]>> {
+    const map = new Map<string, ProductSupplierLinkRow[]>();
+    if (productIds.length === 0) return map;
+    const rows = await this.prisma.productSupplier.findMany({
+      where: { productId: { in: productIds } },
+      select: { productId: true, supplierId: true, isPreferred: true },
+    });
+    for (const r of rows) {
+      if (!map.has(r.productId)) map.set(r.productId, []);
+      map.get(r.productId)!.push({
+        supplierId: r.supplierId,
+        isPreferred: r.isPreferred,
+      });
+    }
+    return map;
+  }
+
+  /**
+   * Proveedor único para los productos de la parada: intersección por producto;
+   * si hay varios, desempata por vínculos preferidos (isPreferred).
+   */
+  private pickSupplierIdForStopProducts(
+    productIds: string[],
+    linkMap: Map<string, ProductSupplierLinkRow[]>,
+  ): string | null {
+    if (productIds.length === 0) return null;
+    const idSets = productIds.map((pid) => {
+      const arr = linkMap.get(pid) ?? [];
+      return new Set(arr.map((l) => l.supplierId));
+    });
+    if (idSets.some((s) => s.size === 0)) return null;
+    let intersection = idSets[0]!;
+    for (let i = 1; i < idSets.length; i++) {
+      intersection = new Set(
+        [...intersection].filter((x) => idSets[i]!.has(x)),
+      );
+    }
+    const candidates = [...intersection];
+    if (candidates.length === 0) return null;
+    if (candidates.length === 1) return candidates[0]!;
+
+    let bestId = candidates[0]!;
+    let bestScore = -1;
+    for (const sid of candidates) {
+      let score = 0;
+      for (const pid of productIds) {
+        const link = (linkMap.get(pid) ?? []).find((l) => l.supplierId === sid);
+        if (link?.isPreferred) score += 2;
+        else if (link) score += 1;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestId = sid;
+      }
+    }
+    return bestId;
+  }
+
+  /**
+   * Si hay pickup_supplier_id pero la relación no vino (datos viejos o lectura parcial),
+   * completa nombre/dirección para la UI y Maps.
+   */
+  private async attachMissingStopPickupSuppliers(
+    shipment: ShipmentDetail,
+  ): Promise<ShipmentDetail> {
+    const need = shipment.stops.filter(
+      (s) => s.pickupSupplierId && !s.pickupSupplier,
+    );
+    if (need.length === 0) return shipment;
+    const ids = [...new Set(need.map((s) => s.pickupSupplierId!))];
+    const rows = await this.prisma.supplier.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        name: true,
+        address: true,
+        latitude: true,
+        longitude: true,
+      },
+    });
+    const map = new Map(rows.map((r) => [r.id, r]));
+    const stops = shipment.stops.map((s) => {
+      if (!s.pickupSupplierId || s.pickupSupplier) return s;
+      const ps = map.get(s.pickupSupplierId);
+      if (!ps) return s;
+      return { ...s, pickupSupplier: ps };
+    });
+    return { ...shipment, stops };
+  }
+
+  /**
+   * Paradas en el local «retiro» sin datos de proveedor: infiere proveedor desde product_suppliers
+   * (intersección por producto; si hay varios, desempata por isPreferred).
+   * Persiste pickup_supplier_id en BD para que rutas / recepción queden alineadas.
+   */
+  private async attachInferredRetiroStopPickupSuppliers(
+    shipment: ShipmentDetail,
+  ): Promise<ShipmentDetail> {
+    const retiro = await this.prisma.location.findFirst({
+      where: { slug: SUPPLIER_PICKUP_ORIGIN_SLUG },
+      select: { id: true },
+    });
+    if (!retiro) return shipment;
+
+    const stopsNeeding = shipment.stops.filter((s) => {
+      if (s.pickupSupplier) return false;
+      return this.stopIsRetiroPickupPlaceholder(s, retiro);
+    });
+    if (stopsNeeding.length === 0) return shipment;
+
+    const productIdsByStop = new Map<string, string[]>();
+    const orphanProductIds = shipment.items
+      .filter((it) => !it.shipmentStopId)
+      .map((it) => it.productId);
+    const onlyOneRetiroStop = stopsNeeding.length === 1;
+    for (const stop of stopsNeeding) {
+      let pids = shipment.items
+        .filter((it) => it.shipmentStopId === stop.id)
+        .map((it) => it.productId);
+      if (
+        pids.length === 0 &&
+        orphanProductIds.length > 0 &&
+        onlyOneRetiroStop
+      ) {
+        pids = [...orphanProductIds];
+      }
+      if (pids.length > 0) productIdsByStop.set(stop.id, pids);
+    }
+    if (productIdsByStop.size === 0) return shipment;
+
+    const allPids = [...new Set([...productIdsByStop.values()].flat())];
+    const linkMap = await this.buildProductSupplierLinkMap(allPids);
+
+    const stopIdToSupplierId = new Map<string, string>();
+    for (const stop of stopsNeeding) {
+      const pids = productIdsByStop.get(stop.id);
+      if (!pids?.length) continue;
+      const sid = this.pickSupplierIdForStopProducts(pids, linkMap);
+      if (sid) stopIdToSupplierId.set(stop.id, sid);
+    }
+    if (stopIdToSupplierId.size === 0) return shipment;
+
+    const supplierIds = [...new Set(stopIdToSupplierId.values())];
+    const suppliers = await this.prisma.supplier.findMany({
+      where: { id: { in: supplierIds } },
+      select: {
+        id: true,
+        name: true,
+        address: true,
+        latitude: true,
+        longitude: true,
+      },
+    });
+    const supMap = new Map(suppliers.map((s) => [s.id, s]));
+
+    const persistRows: { id: string; supplierId: string }[] = [];
+    for (const s of shipment.stops) {
+      const sid = stopIdToSupplierId.get(s.id);
+      if (!sid) continue;
+      if (s.pickupSupplierId !== sid) {
+        persistRows.push({ id: s.id, supplierId: sid });
+      }
+    }
+    if (persistRows.length > 0) {
+      await this.prisma.$transaction(
+        persistRows.map((u) =>
+          this.prisma.shipmentStop.update({
+            where: { id: u.id },
+            data: { pickupSupplierId: u.supplierId },
+          }),
+        ),
+      );
+    }
+
+    const stops = shipment.stops.map((s) => {
+      const sid = stopIdToSupplierId.get(s.id);
+      if (!sid) return s;
+      const sup = supMap.get(sid);
+      if (!sup) return s;
+      return { ...s, pickupSupplierId: sid, pickupSupplier: sup };
+    });
+    return { ...shipment, stops };
+  }
+
+  private async enrichShipmentStopSuppliers(
+    shipment: ShipmentDetail,
+  ): Promise<ShipmentDetail> {
+    const step1 = await this.attachMissingStopPickupSuppliers(shipment);
+    return this.attachInferredRetiroStopPickupSuppliers(step1);
+  }
+
+  /**
+   * Misma lógica que enrichShipmentStopSuppliers pero en batch para el listado (findAll),
+   * sin N consultas por envío.
+   */
+  private async enrichShipmentsListForPickupSuppliers<
+    T extends {
+      id: string;
+      isMultiStop: boolean;
+      stops: Array<{
+        id: string;
+        locationId: string;
+        pickupSupplierId: string | null;
+        pickupSupplier: {
+          id: string;
+          name: string;
+          address: string | null;
+          latitude: number | null;
+          longitude: number | null;
+        } | null;
+        location: {
+          id: string;
+          name: string;
+          slug: string | null;
+          type: string | null;
+          address: string | null;
+          latitude: number | null;
+          longitude: number | null;
+        } | null;
+      }>;
+      items: Array<{
+        productId: string;
+        shipmentStopId: string | null;
+      }>;
+    },
+  >(shipments: T[]): Promise<T[]> {
+    if (shipments.length === 0) return shipments;
+
+    const idSet = new Set<string>();
+    for (const sh of shipments) {
+      for (const s of sh.stops) {
+        if (s.pickupSupplierId && !s.pickupSupplier) {
+          idSet.add(s.pickupSupplierId);
+        }
+      }
+    }
+    let supById = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        address: string | null;
+        latitude: number | null;
+        longitude: number | null;
+      }
+    >();
+    if (idSet.size > 0) {
+      const rows = await this.prisma.supplier.findMany({
+        where: { id: { in: [...idSet] } },
+        select: {
+          id: true,
+          name: true,
+          address: true,
+          latitude: true,
+          longitude: true,
+        },
+      });
+      supById = new Map(rows.map((r) => [r.id, r]));
+    }
+
+    let result = shipments.map((sh) => ({
+      ...sh,
+      stops: sh.stops.map((s) => {
+        if (s.pickupSupplierId && !s.pickupSupplier) {
+          const ps = supById.get(s.pickupSupplierId);
+          return ps ? { ...s, pickupSupplier: ps } : s;
+        }
+        return s;
+      }),
+    })) as T[];
+
+    const retiro = await this.prisma.location.findFirst({
+      where: { slug: SUPPLIER_PICKUP_ORIGIN_SLUG },
+      select: { id: true },
+    });
+    if (!retiro) return result;
+
+    type Cand = { shIdx: number; stopId: string };
+    const candidates: Cand[] = [];
+    result.forEach((sh, shIdx) => {
+      for (const s of sh.stops) {
+        if (s.pickupSupplier) continue;
+        if (!this.stopIsRetiroPickupPlaceholder(s, retiro)) continue;
+        candidates.push({ shIdx, stopId: s.id });
+      }
+    });
+    if (candidates.length === 0) return result;
+
+    const stopIdToPids = new Map<string, string[]>();
+    for (const c of candidates) {
+      const sh = result[c.shIdx]!;
+      let pids = sh.items
+        .filter((it) => it.shipmentStopId === c.stopId)
+        .map((it) => it.productId);
+      const retiroCountOnSh = sh.stops.filter(
+        (st) =>
+          !st.pickupSupplier && this.stopIsRetiroPickupPlaceholder(st, retiro),
+      ).length;
+      const orphans = sh.items
+        .filter((it) => !it.shipmentStopId)
+        .map((it) => it.productId);
+      if (pids.length === 0 && orphans.length > 0 && retiroCountOnSh === 1) {
+        pids = [...orphans];
+      }
+      if (pids.length > 0) stopIdToPids.set(c.stopId, pids);
+    }
+    const allPids = [...new Set([...stopIdToPids.values()].flat())];
+    if (allPids.length === 0) return result;
+
+    const linkMap = await this.buildProductSupplierLinkMap(allPids);
+
+    const stopIdToSupplierId = new Map<string, string>();
+    for (const [stopId, pids] of stopIdToPids) {
+      const sid = this.pickSupplierIdForStopProducts(pids, linkMap);
+      if (sid) stopIdToSupplierId.set(stopId, sid);
+    }
+    if (stopIdToSupplierId.size === 0) return result;
+
+    const inferSupIds = [...new Set(stopIdToSupplierId.values())];
+    const inferSuppliers = await this.prisma.supplier.findMany({
+      where: { id: { in: inferSupIds } },
+      select: {
+        id: true,
+        name: true,
+        address: true,
+        latitude: true,
+        longitude: true,
+      },
+    });
+    const inferMap = new Map(inferSuppliers.map((s) => [s.id, s]));
+
+    const persistRows: { id: string; supplierId: string }[] = [];
+    for (const sh of result) {
+      for (const s of sh.stops) {
+        const sid = stopIdToSupplierId.get(s.id);
+        if (!sid) continue;
+        if (s.pickupSupplierId !== sid) {
+          persistRows.push({ id: s.id, supplierId: sid });
+        }
+      }
+    }
+    if (persistRows.length > 0) {
+      await this.prisma.$transaction(
+        persistRows.map((u) =>
+          this.prisma.shipmentStop.update({
+            where: { id: u.id },
+            data: { pickupSupplierId: u.supplierId },
+          }),
+        ),
+      );
+    }
+
+    result = result.map((sh) => ({
+      ...sh,
+      stops: sh.stops.map((s) => {
+        const sid = stopIdToSupplierId.get(s.id);
+        if (!sid || s.pickupSupplier) return s;
+        const sup = inferMap.get(sid);
+        return sup ? { ...s, pickupSupplierId: sid, pickupSupplier: sup } : s;
+      }),
+    })) as T[];
+
+    return result;
+  }
+
+  private async isSupplierPickupOrigin(originId: string): Promise<boolean> {
+    const loc = await this.prisma.location.findUnique({
+      where: { id: originId },
+      select: { slug: true },
+    });
+    return loc?.slug === SUPPLIER_PICKUP_ORIGIN_SLUG;
+  }
+
+  /** Punto de origen para Google Directions (texto o lat,lng). */
+  private async resolveOriginRoutePoint(
+    originId: string,
+    pickupSupplierId?: string | null,
+  ): Promise<string | null> {
+    const loc = await this.prisma.location.findUnique({
+      where: { id: originId },
+      select: { slug: true, address: true, latitude: true, longitude: true },
+    });
+    if (!loc) return null;
+    if (loc.slug === SUPPLIER_PICKUP_ORIGIN_SLUG && pickupSupplierId?.trim()) {
+      const sup = await this.prisma.supplier.findFirst({
+        where: { id: pickupSupplierId.trim(), isActive: true },
+        select: { address: true, latitude: true, longitude: true },
+      });
+      if (!sup) return null;
+      return locationRoutePoint(sup);
+    }
+    return locationRoutePoint(loc);
+  }
+
+  private async assertPickupSupplierRules(
+    originId: string,
+    pickupSupplierId?: string | null,
+  ): Promise<void> {
+    const pickup = await this.isSupplierPickupOrigin(originId);
+    if (pickup) {
+      if (!pickupSupplierId?.trim()) {
+        throw new BadRequestException(
+          'Para retiro en proveedor debés elegir un proveedor con dirección o coordenadas cargadas.',
+        );
+      }
+      const sup = await this.prisma.supplier.findFirst({
+        where: { id: pickupSupplierId.trim(), isActive: true },
+        select: { address: true, latitude: true, longitude: true },
+      });
+      if (!sup) {
+        throw new NotFoundException(
+          'Proveedor de retiro no encontrado o inactivo.',
+        );
+      }
+      if (!locationRoutePoint(sup)) {
+        throw new BadRequestException(
+          'El proveedor elegido no tiene dirección ni coordenadas para calcular la ruta. Cargalas en Proveedores.',
+        );
+      }
+      return;
+    }
+    if (pickupSupplierId?.trim()) {
+      throw new BadRequestException(
+        'Solo podés indicar proveedor de retiro cuando el origen es «Retiro de mercadería o proveedor».',
+      );
+    }
+  }
+
+  private async assertMergePickupSupplier(
+    originId: string,
+    existingPickupId: string | null,
+    incomingPickupId?: string | null,
+  ): Promise<void> {
+    const pickup = await this.isSupplierPickupOrigin(originId);
+    if (!pickup) {
+      if (incomingPickupId?.trim()) {
+        throw new BadRequestException(
+          'Solo podés indicar proveedor de retiro cuando el origen es «Retiro de mercadería o proveedor».',
+        );
+      }
+      return;
+    }
+    const effective =
+      existingPickupId ??
+      (incomingPickupId?.trim() ? incomingPickupId.trim() : null);
+    if (!effective) {
+      throw new BadRequestException(
+        'Para retiro en proveedor indicá el proveedor de retiro en este pedido (o creá primero el envío con proveedor asignado).',
+      );
+    }
+    if (
+      existingPickupId &&
+      incomingPickupId?.trim() &&
+      incomingPickupId.trim() !== existingPickupId
+    ) {
+      throw new BadRequestException(
+        'Este borrador ya tiene otro proveedor de retiro; no se puede mezclar en el mismo envío.',
+      );
+    }
+    if (!existingPickupId && incomingPickupId?.trim()) {
+      await this.assertPickupSupplierRules(originId, incomingPickupId);
+    }
+  }
+
+  /** Punto para Maps / Directions según parada (proveedor o local). */
+  private stopRoutePointFromIncluded(stop: {
+    pickupSupplierId?: string | null;
+    pickupSupplier?: {
+      address?: string | null;
+      latitude?: number | null;
+      longitude?: number | null;
+    } | null;
+    location?: {
+      address?: string | null;
+      latitude?: number | null;
+      longitude?: number | null;
+    } | null;
+  }): string | null {
+    if (stop.pickupSupplierId && stop.pickupSupplier) {
+      return locationRoutePoint(stop.pickupSupplier);
+    }
+    return stop.location ? locationRoutePoint(stop.location) : null;
+  }
+
+  private async getRetiroMercaderiaLocation() {
+    const loc = await this.prisma.location.findFirst({
+      where: { slug: SUPPLIER_PICKUP_ORIGIN_SLUG },
+    });
+    if (!loc) {
+      throw new BadRequestException(
+        'Falta el local de sistema «Retiro de mercadería o proveedor».',
+      );
+    }
+    return loc;
+  }
+
+  private async assertActiveSupplierRoutePoint(supplierId: string) {
+    const sup = await this.prisma.supplier.findFirst({
+      where: { id: supplierId, isActive: true },
+      select: { address: true, latitude: true, longitude: true },
+    });
+    if (!sup) {
+      throw new NotFoundException('Proveedor de parada no encontrado o inactivo.');
+    }
+    if (!locationRoutePoint(sup)) {
+      throw new BadRequestException(
+        'El proveedor debe tener dirección o coordenadas para la ruta.',
+      );
+    }
+  }
+
+  private async resolvePointForStopInput(input: {
+    locationId: string;
+    pickupSupplierId?: string | null;
+  }): Promise<string | null> {
+    if (input.pickupSupplierId) {
+      const sup = await this.prisma.supplier.findFirst({
+        where: { id: input.pickupSupplierId, isActive: true },
+        select: { address: true, latitude: true, longitude: true },
+      });
+      if (sup) return locationRoutePoint(sup);
+      return null;
+    }
+    const loc = await this.prisma.location.findUnique({
+      where: { id: input.locationId },
+      select: { address: true, latitude: true, longitude: true },
+    });
+    return loc ? locationRoutePoint(loc) : null;
+  }
+
+  /**
+   * Ida a proveedor y vuelta al mismo local de origen (depósito u otro): no hay salida de stock al
+   * despachar; la mercadería entra al completar la última parada.
+   */
+  private isSupplierPickupRoundTripDetail(shipment: ShipmentDetail): boolean {
+    if (!shipment.isMultiStop || !shipment.stops?.length) return false;
+    const ordered = [...shipment.stops].sort(
+      (a, b) => a.sortOrder - b.sortOrder,
+    );
+    const first = ordered[0];
+    const last = ordered[ordered.length - 1];
+    if (!first?.pickupSupplierId) return false;
+    if (last?.locationId !== shipment.originId) return false;
+    return true;
+  }
 
   async findAll(filters: {
     originId?: string;
@@ -111,15 +813,45 @@ export class ShipmentsService {
         take: limit,
         orderBy: { createdAt: 'desc' },
         include: {
-          origin: { select: { id: true, name: true, type: true } },
-          destination: { select: { id: true, name: true, type: true } },
+          origin: { select: { id: true, name: true, type: true, address: true } },
+          pickupSupplier: {
+            select: {
+              id: true,
+              name: true,
+              address: true,
+              latitude: true,
+              longitude: true,
+            },
+          },
+          destination: {
+            select: { id: true, name: true, type: true, address: true },
+          },
           createdBy: {
             select: { id: true, firstName: true, lastName: true },
           },
           stops: {
             orderBy: { sortOrder: 'asc' },
             include: {
-              location: { select: { id: true, name: true, type: true } },
+              location: {
+                select: {
+                  id: true,
+                  name: true,
+                  slug: true,
+                  type: true,
+                  address: true,
+                  latitude: true,
+                  longitude: true,
+                },
+              },
+              pickupSupplier: {
+                select: {
+                  id: true,
+                  name: true,
+                  address: true,
+                  latitude: true,
+                  longitude: true,
+                },
+              },
             },
           },
           _count: { select: { items: true } },
@@ -128,8 +860,48 @@ export class ShipmentsService {
       this.prisma.shipment.count({ where }),
     ]);
 
+    const multiIds = data
+      .filter((sh) => sh.isMultiStop && sh.stops.length > 0)
+      .map((sh) => sh.id);
+
+    const itemsByShipmentId = new Map<
+      string,
+      { productId: string; shipmentStopId: string | null }[]
+    >();
+    if (multiIds.length > 0) {
+      const itemRows = await this.prisma.shipmentItem.findMany({
+        where: { shipmentId: { in: multiIds } },
+        select: {
+          shipmentId: true,
+          shipmentStopId: true,
+          productId: true,
+        },
+      });
+      for (const row of itemRows) {
+        if (!itemsByShipmentId.has(row.shipmentId)) {
+          itemsByShipmentId.set(row.shipmentId, []);
+        }
+        itemsByShipmentId.get(row.shipmentId)!.push({
+          productId: row.productId,
+          shipmentStopId: row.shipmentStopId,
+        });
+      }
+    }
+
+    const withItems = data.map((sh) => ({
+      ...sh,
+      items: itemsByShipmentId.get(sh.id) ?? [],
+    }));
+
+    const enriched =
+      await this.enrichShipmentsListForPickupSuppliers(withItems);
+
+    const dataForClient = enriched.map(
+      ({ items: _listInferItems, ...row }) => row,
+    );
+
     return {
-      data,
+      data: dataForClient,
       meta: {
         total,
         page,
@@ -149,7 +921,7 @@ export class ShipmentsService {
       throw new NotFoundException(`Shipment with ID "${id}" not found`);
     }
 
-    return shipment;
+    return this.enrichShipmentStopSuppliers(shipment);
   }
 
   async updateItem(
@@ -210,12 +982,14 @@ export class ShipmentsService {
         `Envío con número o código "${param}" no encontrado`,
       );
     }
-    return shipment;
+    return this.enrichShipmentStopSuppliers(shipment);
   }
 
   async getEstimateDuration(
     originId?: string,
     destinationId?: string,
+    pickupSupplierId?: string,
+    destinationSupplierId?: string,
   ): Promise<{ durationMin: number | null; reason?: 'no_api_key' | 'no_address' }> {
     if (!originId || !destinationId) {
       return { durationMin: null };
@@ -223,24 +997,31 @@ export class ShipmentsService {
     if (!this.googleMaps.isConfigured()) {
       return { durationMin: null, reason: 'no_api_key' };
     }
-    const [origin, destination] = await Promise.all([
-      this.prisma.location.findUnique({
-        where: { id: originId },
-        select: { address: true },
-      }),
-      this.prisma.location.findUnique({
+    let destPoint: string | null = null;
+    if (destinationSupplierId?.trim()) {
+      const sup = await this.prisma.supplier.findFirst({
+        where: { id: destinationSupplierId.trim(), isActive: true },
+        select: { address: true, latitude: true, longitude: true },
+      });
+      destPoint = sup ? locationRoutePoint(sup) : null;
+    } else {
+      const destination = await this.prisma.location.findUnique({
         where: { id: destinationId },
-        select: { address: true },
-      }),
-    ]);
-    if (!origin?.address?.trim() || !destination?.address?.trim()) {
+        select: { address: true, latitude: true, longitude: true },
+      });
+      destPoint = destination ? locationRoutePoint(destination) : null;
+    }
+    const originPoint = await this.resolveOriginRoutePoint(
+      originId,
+      pickupSupplierId,
+    );
+    if (!originPoint || !destPoint) {
       return { durationMin: null, reason: 'no_address' };
     }
-    const durationMin =
-      await this.googleMaps.getRouteDurationInMinutes(
-        origin.address,
-        destination.address,
-      );
+    const durationMin = await this.googleMaps.getRouteDurationInMinutes(
+      originPoint,
+      destPoint,
+    );
     return { durationMin };
   }
 
@@ -306,6 +1087,16 @@ export class ShipmentsService {
     });
 
     if (mergeInto) {
+      await this.assertMergePickupSupplier(
+        data.originId,
+        mergeInto.pickupSupplierId,
+        data.pickupSupplierId,
+      );
+    } else {
+      await this.assertPickupSupplierRules(data.originId, data.pickupSupplierId);
+    }
+
+    if (mergeInto) {
       return this.prisma.$transaction(async (tx) => {
         const stops = await tx.shipmentStop.findMany({
           where: { shipmentId: mergeInto.id },
@@ -348,6 +1139,9 @@ export class ShipmentsService {
             destinationId: lastStop.locationId,
             isMultiStop: orderedStops.length >= 2,
             totalItems: { increment: data.items.length },
+            ...(!mergeInto.pickupSupplierId && data.pickupSupplierId?.trim()
+              ? { pickupSupplierId: data.pickupSupplierId.trim() }
+              : {}),
             ...(noteExtra
               ? {
                   notes: row?.notes
@@ -382,13 +1176,15 @@ export class ShipmentsService {
 
     let estimatedDurationMin = data.estimatedDurationMin ?? null;
     let routePolyline: string | null = null;
-    if (
-      origin.address?.trim() &&
-      destination.address?.trim()
-    ) {
+    const originPoint = await this.resolveOriginRoutePoint(
+      data.originId,
+      data.pickupSupplierId,
+    );
+    const destPoint = locationRoutePoint(destination);
+    if (originPoint && destPoint) {
       const details = await this.googleMaps.getRouteDetails(
-        origin.address,
-        destination.address,
+        originPoint,
+        destPoint,
       );
       if (details) {
         if (estimatedDurationMin == null) estimatedDurationMin = details.durationMin;
@@ -396,22 +1192,18 @@ export class ShipmentsService {
       }
     }
 
-    // Generate shipment number: SH-YYYYMMDD-XXX
-    const todayCount = await this.prisma.shipment.count({
-      where: {
-        createdAt: { gte: todayStart, lt: todayEnd },
-      },
-    });
-    const shipmentNumber = `SH-${dateStr}-${String(todayCount + 1).padStart(3, '0')}`;
-
-    // Generate QR code string
-    const qrCode = `ELIO-SH-${shipmentNumber}-${Date.now()}`;
+    const { shipmentNumber, qrCode } = await this.allocateShipmentNumber(
+      dateStr,
+      todayStart,
+      todayEnd,
+    );
 
     return this.prisma.$transaction(async (tx) => {
       const created = await tx.shipment.create({
         data: {
           shipmentNumber,
           originId: data.originId,
+          pickupSupplierId: data.pickupSupplierId?.trim() || undefined,
           destinationId: data.destinationId,
           isMultiStop: false,
           status: 'draft',
@@ -464,23 +1256,114 @@ export class ShipmentsService {
       throw new NotFoundException(`Origen "${data.originId}" no encontrado`);
     }
 
-    const locIds = data.stops.map((s) => s.locationId);
-    const unique = new Set(locIds);
-    if (unique.size !== locIds.length) {
-      throw new BadRequestException(
-        'Cada parada debe ser un local distinto en la ruta.',
-      );
-    }
-    if (locIds.some((id) => id === data.originId)) {
-      throw new BadRequestException('Las paradas no pueden ser el mismo depósito de origen.');
+    const retiro = await this.getRetiroMercaderiaLocation();
+
+    type NormStop = {
+      locationId: string;
+      pickupSupplierId?: string;
+      items: CreateShipmentStopDto['items'];
+    };
+
+    const stopsNorm: NormStop[] = data.stops.map((s, i) => {
+      const pick = s.pickupSupplierId?.trim() || undefined;
+      const loc = (s.locationId ?? '').trim();
+      if (!pick && !loc) {
+        throw new BadRequestException(
+          `Parada ${i + 1}: indicá un local o un proveedor de retiro (faltan locationId y pickupSupplierId).`,
+        );
+      }
+      return {
+        locationId: loc,
+        pickupSupplierId: pick,
+        items: s.items,
+      };
+    });
+
+    for (const s of stopsNorm) {
+      if (s.pickupSupplierId) {
+        s.locationId = retiro.id;
+        await this.assertActiveSupplierRoutePoint(s.pickupSupplierId);
+      }
     }
 
-    const locations = await this.prisma.location.findMany({
-      where: { id: { in: locIds } },
-    });
-    if (locations.length !== locIds.length) {
-      throw new NotFoundException('Uno o más locales de parada no existen');
+    for (let i = 0; i < stopsNorm.length; i++) {
+      const s = stopsNorm[i]!;
+      if (!s.locationId?.trim()) {
+        throw new BadRequestException(
+          `Parada ${i + 1}: local inválido. Si es retiro en proveedor, tiene que enviarse pickupSupplierId en el body de esa parada.`,
+        );
+      }
+      if (s.locationId === retiro.id && !s.pickupSupplierId?.trim()) {
+        throw new BadRequestException(
+          `Parada ${i + 1}: no podés usar solo el local «Retiro de mercadería o proveedor» sin elegir proveedor. En el formulario usá «Proveedor (retiro en domicilio)» y seleccioná el proveedor (o enviá pickupSupplierId en la API).`,
+        );
+      }
     }
+
+    const stopKeys = stopsNorm.map(
+      (s) => `${s.locationId}:${s.pickupSupplierId ?? ''}`,
+    );
+    if (new Set(stopKeys).size !== stopKeys.length) {
+      throw new BadRequestException(
+        'Hay dos paradas iguales (mismo local y mismo proveedor).',
+      );
+    }
+
+    for (let i = 0; i < stopsNorm.length - 1; i++) {
+      const s = stopsNorm[i]!;
+      if (s.locationId === data.originId && !s.pickupSupplierId) {
+        throw new BadRequestException(
+          'Solo la última parada puede ser el mismo local que el origen (p. ej. vuelta al depósito).',
+        );
+      }
+    }
+
+    const locIdsUniq = [...new Set(stopsNorm.map((s) => s.locationId))];
+    const locations = await this.prisma.location.findMany({
+      where: { id: { in: locIdsUniq } },
+    });
+    if (locations.length !== locIdsUniq.length) {
+      const found = new Set(locations.map((l) => l.id));
+      const missing = locIdsUniq.filter((id) => !found.has(id));
+      throw new NotFoundException(
+        missing.length
+          ? `Locales de parada no encontrados: ${missing.join(', ')}. Si una parada es proveedor, el cliente debe enviar pickupSupplierId en esa parada (el servidor asigna el local de retiro).`
+          : 'Uno o más locales de parada no existen',
+      );
+    }
+
+    const lastIx = stopsNorm.length - 1;
+    if (
+      stopsNorm[0]!.pickupSupplierId &&
+      stopsNorm[lastIx]!.locationId === data.originId
+    ) {
+      stopsNorm[lastIx]!.items = stopsNorm[0]!.items.map((it) => ({ ...it }));
+    }
+
+    const hasSupplierStop = stopsNorm.some((s) => s.pickupSupplierId);
+    const lastNorm = stopsNorm[stopsNorm.length - 1]!;
+    const lastIsReturnToOrigin =
+      lastNorm.locationId === data.originId && !lastNorm.pickupSupplierId;
+    if (hasSupplierStop && !lastIsReturnToOrigin) {
+      const supplierItems = stopsNorm.flatMap((s) =>
+        s.pickupSupplierId ? s.items : [],
+      );
+      if (supplierItems.length === 0) {
+        throw new BadRequestException(
+          'Hay una parada en proveedor sin ítems. Cargá los productos a retirar en esa parada.',
+        );
+      }
+      const merged = mergeStopLineItemsByProductId(supplierItems);
+      stopsNorm.push({
+        locationId: data.originId,
+        items: merged.map((it) => ({ ...it })),
+      });
+    }
+
+    const locIds = stopsNorm.map((s) => s.locationId);
+    const locIdsForOverlap = [
+      ...new Set(locIds.filter((id) => id !== data.originId)),
+    ];
 
     const today = new Date();
     const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
@@ -491,16 +1374,19 @@ export class ShipmentsService {
     );
     const todayEnd = new Date(todayStart.getTime() + 86400000);
 
-    const draftOverlapsStops = await this.prisma.shipment.findFirst({
-      where: {
-        originId: data.originId,
-        status: 'draft',
-        createdAt: { gte: todayStart, lt: todayEnd },
-        stops: { some: { locationId: { in: locIds } } },
-      },
-      select: { shipmentNumber: true },
-      orderBy: { createdAt: 'asc' },
-    });
+    const draftOverlapsStops =
+      locIdsForOverlap.length === 0
+        ? null
+        : await this.prisma.shipment.findFirst({
+            where: {
+              originId: data.originId,
+              status: 'draft',
+              createdAt: { gte: todayStart, lt: todayEnd },
+              stops: { some: { locationId: { in: locIdsForOverlap } } },
+            },
+            select: { shipmentNumber: true },
+            orderBy: { createdAt: 'asc' },
+          });
     if (draftOverlapsStops) {
       throw new BadRequestException(
         `Uno o más locales de esta ruta ya están en un envío en borrador de hoy (envío ${draftOverlapsStops.shipmentNumber}). Revisalo en Logística y Envíos para no duplicar el pedido.`,
@@ -520,7 +1406,17 @@ export class ShipmentsService {
     });
 
     if (mergeInto) {
-      const totalNewItems = data.stops.reduce((n, s) => n + s.items.length, 0);
+      await this.assertMergePickupSupplier(
+        data.originId,
+        mergeInto.pickupSupplierId,
+        data.pickupSupplierId,
+      );
+    } else {
+      await this.assertPickupSupplierRules(data.originId, data.pickupSupplierId);
+    }
+
+    if (mergeInto) {
+      let totalNewItems = stopsNorm.reduce((n, s) => n + s.items.length, 0);
       return this.prisma.$transaction(async (tx) => {
         let maxOrder = (
           await tx.shipmentStop.findMany({
@@ -529,12 +1425,13 @@ export class ShipmentsService {
           })
         ).reduce((m, s) => Math.max(m, s.sortOrder), -1);
 
-        for (const st of data.stops) {
+        for (const st of stopsNorm) {
           maxOrder += 1;
           const ns = await tx.shipmentStop.create({
             data: {
               shipmentId: mergeInto.id,
               locationId: st.locationId,
+              pickupSupplierId: st.pickupSupplierId,
               sortOrder: maxOrder,
             },
           });
@@ -553,6 +1450,61 @@ export class ShipmentsService {
           }
         }
 
+        const fullStopsAfterMerge = await tx.shipmentStop.findMany({
+          where: { shipmentId: mergeInto.id },
+          orderBy: { sortOrder: 'asc' },
+          include: { items: true },
+        });
+        const hasSupplierInRoute = fullStopsAfterMerge.some(
+          (s) => s.pickupSupplierId,
+        );
+        const lastAfterMerge =
+          fullStopsAfterMerge[fullStopsAfterMerge.length - 1]!;
+        const lastIsReturnToOriginMerge =
+          lastAfterMerge.locationId === mergeInto.originId &&
+          !lastAfterMerge.pickupSupplierId;
+        if (hasSupplierInRoute && !lastIsReturnToOriginMerge) {
+          const supplierDbItems = fullStopsAfterMerge
+            .filter((s) => s.pickupSupplierId)
+            .flatMap((s) => s.items);
+          if (supplierDbItems.length === 0) {
+            throw new BadRequestException(
+              'Hay una parada en proveedor sin ítems en este envío; no se pudo armar la vuelta al depósito.',
+            );
+          }
+          const merged = mergeDbShipmentItemsByProductId(
+            supplierDbItems.map((it) => ({
+              productId: it.productId,
+              sentQty: it.sentQty,
+              unitCost: it.unitCost,
+              lotNumber: it.lotNumber,
+              notes: it.notes,
+            })),
+          );
+          maxOrder += 1;
+          const returnStop = await tx.shipmentStop.create({
+            data: {
+              shipmentId: mergeInto.id,
+              locationId: mergeInto.originId,
+              sortOrder: maxOrder,
+            },
+          });
+          for (const it of merged) {
+            await tx.shipmentItem.create({
+              data: {
+                shipmentId: mergeInto.id,
+                shipmentStopId: returnStop.id,
+                productId: it.productId,
+                sentQty: it.sentQty,
+                unitCost: it.unitCost ?? undefined,
+                lotNumber: it.lotNumber ?? undefined,
+                notes: it.notes ?? undefined,
+              },
+            });
+          }
+          totalNewItems += merged.length;
+        }
+
         const orderedStops = await tx.shipmentStop.findMany({
           where: { shipmentId: mergeInto.id },
           orderBy: { sortOrder: 'asc' },
@@ -569,6 +1521,9 @@ export class ShipmentsService {
             destinationId: lastStop.locationId,
             isMultiStop: orderedStops.length >= 2,
             totalItems: { increment: totalNewItems },
+            ...(!mergeInto.pickupSupplierId && data.pickupSupplierId?.trim()
+              ? { pickupSupplierId: data.pickupSupplierId.trim() }
+              : {}),
             ...(noteExtra
               ? {
                   notes: row?.notes
@@ -588,18 +1543,26 @@ export class ShipmentsService {
       });
     }
 
-    const lastDest = locIds[locIds.length - 1]!;
+    const lastDest = stopsNorm[stopsNorm.length - 1]!.locationId;
     let routePolyline: string | null = null;
     let estimatedDurationMin: number | null = null;
-    const middleAddrs = locIds.slice(0, -1).map((id) => {
-      const l = locations.find((x) => x.id === id);
-      return l?.address?.trim() ?? '';
-    });
-    const lastLoc = locations.find((x) => x.id === lastDest);
-    const lastAddr = lastLoc?.address?.trim() ?? '';
-    if (origin.address?.trim() && lastAddr) {
+    const stopPoints = await Promise.all(
+      stopsNorm.map((s) => this.resolvePointForStopInput(s)),
+    );
+    const lastAddr = stopPoints[stopPoints.length - 1] ?? '';
+    const middleAddrs = stopPoints.slice(0, -1).map((p) => p ?? '');
+    const originPointMulti = await this.resolveOriginRoutePoint(
+      data.originId,
+      data.pickupSupplierId,
+    );
+    if (
+      originPointMulti &&
+      lastAddr &&
+      middleAddrs.length === stopsNorm.length - 1 &&
+      middleAddrs.every(Boolean)
+    ) {
       const route = await this.googleMaps.getRouteWithWaypoints(
-        origin.address,
+        originPointMulti,
         middleAddrs.filter(Boolean),
         lastAddr,
         false,
@@ -610,19 +1573,20 @@ export class ShipmentsService {
       }
     }
 
-    const todayCount = await this.prisma.shipment.count({
-      where: { createdAt: { gte: todayStart, lt: todayEnd } },
-    });
-    const shipmentNumber = `SH-${dateStr}-${String(todayCount + 1).padStart(3, '0')}`;
-    const qrCode = `ELIO-SH-${shipmentNumber}-${Date.now()}`;
+    const totalItems = stopsNorm.reduce((n, s) => n + s.items.length, 0);
 
-    const totalItems = data.stops.reduce((n, s) => n + s.items.length, 0);
+    const { shipmentNumber, qrCode } = await this.allocateShipmentNumber(
+      dateStr,
+      todayStart,
+      todayEnd,
+    );
 
     return this.prisma.$transaction(async (tx) => {
       const shipment = await tx.shipment.create({
         data: {
           shipmentNumber,
           originId: data.originId,
+          pickupSupplierId: data.pickupSupplierId?.trim() || undefined,
           destinationId: lastDest,
           isMultiStop: true,
           status: 'draft',
@@ -638,12 +1602,13 @@ export class ShipmentsService {
         },
       });
 
-      for (let i = 0; i < data.stops.length; i++) {
-        const st = data.stops[i]!;
+      for (let i = 0; i < stopsNorm.length; i++) {
+        const st = stopsNorm[i]!;
         const stop = await tx.shipmentStop.create({
           data: {
             shipmentId: shipment.id,
             locationId: st.locationId,
+            pickupSupplierId: st.pickupSupplierId,
             sortOrder: i,
           },
         });
@@ -706,7 +1671,11 @@ export class ShipmentsService {
       );
     }
 
-    const originAddress = shipment.origin?.address?.trim();
+    const originAddress =
+      (await this.resolveOriginRoutePoint(
+        shipment.originId,
+        shipment.pickupSupplierId,
+      )) ?? undefined;
     let estimatedArrival: Date | undefined;
     let estimatedDurationMin: number | undefined;
     let routePolyline: string | undefined;
@@ -728,9 +1697,9 @@ export class ShipmentsService {
       const last = ordered[ordered.length - 1]!;
       const middle = ordered.slice(0, -1);
       const middleAddr = middle
-        .map((s) => s.location?.address?.trim())
-        .filter(Boolean) as string[];
-      const destAddr = last.location?.address?.trim();
+        .map((s) => this.stopRoutePointFromIncluded(s) ?? '')
+        .filter(Boolean);
+      const destAddr = this.stopRoutePointFromIncluded(last);
       if (
         originAddress &&
         destAddr &&
@@ -752,7 +1721,9 @@ export class ShipmentsService {
         }
       }
     } else {
-      const destAddress = shipment.destination?.address?.trim();
+      const destAddress = shipment.destination
+        ? locationRoutePoint(shipment.destination)
+        : null;
       if (originAddress && destAddress) {
         const route = await this.googleMaps.getRouteDetailsWithTraffic(
           originAddress,
@@ -768,49 +1739,53 @@ export class ShipmentsService {
       }
     }
 
+    const skipOriginStockOut = this.isSupplierPickupRoundTripDetail(shipment);
+
     await this.prisma.$transaction(async (tx) => {
       // Create stock movements (shipment_out) at origin for each item
-      for (const item of shipment.items) {
-        const stockLevel = await tx.stockLevel.findUnique({
-          where: {
-            productId_locationId: {
+      if (!skipOriginStockOut) {
+        for (const item of shipment.items) {
+          const stockLevel = await tx.stockLevel.findUnique({
+            where: {
+              productId_locationId: {
+                productId: item.productId,
+                locationId: shipment.originId,
+              },
+            },
+          });
+
+          const currentQty = stockLevel?.quantity ?? 0;
+
+          await tx.stockLevel.upsert({
+            where: {
+              productId_locationId: {
+                productId: item.productId,
+                locationId: shipment.originId,
+              },
+            },
+            update: {
+              quantity: currentQty - item.sentQty,
+            },
+            create: {
               productId: item.productId,
               locationId: shipment.originId,
+              quantity: -item.sentQty,
             },
-          },
-        });
+          });
 
-        const currentQty = stockLevel?.quantity ?? 0;
-
-        await tx.stockLevel.upsert({
-          where: {
-            productId_locationId: {
+          await tx.stockMovement.create({
+            data: {
               productId: item.productId,
               locationId: shipment.originId,
+              type: 'shipment_out',
+              quantity: -item.sentQty,
+              unitCost: item.unitCost,
+              referenceType: 'shipment',
+              referenceId: shipment.id,
+              userId,
             },
-          },
-          update: {
-            quantity: currentQty - item.sentQty,
-          },
-          create: {
-            productId: item.productId,
-            locationId: shipment.originId,
-            quantity: -item.sentQty,
-          },
-        });
-
-        await tx.stockMovement.create({
-          data: {
-            productId: item.productId,
-            locationId: shipment.originId,
-            type: 'shipment_out',
-            quantity: -item.sentQty,
-            unitCost: item.unitCost,
-            referenceType: 'shipment',
-            referenceId: shipment.id,
-            userId,
-          },
-        });
+          });
+        }
       }
 
       const now = new Date();
@@ -1113,6 +2088,11 @@ export class ShipmentsService {
     }
 
     const destLocationId = stop.locationId;
+    /** Solo el retiro «virtual» (slug retiro / nombre típico) no lleva stock; la vuelta al depósito sí, aunque el ítem venga de proveedor. */
+    const retiroLoc = await this.getRetiroMercaderiaLocation();
+    const atSupplierPickup =
+      Boolean(stop.pickupSupplierId) &&
+      this.stopIsRetiroPickupPlaceholder(stop, { id: retiroLoc.id });
     const now = new Date();
 
     await this.prisma.$transaction(async (tx) => {
@@ -1126,41 +2106,43 @@ export class ShipmentsService {
           },
         });
 
-        const stockLevel = await tx.stockLevel.findUnique({
-          where: {
-            productId_locationId: {
+        if (!atSupplierPickup) {
+          const stockLevel = await tx.stockLevel.findUnique({
+            where: {
+              productId_locationId: {
+                productId: shipmentItem.productId,
+                locationId: destLocationId,
+              },
+            },
+          });
+          const currentQty = stockLevel?.quantity ?? 0;
+          await tx.stockLevel.upsert({
+            where: {
+              productId_locationId: {
+                productId: shipmentItem.productId,
+                locationId: destLocationId,
+              },
+            },
+            update: { quantity: currentQty + ri.receivedQty },
+            create: {
               productId: shipmentItem.productId,
               locationId: destLocationId,
+              quantity: ri.receivedQty,
             },
-          },
-        });
-        const currentQty = stockLevel?.quantity ?? 0;
-        await tx.stockLevel.upsert({
-          where: {
-            productId_locationId: {
+          });
+          await tx.stockMovement.create({
+            data: {
               productId: shipmentItem.productId,
               locationId: destLocationId,
+              type: 'shipment_in',
+              quantity: ri.receivedQty,
+              unitCost: shipmentItem.unitCost,
+              referenceType: 'shipment',
+              referenceId: shipment.id,
+              userId,
             },
-          },
-          update: { quantity: currentQty + ri.receivedQty },
-          create: {
-            productId: shipmentItem.productId,
-            locationId: destLocationId,
-            quantity: ri.receivedQty,
-          },
-        });
-        await tx.stockMovement.create({
-          data: {
-            productId: shipmentItem.productId,
-            locationId: destLocationId,
-            type: 'shipment_in',
-            quantity: ri.receivedQty,
-            unitCost: shipmentItem.unitCost,
-            referenceType: 'shipment',
-            referenceId: shipment.id,
-            userId,
-          },
-        });
+          });
+        }
       }
 
       await tx.shipmentStop.update({
@@ -1228,25 +2210,27 @@ export class ShipmentsService {
       .filter(Boolean) as typeof shipment.stops;
     const lastLoc = ordered[ordered.length - 1]!.locationId;
 
-    const origin = await this.prisma.location.findUnique({
-      where: { id: shipment.originId },
-    });
-    const locRows = await this.prisma.location.findMany({
-      where: { id: { in: ordered.map((s) => s.locationId) } },
-    });
+    const originPointReorder = await this.resolveOriginRoutePoint(
+      shipment.originId,
+      shipment.pickupSupplierId,
+    );
     const middleAddrs = ordered
       .slice(0, -1)
-      .map((s) => locRows.find((l) => l.id === s.locationId)?.address?.trim())
-      .filter(Boolean) as string[];
+      .map((s) => this.stopRoutePointFromIncluded(s) ?? '');
     const lastAddr =
-      locRows.find((l) => l.id === lastLoc)?.address?.trim() ?? '';
+      this.stopRoutePointFromIncluded(ordered[ordered.length - 1]!) ?? '';
     let routePolyline: string | undefined;
     let estimatedDurationMin: number | undefined;
     let legs: { durationMin: number; distanceMeters: number; polyline: string | null }[] | null =
       null;
-    if (origin?.address?.trim() && lastAddr && middleAddrs.length === ordered.length - 1) {
+    if (
+      originPointReorder &&
+      lastAddr &&
+      middleAddrs.every(Boolean) &&
+      middleAddrs.length === ordered.length - 1
+    ) {
       const r = await this.googleMaps.getRouteWithWaypoints(
-        origin.address.trim(),
+        originPointReorder,
         middleAddrs,
         lastAddr,
         false,
@@ -1356,10 +2340,34 @@ export class ShipmentsService {
     const sh = await tx.shipment.findUnique({
       where: { id: shipmentId },
       include: {
-        origin: { select: { address: true, id: true } },
+        origin: {
+          select: {
+            address: true,
+            id: true,
+            slug: true,
+            latitude: true,
+            longitude: true,
+          },
+        },
         stops: {
           orderBy: { sortOrder: 'asc' },
-          include: { location: { select: { address: true, id: true } } },
+          include: {
+            location: {
+              select: {
+                address: true,
+                id: true,
+                latitude: true,
+                longitude: true,
+              },
+            },
+            pickupSupplier: {
+              select: {
+                address: true,
+                latitude: true,
+                longitude: true,
+              },
+            },
+          },
         },
       },
     });
@@ -1369,8 +2377,11 @@ export class ShipmentsService {
     const last = ordered[ordered.length - 1]!;
 
     if (ordered.length === 1) {
-      const o = sh.origin?.address?.trim();
-      const d = last.location?.address?.trim();
+      const o = await this.resolveOriginRoutePoint(
+        sh.originId,
+        sh.pickupSupplierId,
+      );
+      const d = this.stopRoutePointFromIncluded(last);
       if (o && d) {
         const details = await this.googleMaps.getRouteDetails(o, d);
         if (details) {
@@ -1394,26 +2405,22 @@ export class ShipmentsService {
       return;
     }
 
-    const originRow = await tx.location.findUnique({
-      where: { id: sh.originId },
-      select: { address: true },
-    });
-    const locRows = await tx.location.findMany({
-      where: { id: { in: ordered.map((s) => s.locationId) } },
-    });
+    const originPointRefresh = await this.resolveOriginRoutePoint(
+      sh.originId,
+      sh.pickupSupplierId,
+    );
     const middleAddrs = ordered
       .slice(0, -1)
-      .map((s) => locRows.find((l) => l.id === s.locationId)?.address?.trim())
-      .filter(Boolean) as string[];
-    const lastAddr =
-      locRows.find((l) => l.id === last.locationId)?.address?.trim() ?? '';
+      .map((s) => this.stopRoutePointFromIncluded(s) ?? '');
+    const lastAddr = this.stopRoutePointFromIncluded(last) ?? '';
     if (
-      originRow?.address?.trim() &&
+      originPointRefresh &&
       lastAddr &&
+      middleAddrs.every(Boolean) &&
       middleAddrs.length === ordered.length - 1
     ) {
       const r = await this.googleMaps.getRouteWithWaypoints(
-        originRow.address.trim(),
+        originPointRefresh,
         middleAddrs,
         lastAddr,
         false,

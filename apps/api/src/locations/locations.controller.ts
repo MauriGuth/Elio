@@ -40,6 +40,12 @@ export class LocationsController {
     });
   }
 
+  /** Debe ir antes de @Get(':id') para no capturar «system» como id. */
+  @Get('system/retiro-mercaderia-proveedor')
+  getSystemRetiroMercaderiaProveedor() {
+    return this.locationsService.getSystemRetiroMercaderiaProveedor();
+  }
+
   @Get(':id')
   findById(@Param('id') id: string) {
     return this.locationsService.findById(id);

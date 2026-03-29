@@ -39,15 +39,107 @@ import type { ShipmentStatus } from "@/types"
 
 // ---------- helpers ----------
 
-function routeSegmentsFromShipment(shipment: any): string[] {
-  const o = shipment?.origin?.name || "—"
+function locationNavPoint(loc: any): string | null {
+  if (!loc) return null
+  if (loc.latitude != null && loc.longitude != null) {
+    return `${loc.latitude},${loc.longitude}`
+  }
+  const a = (loc.address || "").trim()
+  return a || null
+}
+
+function supplierNavPoint(ps: any): string | null {
+  if (!ps) return null
+  if (ps.latitude != null && ps.longitude != null) {
+    return `${ps.latitude},${ps.longitude}`
+  }
+  const a = (ps.address || "").trim()
+  return a || null
+}
+
+/** Dirección cargada en el proveedor/local, o coordenadas si no hay calle (como en Google Maps). */
+function addressOrCoords(ent: any): string | undefined {
+  if (!ent) return undefined
+  const a = String(ent.address ?? "").trim()
+  if (a) return a
+  if (ent.latitude != null && ent.longitude != null) {
+    return `${ent.latitude}, ${ent.longitude}`
+  }
+  return undefined
+}
+
+/** Punto de mapa para una parada: domicilio del proveedor si es retiro, si no el local. */
+function stopNavPoint(stop: any): string | null {
+  if (!stop) return null
+  if (stop.pickupSupplier) return supplierNavPoint(stop.pickupSupplier)
+  return locationNavPoint(stop.location)
+}
+
+function stopTitle(stop: any): string {
+  if (!stop) return "—"
+  const n = stop.pickupSupplier?.name?.trim()
+  if (n) return n
+  return stop.location?.name || "—"
+}
+
+/** Una línea para enlaces Maps / descripciones de tramo (incluye domicilio si existe). */
+function stopLabel(stop: any): string {
+  if (!stop) return "—"
+  if (stop.pickupSupplier) {
+    const sub = addressOrCoords(stop.pickupSupplier)
+    return sub ? `${stopTitle(stop)} — ${sub}` : stopTitle(stop)
+  }
+  const n = stop.location?.name || "—"
+  const sub = addressOrCoords(stop.location)
+  return sub ? `${n} — ${sub}` : n
+}
+
+/** Origen real para Maps: proveedor de retiro si aplica, si no el local de origen. */
+function shipmentOriginNavPoint(shipment: any): string | null {
+  const ps = shipment?.pickupSupplier
+  if (ps) {
+    if (ps.latitude != null && ps.longitude != null) {
+      return `${ps.latitude},${ps.longitude}`
+    }
+    const pa = (ps.address || "").trim()
+    if (pa) return pa
+  }
+  return locationNavPoint(shipment?.origin)
+}
+
+type RouteSegmentLine = { line1: string; line2?: string }
+
+function routeSegmentsFromShipment(shipment: any): RouteSegmentLine[] {
+  const out: RouteSegmentLine[] = []
+  let line1 = shipment?.origin?.name || "—"
+  const ps0 = shipment?.pickupSupplier
+  if (ps0?.name?.trim()) {
+    line1 = `${line1} — ${ps0.name.trim()}`
+  }
+  const sub0 = addressOrCoords(ps0) || addressOrCoords(shipment?.origin)
+  out.push(sub0 ? { line1, line2: sub0 } : { line1 })
+
   if (shipment?.isMultiStop && Array.isArray(shipment.stops) && shipment.stops.length > 0) {
     const ordered = [...shipment.stops].sort(
       (a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
     )
-    return [o, ...ordered.map((s: any) => s.location?.name || "—")]
+    for (const s of ordered) {
+      if (s.pickupSupplier) {
+        const n = s.pickupSupplier.name?.trim() || "Proveedor"
+        const sub = addressOrCoords(s.pickupSupplier)
+        out.push(sub ? { line1: n, line2: sub } : { line1: n })
+      } else {
+        const n = s.location?.name || "—"
+        const sub = addressOrCoords(s.location)
+        out.push(sub ? { line1: n, line2: sub } : { line1: n })
+      }
+    }
+    return out
   }
-  return [o, shipment?.destination?.name || "—"]
+  const d1 = shipment?.destination?.name || "—"
+  const d2 = addressOrCoords(shipment?.destination)
+  out.push(d2 ? { line1: d1, line2: d2 } : { line1: d1 })
+  return out
 }
 
 /** Tramo actual en multi-parada: enlace Maps + minutos del leg (API al despachar/reordenar). */
@@ -76,29 +168,29 @@ function getMultiStopActiveLegNavigation(shipment: any): {
   if (!cur.arrivedAt) {
     const fromAddr =
       idx === 0
-        ? shipment.origin?.address?.trim()
-        : ordered[idx - 1]?.location?.address?.trim()
-    const toAddr = cur.location?.address?.trim()
+        ? shipmentOriginNavPoint(shipment)
+        : stopNavPoint(ordered[idx - 1])
+    const toAddr = stopNavPoint(cur)
     if (!fromAddr || !toAddr) return null
     return {
       mapsUrl: `https://www.google.com/maps/dir/?api=1&origin=${enc(fromAddr)}&destination=${enc(toAddr)}&travelmode=driving`,
       estimatedLegMin: cur.legDurationMin ?? null,
       legDescription:
         idx === 0
-          ? `Depósito → ${cur.location?.name ?? "Parada 1"}`
-          : `${ordered[idx - 1]?.location?.name ?? "Parada anterior"} → ${cur.location?.name ?? ""}`,
+          ? `${shipment?.origin?.name ?? "Origen"} → ${stopLabel(cur)}`
+          : `${stopLabel(ordered[idx - 1])} → ${stopLabel(cur)}`,
     }
   }
 
   if (idx < ordered.length - 1) {
     const next = ordered[idx + 1]!
-    const fromAddr = cur.location?.address?.trim()
-    const toAddr = next.location?.address?.trim()
+    const fromAddr = stopNavPoint(cur)
+    const toAddr = stopNavPoint(next)
     if (!fromAddr || !toAddr) return null
     return {
       mapsUrl: `https://www.google.com/maps/dir/?api=1&origin=${enc(fromAddr)}&destination=${enc(toAddr)}&travelmode=driving`,
       estimatedLegMin: next.legDurationMin ?? null,
-      legDescription: `${cur.location?.name ?? ""} → ${next.location?.name ?? ""}`,
+      legDescription: `${stopLabel(cur)} → ${stopLabel(next)}`,
     }
   }
 
@@ -106,7 +198,7 @@ function getMultiStopActiveLegNavigation(shipment: any): {
 }
 
 function multiStopFullRouteMapsUrl(shipment: any): string | null {
-  const o = (shipment?.origin?.address || "").trim()
+  const o = shipmentOriginNavPoint(shipment)
   if (!shipment?.isMultiStop || !Array.isArray(shipment.stops) || shipment.stops.length < 2) {
     return null
   }
@@ -114,13 +206,15 @@ function multiStopFullRouteMapsUrl(shipment: any): string | null {
     (a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
   )
   const last = ordered[ordered.length - 1]
-  const d = (last?.location?.address || shipment.destination?.address || "").trim()
+  const d =
+    stopNavPoint(last) ||
+    locationNavPoint(shipment.destination)
   if (!o || !d) return null
   const mids = ordered
     .slice(0, -1)
-    .map((s: any) => s.location?.address)
-    .filter(Boolean)
-    .map((a: string) => encodeURIComponent(a))
+    .map((s: any) => stopNavPoint(s))
+    .filter((pt): pt is string => Boolean(pt))
+    .map((a) => encodeURIComponent(a))
   const wp = mids.length > 0 ? `&waypoints=${mids.join("%7C")}` : ""
   return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(o)}&destination=${encodeURIComponent(d)}${wp}&travelmode=driving`
 }
@@ -732,7 +826,9 @@ export default function ShipmentDetailPage() {
   const routeSegs = routeSegmentsFromShipment(shipment)
   const showShipmentQr =
     status === "received" || status === "received_with_diff"
-  const qrRouteLine = routeSegs.join(" → ")
+  const qrRouteLine = routeSegs
+    .map((s) => (s.line2 ? `${s.line1} · ${s.line2}` : s.line1))
+    .join(" → ")
 
   // Adapt fields from API response
   const originName = shipment.origin?.name || "—"
@@ -829,12 +925,19 @@ export default function ShipmentDetailPage() {
             </h1>
             <div className="mt-2 flex flex-wrap items-center gap-3">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-                {routeSegs.map((name, idx) => (
-                  <span key={`hdr-${idx}`} className="flex items-center gap-2">
+                {routeSegs.map((seg, idx) => (
+                  <span key={`hdr-${idx}`} className="flex items-start gap-2">
                     {idx > 0 ? (
-                      <ArrowRight className="h-4 w-4 shrink-0 text-gray-400 dark:text-gray-300" />
+                      <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-gray-400 dark:text-gray-300" />
                     ) : null}
-                    <span className="font-medium text-gray-900 dark:text-white">{name}</span>
+                    <span className="flex min-w-0 flex-col gap-0">
+                      <span className="font-medium text-gray-900 dark:text-white">{seg.line1}</span>
+                      {seg.line2 ? (
+                        <span className="text-xs font-normal text-gray-500 dark:text-gray-400">
+                          {seg.line2}
+                        </span>
+                      ) : null}
+                    </span>
                   </span>
                 ))}
               </div>
@@ -1128,12 +1231,13 @@ export default function ShipmentDetailPage() {
               </p>
             )}
             <div className="flex flex-wrap items-center gap-2">
-              {(shipment.origin?.address || shipment.destination?.address) && (
+              {(shipmentOriginNavPoint(shipment) ||
+                locationNavPoint(shipment.destination)) && (
                 <a
                   href={
                     activeMultiLegNav?.mapsUrl ??
                     fullMultiMapsUrl ??
-                    `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(shipment.origin?.address || "")}&destination=${encodeURIComponent(shipment.destination?.address || "")}&travelmode=driving`
+                    `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(shipmentOriginNavPoint(shipment) || "")}&destination=${encodeURIComponent(locationNavPoint(shipment.destination) || "")}&travelmode=driving`
                   }
                   target="_blank"
                   rel="noopener noreferrer"
@@ -1632,6 +1736,7 @@ export default function ShipmentDetailPage() {
                     60000,
                 )
               }
+              const stopAddr = addressOrCoords(stop.pickupSupplier || stop.location)
 
               return (
                 <div
@@ -1670,8 +1775,17 @@ export default function ShipmentDetailPage() {
                         Parada {idx + 1}
                       </p>
                       <p className="text-lg font-semibold text-gray-900 dark:text-white">
-                        {stop.location?.name ?? "—"}
+                        {stopTitle(stop)}
                       </p>
+                      {stopAddr ? (
+                        <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">{stopAddr}</p>
+                      ) : null}
+                      {stop.pickupSupplier ? (
+                        <p className="mt-1 text-xs text-amber-800 dark:text-amber-200/90">
+                          Retiro en proveedor: registrá quién te entrega el pedido y su firma en el control de
+                          recepción.
+                        </p>
+                      ) : null}
                       {travelMin != null && (
                         <p className="mt-1.5 text-sm text-gray-600 dark:text-gray-400">
                           Tiempo desde el punto anterior:{" "}
@@ -1693,7 +1807,7 @@ export default function ShipmentDetailPage() {
                           disabled={actionLoading}
                           className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-600 disabled:opacity-50"
                         >
-                          Llegué a este local
+                          {stop.pickupSupplier ? "Llegué al proveedor" : "Llegué a este local"}
                         </button>
                       )}
                       {canStartControl && (
@@ -1926,14 +2040,26 @@ export default function ShipmentDetailPage() {
                   {inStopReception && status === "reception_control" && (
                     <div className="mt-4 space-y-4 border-t border-gray-200 pt-4 dark:border-gray-600">
                       <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
-                        Datos de recepción
+                        {stop.pickupSupplier
+                          ? "Quién entrega el pedido (proveedor)"
+                          : "Datos de recepción"}
                       </h4>
                       <div>
                         <label htmlFor="received-by-name" className="mb-1 block text-xs font-medium text-gray-600 dark:text-white">
-                          Nombre de quien recibe <span className="text-red-500">*</span>
+                          {stop.pickupSupplier ? (
+                            <>
+                              Nombre de quien entrega <span className="text-red-500">*</span>
+                            </>
+                          ) : (
+                            <>
+                              Nombre de quien recibe <span className="text-red-500">*</span>
+                            </>
+                          )}
                         </label>
                         <p className="mb-2 text-[10px] text-gray-500 dark:text-gray-400">
-                          Obligatorio para registrar la entrega
+                          {stop.pickupSupplier
+                            ? "Obligatorio para registrar la entrega desde el proveedor"
+                            : "Obligatorio para registrar la entrega"}
                         </p>
                         <input
                           id="received-by-name"
@@ -1950,7 +2076,9 @@ export default function ShipmentDetailPage() {
                           Firma <span className="text-red-500">*</span>
                         </label>
                         <p className="mb-2 text-[10px] text-gray-500 dark:text-gray-400">
-                          Obligatoria para registrar la entrega
+                          {stop.pickupSupplier
+                            ? "Firma de quien te entrega la mercadería"
+                            : "Obligatoria para registrar la entrega"}
                         </p>
                         <div className="flex flex-col gap-2">
                           <canvas
@@ -1975,7 +2103,9 @@ export default function ShipmentDetailPage() {
                       </div>
                       <div>
                         <label htmlFor="reception-notes" className="mb-1 block text-xs font-medium text-gray-600 dark:text-white">
-                          ¿Faltó algo o llegó algo roto/dañado? (opcional)
+                          {stop.pickupSupplier
+                            ? "Observaciones del retiro (opcional)"
+                            : "¿Faltó algo o llegó algo roto/dañado? (opcional)"}
                         </label>
                         <textarea
                           id="reception-notes"
@@ -1996,7 +2126,8 @@ export default function ShipmentDetailPage() {
                         disabled={actionLoading || !hasSignature || !receivedByName.trim()}
                         className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
                       >
-                        Confirmar recepción de {stop.location?.name ?? "esta parada"}
+                        Confirmar{" "}
+                        {stop.pickupSupplier ? "retiro en proveedor" : "recepción"} — {stopLabel(stop)}
                       </button>
                     </div>
                   )}
@@ -2019,7 +2150,7 @@ export default function ShipmentDetailPage() {
                           <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">Firma</p>
                           <img
                             src={stop.receivedBySignature}
-                            alt={`Firma · ${stop.location?.name ?? "parada"}`}
+                            alt={`Firma · ${stopLabel(stop)}`}
                             className="max-h-28 max-w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white object-contain p-1"
                           />
                         </div>
@@ -2189,7 +2320,7 @@ export default function ShipmentDetailPage() {
             type="button"
             onClick={handleCancel}
             disabled={actionLoading}
-            className="inline-flex items-center gap-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-5 py-2.5 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-900 shadow-sm transition-colors hover:bg-gray-50 disabled:opacity-50 dark:border-gray-500 dark:bg-gray-700 dark:text-gray-50 dark:hover:bg-gray-600"
           >
             Cancelar Envío
           </button>

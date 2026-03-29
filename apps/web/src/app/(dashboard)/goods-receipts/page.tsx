@@ -67,6 +67,29 @@ const allStatuses: { value: ReceiptStatus | ""; label: string }[] = [
   { value: "cancelled", label: "Cancelado" },
 ]
 
+/** Igual que el texto que genera `purchase-orders.service` al crear el ingreso desde OC. */
+const DEFAULT_PO_RECEIPT_NOTE_RE =
+  /^Generado desde orden de compra\s+PO-[\w-]+\s+\(pedido realizado\)\.\s*Controlar cuando llegue la mercadería al depósito\.?\s*$/i
+
+/** Notas u observaciones a mostrar: no vacío y no solo el mensaje automático de la OC. */
+function visibleGoodsReceiptNotes(notes: string | null | undefined): string | null {
+  const raw = (notes ?? "").trim()
+  if (!raw) return null
+  if (DEFAULT_PO_RECEIPT_NOTE_RE.test(raw)) return null
+  const rest = raw
+    .replace(
+      /^\s*Generado desde orden de compra\s+PO-[\w-]+\s+\(pedido realizado\)\.\s*Controlar cuando llegue la mercadería al depósito\.?\s*/i,
+      "",
+    )
+    .trim()
+  return rest.length > 0 ? rest : null
+}
+
+/** Texto inicial del campo opcional de observaciones al recibir (sin rellenar con el mensaje automático de la OC). */
+function userEditableGoodsReceiptNotes(notes: string | null | undefined): string {
+  return visibleGoodsReceiptNotes(notes) ?? ""
+}
+
 // ---------- skeleton ----------
 
 function TableSkeleton() {
@@ -232,7 +255,7 @@ export default function GoodsReceiptsPage() {
     if (viewReceipt) {
       setEditReceivedByName(viewReceipt.receivedByName ?? "")
       setEditReceivedBySignature(viewReceipt.receivedBySignature ?? "")
-      setEditReceptionNotes(viewReceipt.notes ?? "")
+      setEditReceptionNotes(userEditableGoodsReceiptNotes(viewReceipt.notes))
     }
   }, [viewReceipt?.id, viewReceipt?.receivedByName, viewReceipt?.receivedBySignature, viewReceipt?.notes])
 
@@ -1084,17 +1107,6 @@ export default function GoodsReceiptsPage() {
                     </div>
                   </div>
 
-                  {viewReceipt.notes && (
-                    <div>
-                      <p className="text-xs font-medium uppercase tracking-wider text-gray-400 dark:text-white">
-                        Notas
-                      </p>
-                      <p className="mt-0.5 text-sm text-gray-700 dark:text-white">
-                        {viewReceipt.notes}
-                      </p>
-                    </div>
-                  )}
-
                   <div className="space-y-4">
                     <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
                       Datos de recepción
@@ -1207,12 +1219,18 @@ export default function GoodsReceiptsPage() {
                             </p>
                           )}
                         </div>
-                        {viewReceipt.notes && (
-                          <div className="sm:col-span-2">
-                            <p className="text-xs text-gray-400 dark:text-gray-500">Observaciones</p>
-                            <p className="text-sm text-gray-900 dark:text-white">{viewReceipt.notes}</p>
-                          </div>
-                        )}
+                        {(() => {
+                          const obs = visibleGoodsReceiptNotes(viewReceipt.notes)
+                          if (!obs) return null
+                          return (
+                            <div className="sm:col-span-2">
+                              <p className="text-xs text-gray-400 dark:text-gray-500">Observaciones</p>
+                              <p className="text-sm whitespace-pre-wrap text-gray-900 dark:text-white">
+                                {obs}
+                              </p>
+                            </div>
+                          )
+                        })()}
                       </div>
                     )}
                   </div>

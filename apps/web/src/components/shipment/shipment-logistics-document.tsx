@@ -12,19 +12,100 @@ import {
 } from "lucide-react"
 import { cn, formatDate, formatNumber, formatTime } from "@/lib/utils"
 
-function routeSegmentsFromShipment(shipment: any): string[] {
-  const o = shipment?.origin?.name || "—"
+function locationNavPoint(loc: any): string | null {
+  if (!loc) return null
+  if (loc.latitude != null && loc.longitude != null) {
+    return `${loc.latitude},${loc.longitude}`
+  }
+  const a = (loc.address || "").trim()
+  return a || null
+}
+
+function shipmentOriginNavPoint(shipment: any): string | null {
+  const ps = shipment?.pickupSupplier
+  if (ps) {
+    if (ps.latitude != null && ps.longitude != null) {
+      return `${ps.latitude},${ps.longitude}`
+    }
+    const pa = (ps.address || "").trim()
+    if (pa) return pa
+  }
+  return locationNavPoint(shipment?.origin)
+}
+
+function addressOrCoords(ent: any): string | undefined {
+  if (!ent) return undefined
+  const a = String(ent.address ?? "").trim()
+  if (a) return a
+  if (ent.latitude != null && ent.longitude != null) {
+    return `${ent.latitude}, ${ent.longitude}`
+  }
+  return undefined
+}
+
+function stopNavPoint(stop: any): string | null {
+  if (!stop) return null
+  if (stop.pickupSupplier) {
+    const ps = stop.pickupSupplier
+    if (ps.latitude != null && ps.longitude != null) {
+      return `${ps.latitude},${ps.longitude}`
+    }
+    const pa = (ps.address || "").trim()
+    if (pa) return pa
+  }
+  return locationNavPoint(stop.location)
+}
+
+function stopTitleDoc(stop: any): string {
+  if (!stop) return "—"
+  const n = stop.pickupSupplier?.name?.trim()
+  if (n) return n
+  return stop.location?.name || "—"
+}
+
+function stopSubtitleDoc(stop: any): string | undefined {
+  if (!stop) return undefined
+  if (stop.pickupSupplier) return addressOrCoords(stop.pickupSupplier)
+  return addressOrCoords(stop.location)
+}
+
+type RouteSegLine = { line1: string; line2?: string }
+
+function routeSegmentsFromShipment(shipment: any): RouteSegLine[] {
+  const out: RouteSegLine[] = []
+  let line1 = shipment?.origin?.name || "—"
+  const ps0 = shipment?.pickupSupplier
+  if (ps0?.name?.trim()) {
+    line1 = `${line1} — ${ps0.name.trim()}`
+  }
+  const sub0 = addressOrCoords(ps0) || addressOrCoords(shipment?.origin)
+  out.push(sub0 ? { line1, line2: sub0 } : { line1 })
+
   if (shipment?.isMultiStop && Array.isArray(shipment.stops) && shipment.stops.length > 0) {
     const ordered = [...shipment.stops].sort(
       (a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
     )
-    return [o, ...ordered.map((s: any) => s.location?.name || "—")]
+    for (const s of ordered) {
+      if (s.pickupSupplier) {
+        const n = s.pickupSupplier.name?.trim() || "Proveedor"
+        const sub = addressOrCoords(s.pickupSupplier)
+        out.push(sub ? { line1: n, line2: sub } : { line1: n })
+      } else {
+        const n = s.location?.name || "—"
+        const sub = addressOrCoords(s.location)
+        out.push(sub ? { line1: n, line2: sub } : { line1: n })
+      }
+    }
+    return out
   }
-  return [o, shipment?.destination?.name || "—"]
+  const d1 = shipment?.destination?.name || "—"
+  const d2 = addressOrCoords(shipment?.destination)
+  out.push(d2 ? { line1: d1, line2: d2 } : { line1: d1 })
+  return out
 }
 
 function multiStopFullRouteMapsUrl(shipment: any): string | null {
-  const o = (shipment?.origin?.address || "").trim()
+  const o = shipmentOriginNavPoint(shipment)
   if (!shipment?.isMultiStop || !Array.isArray(shipment.stops) || shipment.stops.length < 2) {
     return null
   }
@@ -32,15 +113,21 @@ function multiStopFullRouteMapsUrl(shipment: any): string | null {
     (a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
   )
   const last = ordered[ordered.length - 1]
-  const d = (last?.location?.address || shipment.destination?.address || "").trim()
+  const d = stopNavPoint(last) || locationNavPoint(shipment.destination)
   if (!o || !d) return null
   const mids = ordered
     .slice(0, -1)
-    .map((s: any) => s.location?.address)
-    .filter(Boolean)
-    .map((a: string) => encodeURIComponent(a))
+    .map((s: any) => stopNavPoint(s))
+    .filter((pt): pt is string => Boolean(pt))
+    .map((a) => encodeURIComponent(a))
   const wp = mids.length > 0 ? `&waypoints=${mids.join("%7C")}` : ""
   return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(o)}&destination=${encodeURIComponent(d)}${wp}&travelmode=driving`
+}
+
+function singleLegMapsUrl(shipment: any): string {
+  const o = shipmentOriginNavPoint(shipment) || ""
+  const d = locationNavPoint(shipment?.destination) || ""
+  return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(o)}&destination=${encodeURIComponent(d)}&travelmode=driving`
 }
 
 const statusConfig: Record<
@@ -127,6 +214,11 @@ export function ShipmentLogisticsDocument({
   const isMultiStop = !!shipment.isMultiStop
   const routeSegs = routeSegmentsFromShipment(shipment)
   const fullMultiMapsUrl = isMultiStop ? multiStopFullRouteMapsUrl(shipment) : null
+  const mapsHref = fullMultiMapsUrl ?? singleLegMapsUrl(shipment)
+  const mapsLinkOk = Boolean(
+    fullMultiMapsUrl ||
+      (shipmentOriginNavPoint(shipment) && locationNavPoint(shipment.destination)),
+  )
 
   const createdByName =
     shipment.createdBy?.firstName && shipment.createdBy?.lastName
@@ -135,10 +227,6 @@ export function ShipmentLogisticsDocument({
 
   const items = mapShipmentItems(shipment)
 
-  const mapsHref =
-    fullMultiMapsUrl ??
-    `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(shipment.origin?.address || "")}&destination=${encodeURIComponent(shipment.destination?.address || "")}&travelmode=driving`
-
   return (
     <div className={cn("space-y-6", className)}>
       {/* Header */}
@@ -146,10 +234,15 @@ export function ShipmentLogisticsDocument({
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{shipment.shipmentNumber}</h1>
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-            {routeSegs.map((name, idx) => (
+            {routeSegs.map((seg, idx) => (
               <span key={`r-${idx}`} className="flex items-center gap-2">
                 {idx > 0 ? <ArrowRight className="h-4 w-4 shrink-0 text-gray-400 dark:text-gray-300" /> : null}
-                <span className="font-medium text-gray-900 dark:text-white">{name}</span>
+                <span className="flex flex-col">
+                  <span className="font-medium text-gray-900 dark:text-white">{seg.line1}</span>
+                  {seg.line2 ? (
+                    <span className="text-xs font-normal text-gray-500 dark:text-gray-400">{seg.line2}</span>
+                  ) : null}
+                </span>
               </span>
             ))}
           </div>
@@ -349,8 +442,7 @@ export function ShipmentLogisticsDocument({
       {/* Ruta */}
       {(shipment.routePolyline ||
         shipment.estimatedDurationMin != null ||
-        shipment.origin?.address ||
-        shipment.destination?.address) && (
+        mapsLinkOk) && (
         <div className="print:break-inside-avoid rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-800">
           <h3 className="mb-3 text-sm font-semibold text-gray-900 dark:text-white">Ruta</h3>
           <div className="flex flex-wrap items-center gap-3">
@@ -364,7 +456,7 @@ export function ShipmentLogisticsDocument({
                 Tiempo estimado: {shipment.estimatedDurationMin} min
               </span>
             )}
-            {(shipment.origin?.address || shipment.destination?.address) && (
+            {mapsLinkOk && (
               <a
                 href={mapsHref}
                 target="_blank"
@@ -432,9 +524,10 @@ export function ShipmentLogisticsDocument({
                     <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
                       Parada {idx + 1}
                     </p>
-                    <p className="text-lg font-semibold text-gray-900 dark:text-white">
-                      {stop.location?.name ?? "—"}
-                    </p>
+                    <p className="text-lg font-semibold text-gray-900 dark:text-white">{stopTitleDoc(stop)}</p>
+                    {stopSubtitleDoc(stop) ? (
+                      <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">{stopSubtitleDoc(stop)}</p>
+                    ) : null}
                     {travelMin != null && (
                       <p className="mt-1.5 text-sm text-gray-600 dark:text-gray-400">
                         Tiempo desde el punto anterior:{" "}

@@ -13,6 +13,7 @@ const locationTypeOptions: { value: string; label: string }[] = [
   { value: "RESTAURANT", label: "Restaurante" },
   { value: "EXPRESS", label: "Express" },
   { value: "HOTEL", label: "Hotel" },
+  { value: "SUPPLIER_PICKUP", label: "Retiro proveedor / logística" },
 ]
 
 export default function NewLocationPage() {

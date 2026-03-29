@@ -679,7 +679,6 @@ export class PurchaseOrdersService {
           totalAmount: Math.round(totalAmount * 100) / 100,
           userId,
           purchaseOrderId: po.id,
-          notes: `Generado desde orden de compra ${po.orderNumber} (pedido realizado). Controlar cuando llegue la mercadería al depósito.`,
           items: {
             create: po.items.map((item) => ({
               productId: item.productId,

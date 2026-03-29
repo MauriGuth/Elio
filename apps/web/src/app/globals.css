@@ -86,6 +86,17 @@ input:-webkit-autofill:active {
   opacity: 1;
 }
 
+/* Modal «Equipo de cocina»: UI oscura aunque <html> no tenga .dark — el global input/placeholder lo dejaba ilegible */
+.kitchen-equipo-modal input.kitchen-equipo-search-input {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+  caret-color: #ffffff;
+}
+.kitchen-equipo-modal input.kitchen-equipo-search-input::placeholder {
+  color: #e5e7eb !important;
+  opacity: 1 !important;
+}
+
 /* Excepción: página Configuración — refuerzo de bordes en bandejas oscuras */
 .dark .settings-page input,
 .dark .settings-page select,

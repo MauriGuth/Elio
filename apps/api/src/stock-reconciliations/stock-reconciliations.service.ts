@@ -10,6 +10,7 @@ export class StockReconciliationsService {
 
   /**
    * Productos con stock en la ubicación para conteo (solo de este local; sin cantidad para no influir).
+   * Excluye productos con `consumeRecipeOnSale` (elaborados al momento: el stock real se lleva por insumos).
    * Si shiftLabel === 'afternoon', devuelve solo los productos cuyas familias corresponden al día de la semana,
    * rotando en 7 días para cubrir todas las familias del local.
    */
@@ -21,7 +22,10 @@ export class StockReconciliationsService {
       throw new NotFoundException(`Location with ID "${locationId}" not found`);
     }
     const levels = await this.prisma.stockLevel.findMany({
-      where: { locationId },
+      where: {
+        locationId,
+        product: { consumeRecipeOnSale: false },
+      },
       include: {
         product: {
           select: {
@@ -98,6 +102,16 @@ export class StockReconciliationsService {
 
     const locationId = reconciliation.locationId;
     const productIds = dto.items.map((i) => i.productId);
+    const recipeOnSaleProducts = await this.prisma.product.findMany({
+      where: { id: { in: productIds }, consumeRecipeOnSale: true },
+      select: { id: true, name: true },
+    });
+    if (recipeOnSaleProducts.length > 0) {
+      throw new BadRequestException(
+        'No se puede contar en micro balance productos elaborados al momento (consumo por receta). Quitá: ' +
+          recipeOnSaleProducts.map((p) => p.name || p.id).join(', '),
+      );
+    }
     const countedByProduct = new Map(dto.items.map((i) => [i.productId, i.countedQuantity]));
 
     const currentLevels = await this.prisma.stockLevel.findMany({
@@ -336,11 +350,16 @@ export class StockReconciliationsService {
     return this.create({ locationId, shiftLabel }, userId);
   }
 
-  /** Indica si ya se envió un micro balance (turno tarde) para este local hoy, o si no hay productos con stock (no aplica). */
+  /** Indica si ya se envió un micro balance (turno tarde) para este local hoy, o si no hay filas de stock contables (no aplica). */
   async hasAfternoonSubmittedToday(locationId: string): Promise<boolean> {
-    const levels = await this.prisma.stockLevel.count({ where: { locationId } });
-    if (levels === 0) {
-      return true; // Sin productos con stock, no hay nada que contar → permitir cierre
+    const countableLevels = await this.prisma.stockLevel.count({
+      where: {
+        locationId,
+        product: { consumeRecipeOnSale: false },
+      },
+    });
+    if (countableLevels === 0) {
+      return true; // Solo elaborados al momento / sin stock contable → no exige micro balance
     }
     const startOfDay = new Date();
     startOfDay.setHours(0, 0, 0, 0);

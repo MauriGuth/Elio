@@ -100,6 +100,7 @@ const THERMAL_RECEIPT_PRINT_CSS = `
   .thermal-print-col-total { width: 18mm !important; text-align: right !important; font-variant-numeric: tabular-nums !important; }
   .thermal-print-discount { font-size: 8.5pt !important; margin: 4px 0 0 !important; }
   .thermal-print-total { font-size: 10.5pt !important; font-weight: 700 !important; margin: 6px 0 0 !important; }
+  .thermal-print-tip { font-size: 9pt !important; font-weight: 600 !important; margin: 4px 0 0 !important; color: #000 !important; }
   .thermal-print-pay { font-size: 9pt !important; margin: 2px 0 0 !important; }
   .thermal-print-foot { font-size: 7.5pt !important; color: #333 !important; margin: 8px 0 0 !important; }
   .no-print { display: none !important; }
@@ -321,10 +322,42 @@ function isSpecialtyCoffeeModifierGroupPos(g: { name?: string }): boolean {
   )
 }
 
+/** Misma idea que `modifierGroupNameIsMilkType` en la API (clasico-milk-stock.helper). */
+function isMilkTypeModifierGroupPos(g: { name?: string }): boolean {
+  const n = normalizeModifierLabelPos(g.name || "")
+  if (n.includes("tipo de leche")) return true
+  if (/\btipo leche\b/.test(n)) return true
+  if (/^leche\b/.test(n)) return true
+  return false
+}
+
 /** Variedad que más se vende — selección inicial en POS (no cambia el orden visual de la lista). */
 const DEFAULT_SPECIALTY_COFFEE_OPTION_NORM = normalizeModifierLabelPos(
   "Brasil Santos Bourbon"
 )
+
+/** Leche de vaca por defecto (no la primera opción del grupo, p. ej. vegetal). */
+function pickDefaultMilkTypeOptionIdPos(rawOpts: any[]): string | undefined {
+  const opts = sortModifierOptionsPos(rawOpts)
+  if (opts.length === 0) return undefined
+  const normOpt = (o: any) => normalizeModifierLabelPos(String(o.label ?? ""))
+  const exactOrder = [
+    normalizeModifierLabelPos("Leche de vaca"),
+    normalizeModifierLabelPos("Leche entera"),
+  ]
+  for (const target of exactOrder) {
+    const hit = opts.find((o) => normOpt(o) === target)
+    if (hit?.id) return hit.id as string
+  }
+  const partial = opts.find((o) => {
+    const on = normOpt(o)
+    if (on.includes("vegetal") || on.includes("almendra") || on.includes("avena")) return false
+    if (on.includes("soja") || on.includes("coco")) return false
+    return on.includes("vaca")
+  })
+  if (partial?.id) return partial.id as string
+  return opts[0].id as string
+}
 
 function pickDefaultOptionIdForGroupPos(
   g: any,
@@ -339,6 +372,9 @@ function pickDefaultOptionIdForGroupPos(
         DEFAULT_SPECIALTY_COFFEE_OPTION_NORM
     )
     if (preferred?.id) return preferred.id as string
+  }
+  if (isMilkTypeModifierGroupPos(g)) {
+    return pickDefaultMilkTypeOptionIdPos(rawOpts)
   }
   return opts[0].id as string
 }
@@ -3370,6 +3406,12 @@ export default function TableOrderPage() {
               <p className="thermal-print-total mt-3 text-base font-bold text-gray-900">
                 Total: {formatCurrency(Math.max(0, orderTotal))}
               </p>
+              <p className="thermal-print-tip mt-2 text-sm font-medium text-gray-800">
+                Propina sugerida (10%):{" "}
+                {formatCurrency(
+                  Math.round(Math.max(0, orderTotal) * 10) / 100,
+                )}
+              </p>
               <p className="thermal-print-foot mt-4 text-xs text-gray-500">Documento de verificación. No es ticket de pago.</p>
               <p className="no-print mt-2 text-xs text-gray-500">Se abrió el cuadro de impresión. Elegí la impresora y confirmá.</p>
               <div className="no-print mt-4 flex gap-3">
@@ -4036,7 +4078,9 @@ export default function TableOrderPage() {
                         {customerId
                           ? (() => {
                               const c = runningAccountCustomers.find((x: any) => x.id === customerId)
-                              return c ? `${c.name}${c.creditLimit != null ? ` (límite $${Number(c.creditLimit).toLocaleString("es-AR")})` : ""}` : "Elegir cliente"
+                              return c
+                                ? `${c.name}${c.accountKind === "employee" ? " · Empleado" : ""}${c.creditLimit != null ? ` (límite $${Number(c.creditLimit).toLocaleString("es-AR")})` : ""}`
+                                : "Elegir cliente"
                             })()
                           : "Elegir cliente"}
                       </span>
@@ -4075,7 +4119,9 @@ export default function TableOrderPage() {
                                     customerId === c.id ? "bg-blue-100 font-medium text-blue-900" : "text-gray-800 hover:bg-blue-50"
                                   )}
                                 >
-                                  {c.name} {c.creditLimit != null ? `(límite $${Number(c.creditLimit).toLocaleString("es-AR")})` : ""}
+                                  {c.name}
+                                  {c.accountKind === "employee" ? " · Empleado" : ""}
+                                  {c.creditLimit != null ? ` (límite $${Number(c.creditLimit).toLocaleString("es-AR")})` : ""}
                                 </button>
                               </li>
                             ))

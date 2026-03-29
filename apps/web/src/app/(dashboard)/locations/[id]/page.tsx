@@ -122,6 +122,14 @@ const typeConfig: Record<
     darkBg: "dark:bg-slate-900/50",
     darkText: "dark:text-slate-300",
   },
+  SUPPLIER_PICKUP: {
+    label: "Retiro proveedor",
+    icon: <Truck className="h-3.5 w-3.5" />,
+    bg: "bg-emerald-50",
+    text: "text-emerald-800",
+    darkBg: "dark:bg-emerald-950/50",
+    darkText: "dark:text-emerald-200",
+  },
 }
 
 const movementTypeLabels: Record<string, string> = {
@@ -141,6 +149,7 @@ const locationTypeOptions: { value: string; label: string }[] = [
   { value: "RESTAURANT", label: "Restaurante" },
   { value: "EXPRESS", label: "Express" },
   { value: "HOTEL", label: "Hotel" },
+  { value: "SUPPLIER_PICKUP", label: "Retiro proveedor / logística" },
 ]
 
 // ---------- main page ----------

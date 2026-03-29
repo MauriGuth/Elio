@@ -45,6 +45,8 @@ interface Supplier {
   contactPhone?: string
   contactEmail?: string
   address?: string
+  latitude?: number | null
+  longitude?: number | null
   paymentTerms?: string
   paymentMethod?: string | null
   notes?: string
@@ -69,6 +71,8 @@ interface SupplierForm {
   contactPhone: string
   contactEmail: string
   address: string
+  latitude: string
+  longitude: string
   paymentTerms: string
   paymentMethod: string
   notes: string
@@ -89,6 +93,8 @@ const emptyForm: SupplierForm = {
   contactPhone: "",
   contactEmail: "",
   address: "",
+  latitude: "",
+  longitude: "",
   paymentTerms: "",
   paymentMethod: "",
   notes: "",
@@ -509,6 +515,8 @@ export default function SuppliersPage() {
       contactPhone: supplier.contactPhone || "",
       contactEmail: supplier.contactEmail || "",
       address: supplier.address || "",
+      latitude: supplier.latitude != null ? String(supplier.latitude) : "",
+      longitude: supplier.longitude != null ? String(supplier.longitude) : "",
       paymentTerms: supplier.paymentTerms || "",
       paymentMethod: supplier.paymentMethod ?? "",
       notes: supplier.notes || "",
@@ -653,6 +661,8 @@ export default function SuppliersPage() {
         contactPhone: s.contactPhone || "",
         contactEmail: s.contactEmail || "",
         address: s.address || "",
+        latitude: s.latitude != null ? String(s.latitude) : "",
+        longitude: s.longitude != null ? String(s.longitude) : "",
         paymentTerms: s.paymentTerms || "",
         paymentMethod: s.paymentMethod ?? "",
         notes: s.notes || "",
@@ -678,7 +688,7 @@ export default function SuppliersPage() {
 
     setSaving(true)
     try {
-      const payload: Record<string, string | undefined> = {
+      const payload: Record<string, string | number | undefined> = {
         name: form.name.trim(),
         legalName: form.legalName.trim() || undefined,
         taxId: form.taxId.trim() || undefined,
@@ -690,6 +700,16 @@ export default function SuppliersPage() {
         paymentTerms: form.paymentTerms.trim() || undefined,
         paymentMethod: form.paymentMethod || undefined,
         notes: form.notes.trim() || undefined,
+      }
+      const latRaw = form.latitude.trim().replace(",", ".")
+      const lngRaw = form.longitude.trim().replace(",", ".")
+      if (latRaw) {
+        const lat = parseFloat(latRaw)
+        if (!Number.isNaN(lat)) payload.latitude = lat
+      }
+      if (lngRaw) {
+        const lng = parseFloat(lngRaw)
+        if (!Number.isNaN(lng)) payload.longitude = lng
       }
 
       if (editingSupplier) {
@@ -1372,9 +1392,29 @@ export default function SuppliersPage() {
                   label="Dirección"
                   value={form.address}
                   onChange={(v) => updateForm("address", v)}
-                  placeholder="Dirección del proveedor"
+                  placeholder="Dirección del proveedor (para Google Maps / retiro logística)"
                 />
               </div>
+              <div>
+                <FormField
+                  label="Latitud"
+                  value={form.latitude}
+                  onChange={(v) => updateForm("latitude", v)}
+                  placeholder="-34.6037"
+                />
+              </div>
+              <div>
+                <FormField
+                  label="Longitud"
+                  value={form.longitude}
+                  onChange={(v) => updateForm("longitude", v)}
+                  placeholder="-58.3816"
+                />
+              </div>
+              <p className="sm:col-span-2 text-xs text-gray-500 dark:text-gray-400">
+                Si cargás latitud y longitud, las rutas de logística las usan como en Locales (más preciso
+                que solo texto).
+              </p>
             </div>
           </div>
 
@@ -1647,10 +1687,17 @@ export default function SuppliersPage() {
                   label="Dirección"
                   value={detailSupplier.address}
                 />
-                {detailSupplier.address?.trim() && (
+                {(detailSupplier.address?.trim() ||
+                  (detailSupplier.latitude != null &&
+                    detailSupplier.longitude != null)) && (
                   <div className="mt-1 flex items-center gap-2">
                     <a
-                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(detailSupplier.address.trim())}`}
+                      href={
+                        detailSupplier.latitude != null &&
+                        detailSupplier.longitude != null
+                          ? `https://www.google.com/maps/search/?api=1&query=${detailSupplier.latitude},${detailSupplier.longitude}`
+                          : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(detailSupplier.address!.trim())}`
+                      }
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline"

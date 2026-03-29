@@ -1,9 +1,15 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
+import { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { ordersApi } from "@/lib/api/orders"
 import { authApi } from "@/lib/api/auth"
 import { getLocationKey } from "@/lib/api"
+import { usersApi } from "@/lib/api/users"
+import {
+  loadKitchenEquipoIds,
+  saveKitchenEquipoIds,
+} from "@/lib/kitchen-equipo"
+import { sileo } from "sileo"
 import { cn } from "@/lib/utils"
 import {
   orderIsUrgent,
@@ -30,6 +36,7 @@ import {
   VolumeX,
   Sparkles,
   X,
+  Users,
 } from "lucide-react"
 
 /* ── Sector config: cocina solo muestra estos sectores ── */
@@ -285,6 +292,7 @@ function KitchenOrderCard({
    ══════════════════════════════════════ */
 export default function KitchenPage() {
   const [locationId, setLocationId] = useState("")
+  const [locationName, setLocationName] = useState("")
   const [orders, setOrders] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -303,6 +311,100 @@ export default function KitchenPage() {
   const voiceUnlockedRef = useRef(false)
   const isSpeakingRef = useRef(false)
 
+  /* ── equipo cocina (rol Cocina + local; mismo criterio que /kitchen/display) ── */
+  const [showEquipoModal, setShowEquipoModal] = useState(false)
+  const [kitchenStaffForLocation, setKitchenStaffForLocation] = useState<any[]>([])
+  const [equipoDraftIds, setEquipoDraftIds] = useState<string[]>([])
+  const [equipoModalLoading, setEquipoModalLoading] = useState(false)
+  const [equipoModalError, setEquipoModalError] = useState("")
+  const [equipoSearch, setEquipoSearch] = useState("")
+  const [equipoStorageTick, setEquipoStorageTick] = useState(0)
+
+  const fetchKitchenStaffForLocation = useCallback(async (): Promise<boolean> => {
+    if (!locationId) return false
+    try {
+      const res = await usersApi.getAll({
+        role: "KITCHEN",
+        locationId,
+        isActive: true,
+        limit: 100,
+        page: 1,
+      })
+      const list = Array.isArray(res) ? res : res?.data ?? []
+      const filtered = list.filter(
+        (u: any) => u.isActive !== false && u.role === "KITCHEN",
+      )
+      filtered.sort((a: any, b: any) => {
+        const na =
+          `${a.firstName ?? ""} ${a.lastName ?? ""}`.trim() || a.email || ""
+        const nb =
+          `${b.firstName ?? ""} ${b.lastName ?? ""}`.trim() || b.email || ""
+        return na.localeCompare(nb, "es", { sensitivity: "base" })
+      })
+      setKitchenStaffForLocation(filtered)
+      return true
+    } catch {
+      setKitchenStaffForLocation([])
+      return false
+    }
+  }, [locationId])
+
+  useEffect(() => {
+    void fetchKitchenStaffForLocation()
+  }, [fetchKitchenStaffForLocation])
+
+  const equipoMemberNames = useMemo(() => {
+    if (!locationId) return []
+    const saved = loadKitchenEquipoIds(locationId)
+    const byId = new Map(kitchenStaffForLocation.map((u: any) => [u.id, u]))
+    return saved
+      .map((id) => {
+        const u = byId.get(id)
+        if (!u) return null
+        const n = `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim()
+        return n || u.email || null
+      })
+      .filter(Boolean) as string[]
+  }, [locationId, kitchenStaffForLocation, equipoStorageTick])
+
+  const openEquipoModal = () => {
+    if (!locationId) return
+    setEquipoDraftIds(loadKitchenEquipoIds(locationId))
+    setEquipoSearch("")
+    setEquipoModalError("")
+    setShowEquipoModal(true)
+    setEquipoModalLoading(true)
+    void fetchKitchenStaffForLocation().then((ok) => {
+      if (!ok) setEquipoModalError("No se pudo cargar la lista de cocina.")
+      setEquipoModalLoading(false)
+    })
+  }
+
+  const kitchenStaffFiltered = useMemo(() => {
+    const q = equipoSearch.trim().toLowerCase()
+    if (!q) return kitchenStaffForLocation
+    return kitchenStaffForLocation.filter((u: any) => {
+      const n = `${u.firstName ?? ""} ${u.lastName ?? ""}`.toLowerCase()
+      return n.includes(q) || String(u.email ?? "").toLowerCase().includes(q)
+    })
+  }, [kitchenStaffForLocation, equipoSearch])
+
+  const toggleEquipoDraft = (userId: string) => {
+    setEquipoDraftIds((prev) =>
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId],
+    )
+  }
+
+  const saveEquipoAndClose = () => {
+    if (!locationId) return
+    const allowed = new Set(kitchenStaffForLocation.map((u: any) => u.id))
+    const next = equipoDraftIds.filter((id) => allowed.has(id))
+    saveKitchenEquipoIds(locationId, next)
+    setEquipoStorageTick((t) => t + 1)
+    setShowEquipoModal(false)
+    sileo.success({ title: "Equipo actualizado" })
+  }
+
   /* ── resolve location ── */
   useEffect(() => {
     const user = authApi.getStoredUser()
@@ -317,7 +419,10 @@ export default function KitchenPage() {
           return null
         }
       })()
-    if (loc?.id) setLocationId(loc.id)
+    if (loc?.id) {
+      setLocationId(loc.id)
+      setLocationName(loc.name || "Local")
+    }
   }, [])
 
   const processAnnouncementQueue = useCallback(() => {
@@ -556,6 +661,14 @@ export default function KitchenPage() {
               Nuevo pedido
             </span>
           )}
+          {equipoMemberNames.length > 0 && (
+            <span
+              className="hidden max-w-[min(280px,40vw)] truncate text-xs text-gray-400 sm:inline"
+              title={equipoMemberNames.join(", ")}
+            >
+              Equipo: {equipoMemberNames.join(", ")}
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-3">
@@ -577,6 +690,16 @@ export default function KitchenPage() {
               </button>
             ))}
           </div>
+
+          <button
+            type="button"
+            onClick={openEquipoModal}
+            title="Quiénes están en cocina en este turno"
+            className="flex items-center gap-1.5 rounded-lg bg-gray-800 px-3 py-1.5 text-xs font-medium text-gray-300 transition-colors hover:bg-gray-700 hover:text-white"
+          >
+            <Users className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Equipo</span>
+          </button>
 
           {/* Voice toggle — al activar, desbloquear audio (necesario en móvil) */}
           <button
@@ -620,6 +743,120 @@ export default function KitchenPage() {
           </button>
         </div>
       </div>
+
+      {showEquipoModal && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="pos-equipo-modal-title"
+            className="kitchen-equipo-modal flex max-h-[85vh] w-full max-w-md flex-col rounded-2xl border border-gray-700 bg-gray-900 shadow-2xl"
+          >
+            <div className="flex items-start justify-between gap-2 border-b border-gray-800 px-4 py-3">
+              <div>
+                <h2 id="pos-equipo-modal-title" className="text-lg font-bold text-white">
+                  Equipo de cocina
+                </h2>
+                <p className="mt-1 text-xs text-gray-400">
+                  Solo usuarios con rol <span className="font-medium text-gray-300">Cocina</span>{" "}
+                  habilitados en{" "}
+                  <span className="font-medium text-gray-300">{locationName || "este local"}</span>.
+                  Marcá quiénes están en el turno (queda guardado en este dispositivo).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEquipoModal(false)}
+                className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-800 hover:text-white"
+                aria-label="Cerrar"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="border-b border-gray-800 px-4 py-2">
+              <input
+                type="search"
+                value={equipoSearch}
+                onChange={(e) => setEquipoSearch(e.target.value)}
+                placeholder="Buscar por nombre o email…"
+                className="kitchen-equipo-search-input w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+              {equipoModalLoading ? (
+                <div className="flex justify-center py-12">
+                  <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+                </div>
+              ) : equipoModalError ? (
+                <p className="py-6 text-center text-sm text-red-400">{equipoModalError}</p>
+              ) : kitchenStaffFiltered.length === 0 ? (
+                <p className="py-6 text-center text-sm text-gray-500">
+                  No hay usuarios de cocina asignados a este local. Asignálos en Administración → Usuarios
+                  (rol Cocina y local o locales permitidos).
+                </p>
+              ) : (
+                <ul className="space-y-1">
+                  {kitchenStaffFiltered.map((u: any) => {
+                    const label =
+                      `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() || u.email || u.id
+                    const checked = equipoDraftIds.includes(u.id)
+                    return (
+                      <li key={u.id}>
+                        <label className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-2 hover:bg-gray-800/80">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleEquipoDraft(u.id)}
+                            className="h-4 w-4 rounded border-gray-600 bg-gray-800 text-blue-500 focus:ring-blue-500"
+                          />
+                          <span className="flex min-w-0 flex-1 flex-col">
+                            <span className="font-medium text-white">{label}</span>
+                            {u.email && label !== u.email && (
+                              <span className="truncate text-xs text-gray-500">{u.email}</span>
+                            )}
+                          </span>
+                        </label>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2 border-t border-gray-800 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setShowEquipoModal(false)}
+                className="rounded-lg border border-gray-600 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-800"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEquipoModalLoading(true)
+                  setEquipoModalError("")
+                  void fetchKitchenStaffForLocation().then((ok) => {
+                    if (!ok) setEquipoModalError("No se pudo cargar la lista de cocina.")
+                    setEquipoModalLoading(false)
+                  })
+                }}
+                disabled={equipoModalLoading}
+                className="rounded-lg border border-gray-600 px-4 py-2 text-sm font-medium text-gray-300 hover:bg-gray-800 disabled:opacity-50"
+              >
+                Actualizar lista
+              </button>
+              <button
+                type="button"
+                onClick={saveEquipoAndClose}
+                disabled={equipoModalLoading}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50"
+              >
+                Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Error */}
       {error && (

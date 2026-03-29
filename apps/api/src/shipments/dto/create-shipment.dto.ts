@@ -34,6 +34,11 @@ export class CreateShipmentDto {
   @IsString()
   originId: string;
 
+  /** Obligatorio si el origen es el local «retiro en proveedor». */
+  @IsOptional()
+  @IsString()
+  pickupSupplierId?: string;
+
   @IsString()
   destinationId: string;
 

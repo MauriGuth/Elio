@@ -103,6 +103,15 @@ function isDepositoLocation(name: string) {
   return n.includes("deposito")
 }
 
+const ACCOUNT_KIND_OPTIONS = [
+  { value: "client" as const, label: "Cliente" },
+  { value: "employee" as const, label: "Empleado" },
+]
+
+function accountKindLabel(kind: string | undefined) {
+  return kind === "employee" ? "Empleado" : "Cliente"
+}
+
 export default function RunningAccountsPage() {
   const [locations, setLocations] = useState<any[]>([])
   const [clients, setClients] = useState<any[]>([])
@@ -140,7 +149,14 @@ export default function RunningAccountsPage() {
   const [loadingOrders, setLoadingOrders] = useState(false)
   const [actioning, setActioning] = useState<string | null>(null)
   const [showAddClient, setShowAddClient] = useState(false)
-  const [addClientForm, setAddClientForm] = useState({ name: "", cuit: "", email: "", phone: "", creditLimit: "" })
+  const [addClientForm, setAddClientForm] = useState({
+    name: "",
+    cuit: "",
+    email: "",
+    phone: "",
+    creditLimit: "",
+    accountKind: "client" as "client" | "employee",
+  })
   const [addClientError, setAddClientError] = useState<string | null>(null)
   const [addingClient, setAddingClient] = useState(false)
   const [editingClientId, setEditingClientId] = useState<string | null>(null)
@@ -273,6 +289,7 @@ export default function RunningAccountsPage() {
       email: selectedClient.email ?? "",
       phone: selectedClient.phone ?? "",
       creditLimit: formatCreditLimitDisplay(String(selectedClient.creditLimit ?? "")),
+      accountKind: selectedClient.accountKind === "employee" ? "employee" : "client",
     })
     setAddClientError(null)
     setShowAddClient(true)
@@ -300,6 +317,7 @@ export default function RunningAccountsPage() {
           email: addClientForm.email.trim() || undefined,
           phone: addClientForm.phone.trim() || undefined,
           creditLimit: limit,
+          accountKind: addClientForm.accountKind,
         })
       } else {
         const cuitNorm = addClientForm.cuit.trim().replace(/\D/g, "")
@@ -309,6 +327,7 @@ export default function RunningAccountsPage() {
           email: addClientForm.email.trim() || undefined,
           phone: addClientForm.phone.trim() || undefined,
           creditLimit: limit,
+          accountKind: addClientForm.accountKind,
         }
         const results = await Promise.allSettled(
           locationsWithoutDeposito.map((loc: any) =>
@@ -326,7 +345,14 @@ export default function RunningAccountsPage() {
       }
       setShowAddClient(false)
       setEditingClientId(null)
-      setAddClientForm({ name: "", cuit: "", email: "", phone: "", creditLimit: "" })
+      setAddClientForm({
+        name: "",
+        cuit: "",
+        email: "",
+        phone: "",
+        creditLimit: "",
+        accountKind: "client",
+      })
       const res = await runningAccountsApi.getClients()
       const newClients = Array.isArray(res) ? res : (res as any)?.data ?? []
       const list = Array.isArray(newClients) ? newClients : []
@@ -371,7 +397,14 @@ export default function RunningAccountsPage() {
               setEditingClientId(null)
               setShowAddClient(true)
               setAddClientError(null)
-              setAddClientForm({ name: "", cuit: "", email: "", phone: "", creditLimit: "" })
+              setAddClientForm({
+                name: "",
+                cuit: "",
+                email: "",
+                phone: "",
+                creditLimit: "",
+                accountKind: "client",
+              })
             }}
             disabled={locationsWithoutDeposito.length === 0}
             className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50 disabled:pointer-events-none"
@@ -420,7 +453,14 @@ export default function RunningAccountsPage() {
                       selectedClient?.id === c.id ? "bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200" : "hover:bg-gray-100 dark:hover:bg-gray-700"
                     )}
                   >
-                    <span className="truncate font-medium">{c.name}</span>
+                    <span className="flex min-w-0 items-center gap-1.5 truncate">
+                      <span className="truncate font-medium">{c.name}</span>
+                      {c.accountKind === "employee" && (
+                        <span className="shrink-0 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-violet-800 dark:bg-violet-900/50 dark:text-violet-200">
+                          Emp.
+                        </span>
+                      )}
+                    </span>
                     <span className="shrink-0 tabular-nums text-gray-500">{formatCurrency(c.pendingTotal ?? 0)}</span>
                     <ChevronRight className="h-4 w-4 shrink-0 text-gray-400" />
                   </button>
@@ -438,7 +478,13 @@ export default function RunningAccountsPage() {
               <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{selectedClient.name}</h2>
-                  <p className="text-sm text-gray-500">Límite: {selectedClient.creditLimit != null ? formatCurrency(selectedClient.creditLimit) : "—"} · Pendiente: {formatCurrency(selectedClient.pendingTotal ?? 0)}</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                    <span className="mr-2 inline-flex rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-800 dark:bg-gray-600 dark:text-gray-100">
+                      {accountKindLabel(selectedClient.accountKind)}
+                    </span>
+                    Límite: {selectedClient.creditLimit != null ? formatCurrency(selectedClient.creditLimit) : "—"} · Pendiente:{" "}
+                    {formatCurrency(selectedClient.pendingTotal ?? 0)}
+                  </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <button
@@ -600,6 +646,26 @@ export default function RunningAccountsPage() {
             </div>
             {!editingClientId && <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">El cliente se guardará en todos los locales (excepto depósito) y podrá aparecer en Mesas al cerrar con &quot;Cuenta corriente&quot;.</p>}
             <form onSubmit={handleAddClient} className="space-y-3">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Tipo *</label>
+                <select
+                  value={addClientForm.accountKind}
+                  onChange={(e) =>
+                    setAddClientForm((f) => ({
+                      ...f,
+                      accountKind: e.target.value as "client" | "employee",
+                    }))
+                  }
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+                  aria-label="Cliente o empleado"
+                >
+                  {ACCOUNT_KIND_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Nombre / Razón social *</label>
                 <input

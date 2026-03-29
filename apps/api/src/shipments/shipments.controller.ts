@@ -50,8 +50,15 @@ export class ShipmentsController {
   getEstimateDuration(
     @Query('originId') originId?: string,
     @Query('destinationId') destinationId?: string,
+    @Query('pickupSupplierId') pickupSupplierId?: string,
+    @Query('destinationSupplierId') destinationSupplierId?: string,
   ) {
-    return this.shipmentsService.getEstimateDuration(originId, destinationId);
+    return this.shipmentsService.getEstimateDuration(
+      originId,
+      destinationId,
+      pickupSupplierId,
+      destinationSupplierId,
+    );
   }
 
   @Get(':id')

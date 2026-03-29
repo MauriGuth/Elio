@@ -40,8 +40,6 @@ const unitOptions = [
   { value: "unidad", label: "Unidad" },
   { value: "kg", label: "Kilogramo (kg)" },
   { value: "litro", label: "Litro" },
-  { value: "gramo", label: "Gramo" },
-  { value: "ml", label: "Mililitro (ml)" },
 ]
 
 type Tab = "movimientos" | "productos" | "caja" | "microbalance"
@@ -211,7 +209,7 @@ export default function PosCajaPage() {
   const [currentRegister, setCurrentRegister] = useState<any | null>(null)
   const [loadingCaja, setLoadingCaja] = useState(false)
   const [cajaError, setCajaError] = useState<string | null>(null)
-  const [openAmount, setOpenAmount] = useState(0)
+  const [openDenominations, setOpenDenominations] = useState<Record<string, string>>({})
   const [openShift, setOpenShift] = useState<string>("morning")
   const [opening, setOpening] = useState(false)
   const [closeAmount, setCloseAmount] = useState(0)
@@ -394,18 +392,32 @@ export default function PosCajaPage() {
     closeNotes,
   ])
 
+  const openTotalFromDenominations = DENOMINATIONS.reduce(
+    (sum, d) => sum + d * (parseInt(openDenominations[String(d)] ?? "0", 10) || 0),
+    0
+  )
+
   const handleOpenRegister = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!locationId || openAmount < 0) return
+    if (!locationId || openTotalFromDenominations <= 0) return
     setOpening(true)
     setCajaError(null)
     try {
+      const denominationsPayload: Record<string, number> = {}
+      DENOMINATIONS.forEach((d) => {
+        const qty = parseInt(openDenominations[String(d)] ?? "0", 10) || 0
+        if (qty > 0) denominationsPayload[String(d)] = qty
+      })
+      const openingAmount = Math.round(openTotalFromDenominations * 100) / 100
       await cashRegistersApi.open({
         locationId,
-        openingAmount: openAmount,
+        openingAmount,
+        ...(Object.keys(denominationsPayload).length > 0
+          ? { denominations: denominationsPayload }
+          : {}),
         shift: openShift,
       })
-      setOpenAmount(0)
+      setOpenDenominations({})
       setLastCloseResult(null)
       await fetchCurrentRegister()
       sileo.success({ title: "Caja abierta correctamente" })
@@ -1369,31 +1381,53 @@ export default function PosCajaPage() {
                   <Unlock className="h-5 w-5 text-blue-500" />
                   <h2 className="text-lg font-semibold">Abrir caja</h2>
                 </div>
-                <p className="mb-4 text-sm text-gray-500">
-                  Ingresa el monto con el que abres el turno (efectivo inicial).
+                <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
+                  Contá el efectivo inicial por billete y moneda; el total se calcula solo.
                 </p>
               <form onSubmit={handleOpenRegister} className="form-abrir-caja space-y-4">
                 <div>
-                  <label htmlFor="open-amount" className="mb-1 block text-sm font-medium text-gray-700">
-                    Monto de apertura ($)
-                  </label>
-                  <FormattedNumberInput
-                    id="open-amount"
-                    value={openAmount}
-                    onChange={setOpenAmount}
-                    placeholder="0"
-                    className="w-full rounded-xl border border-gray-200 px-4 py-3 text-lg font-medium text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                  />
+                  <p className="mb-2 text-xs font-medium text-gray-600 dark:text-gray-300">
+                    Conteo de efectivo por denominación
+                  </p>
+                  <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-5">
+                    {DENOMINATIONS.map((d) => (
+                      <div key={d} className="flex items-center gap-0.5">
+                        <label
+                          htmlFor={`pos-open-denom-${d}`}
+                          className="w-8 shrink-0 text-right text-xs text-gray-600 dark:text-gray-400"
+                        >
+                          {d >= 1000 ? `$${d / 1000}k` : `$${d}`}
+                        </label>
+                        <input
+                          id={`pos-open-denom-${d}`}
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={openDenominations[String(d)] ?? ""}
+                          onChange={(e) =>
+                            setOpenDenominations((prev) => ({
+                              ...prev,
+                              [String(d)]: e.target.value,
+                            }))
+                          }
+                          className="w-12 rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900 px-1 py-1 text-sm tabular-nums !text-gray-900 dark:!text-gray-100 placeholder:text-gray-500"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-sm font-medium text-blue-800 dark:text-blue-300">
+                    Total apertura: {formatCurrency(openTotalFromDenominations)}
+                  </p>
                 </div>
                 <div>
-                  <label htmlFor="open-shift" className="mb-1 block text-sm font-medium text-gray-700">
+                  <label htmlFor="open-shift" className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-200">
                     Turno
                   </label>
                   <select
                     id="open-shift"
                     value={openShift}
                     onChange={(e) => setOpenShift(e.target.value)}
-                    className="w-full rounded-xl border border-gray-200 px-4 py-2.5 text-base font-medium text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    className="w-full rounded-xl border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-900 px-4 py-2.5 text-base font-medium text-gray-900 dark:text-gray-100 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                     aria-label="Turno del día"
                   >
                     {SHIFT_OPTIONS.map((s) => (
@@ -1405,7 +1439,7 @@ export default function PosCajaPage() {
                 </div>
                 <button
                   type="submit"
-                  disabled={opening || openAmount <= 0}
+                  disabled={opening || openTotalFromDenominations <= 0}
                   className="w-full rounded-xl bg-blue-500 py-3 text-sm font-semibold text-white transition-all hover:bg-blue-600 disabled:opacity-50"
                 >
                   {opening ? (
@@ -1730,11 +1764,11 @@ export default function PosCajaPage() {
           ) : productsForCount.length === 0 ? (
             <div className="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-6 text-center">
               <ClipboardCheck className="mx-auto h-10 w-10 text-gray-400" />
-              <p className="mt-2 text-sm font-medium text-gray-700">
-                No hay productos con stock en este local
+              <p className="mt-2 text-sm font-medium text-gray-700 dark:text-gray-200">
+                No hay productos para contar en este local
               </p>
-              <p className="mt-1 text-xs text-gray-500">
-                No es necesario hacer micro balance si no hay productos cargados en esta ubicación.
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                No se listan platos o ítems elaborados al momento (consumo por receta/insumos). El micro balance aplica a mercadería que sí llevás por unidad de producto. Si no corresponde nada, podés ir a Cierre de caja.
               </p>
             </div>
           ) : (
@@ -1743,8 +1777,8 @@ export default function PosCajaPage() {
                 <p className="text-sm font-medium text-blue-900">
                   Cierre de jornada – Micro balance
                 </p>
-                <p className="mt-1 text-xs text-blue-800">
-                  Contá físicamente lo que hay en el local (ej. en la heladera). No se muestra la cantidad del sistema para no influir en el conteo. Al enviar, se actualiza el stock del local y se genera un informe de faltantes/sobrantes para el auditor.
+                <p className="mt-1 text-xs text-blue-800 dark:text-blue-200">
+                  Contá físicamente lo que hay en el local (ej. en la heladera). No se muestra la cantidad del sistema para no influir en el conteo. Al enviar, se actualiza el stock del local y se genera un informe de faltantes/sobrantes para el auditor. No figuran productos elaborados al momento (el stock de esos se descuenta por insumos al vender).
                 </p>
                 <p className="mt-3 text-sm font-semibold text-blue-900">
                   Turno tarde

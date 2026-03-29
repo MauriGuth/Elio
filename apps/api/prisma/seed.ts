@@ -117,7 +117,15 @@ async function main() {
     },
   });
 
-  console.log('  ✓ 5 ubicaciones creadas');
+  await prisma.location.create({
+    data: {
+      name: 'Retiro de mercadería o proveedor',
+      slug: 'retiro-mercaderia-proveedor',
+      type: LocationType.SUPPLIER_PICKUP,
+    },
+  });
+
+  console.log('  ✓ 6 ubicaciones creadas');
 
   // ════════════════════════════════════════════════════════════
   // 2. USERS

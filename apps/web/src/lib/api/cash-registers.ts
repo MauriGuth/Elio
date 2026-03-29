@@ -28,6 +28,7 @@ export const cashRegistersApi = {
   open: (data: {
     locationId: string;
     openingAmount: number;
+    denominations?: Record<string, number>;
     name?: string;
     shift?: string;
   }) => api.post<any>('/cash-registers/open', data),

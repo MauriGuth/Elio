@@ -3,9 +3,27 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateLocationDto } from './dto/create-location.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
 
+/** Local lógico para envíos con retiro en domicilio del proveedor (misma migración que usa Shipments). */
+export const RETIRO_MERCADERIA_PROVEEDOR_SLUG = 'retiro-mercaderia-proveedor';
+
 @Injectable()
 export class LocationsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /** Para el front de logística: id estable aunque el local no aparezca en listados filtrados. */
+  async getSystemRetiroMercaderiaProveedor() {
+    /** Sin filtrar isActive: coincide con Shipments (getRetiroMercaderiaLocation) y evita 404 si alguien desactivó el local. */
+    const loc = await this.prisma.location.findFirst({
+      where: { slug: RETIRO_MERCADERIA_PROVEEDOR_SLUG },
+      select: { id: true, name: true, slug: true, type: true, isActive: true },
+    });
+    if (!loc) {
+      throw new NotFoundException(
+        `No existe el local de sistema (slug «${RETIRO_MERCADERIA_PROVEEDOR_SLUG}»). Ejecutá las migraciones de Prisma en el entorno de la API: npx prisma migrate deploy`,
+      );
+    }
+    return loc;
+  }
 
   async findAll(filters: {
     type?: string;

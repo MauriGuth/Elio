@@ -33,6 +33,8 @@ enum LocationType {
   RESTAURANT
   EXPRESS
   HOTEL
+  /** Punto lógico para envíos: retiro en proveedor (sin sala de ventas). */
+  SUPPLIER_PICKUP
 }
 
 enum SupplierPaymentMethod {
@@ -323,6 +325,9 @@ model Supplier {
   contactPhone    String?                @map("contact_phone")
   contactEmail    String?                @map("contact_email")
   address         String?
+  /** Coordenadas para rutas (Google Directions); opcional si hay dirección. */
+  latitude        Float?                 @map("latitude")
+  longitude       Float?                 @map("longitude")
   paymentTerms    String?                @map("payment_terms")
   paymentMethod   SupplierPaymentMethod? @default(TRANSFER) @map("payment_method")
   notes           String?
@@ -337,6 +342,8 @@ model Supplier {
   priceHistory       SupplierPriceHistory[]
   paymentOrders      PaymentOrder[]
   purchaseOrders     PurchaseOrder[]
+  shipmentsPickup    Shipment[]         @relation("ShipmentPickupSupplier")
+  shipmentStopsPickup ShipmentStop[]    @relation("ShipmentStopPickupSupplier")
 
   @@index([isActive])
   @@map("suppliers")
@@ -844,6 +851,8 @@ model Shipment {
   id               String    @id @default(cuid())
   shipmentNumber   String    @unique @map("shipment_number")
   originId         String    @map("origin_id")
+  /** Si el origen es «retiro en proveedor», punto real de salida del proveedor. */
+  pickupSupplierId String?   @map("pickup_supplier_id")
   destinationId    String    @map("destination_id")
   /** true = varias paradas (locales); ítems van por ShipmentStop */
   isMultiStop      Boolean   @default(false) @map("is_multi_stop")
@@ -871,8 +880,9 @@ model Shipment {
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
   // Relations
-  origin       Location       @relation("ShipmentOrigin", fields: [originId], references: [id])
-  destination  Location       @relation("ShipmentDestination", fields: [destinationId], references: [id])
+  origin         Location       @relation("ShipmentOrigin", fields: [originId], references: [id])
+  pickupSupplier Supplier?      @relation("ShipmentPickupSupplier", fields: [pickupSupplierId], references: [id])
+  destination    Location       @relation("ShipmentDestination", fields: [destinationId], references: [id])
   createdBy    User           @relation("ShipmentCreator", fields: [createdById], references: [id])
   dispatchedBy User?          @relation("ShipmentDispatcher", fields: [dispatchedById], references: [id])
   receivedBy   User?          @relation("ShipmentReceiver", fields: [receivedById], references: [id])
@@ -881,6 +891,7 @@ model Shipment {
   stops        ShipmentStop[]
 
   @@index([originId])
+  @@index([pickupSupplierId])
   @@index([destinationId])
   @@index([createdById])
   @@index([status])
@@ -893,6 +904,8 @@ model ShipmentStop {
   id                          String    @id @default(cuid())
   shipmentId                  String    @map("shipment_id")
   locationId                  String    @map("location_id")
+  /** Parada en domicilio de proveedor (local suele ser «retiro mercadería»). */
+  pickupSupplierId            String?   @map("pickup_supplier_id")
   sortOrder                   Int       @map("sort_order")
   legPolyline                 String?   @map("leg_polyline")
   legDurationMin              Int?      @map("leg_duration_min")
@@ -904,13 +917,15 @@ model ShipmentStop {
   receivedBySignature       String?   @map("received_by_signature")
   receptionNotes            String?   @map("reception_notes")
 
-  shipment Shipment      @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
-  location Location      @relation(fields: [locationId], references: [id])
-  items    ShipmentItem[]
+  shipment       Shipment      @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  location       Location      @relation(fields: [locationId], references: [id])
+  pickupSupplier Supplier?     @relation("ShipmentStopPickupSupplier", fields: [pickupSupplierId], references: [id])
+  items          ShipmentItem[]
 
   @@unique([shipmentId, sortOrder])
   @@index([shipmentId])
   @@index([locationId])
+  @@index([pickupSupplierId])
   @@map("shipment_stops")
 }
 
@@ -1158,6 +1173,8 @@ model CashRegister {
   openedById          String?   @map("opened_by_id")
   closedById          String?   @map("closed_by_id")
   openingAmount       Float?    @map("opening_amount")
+  /** Conteo por denominación al abrir: { "10000": 2, "5000": 5, ... } */
+  openingDenominations Json?    @map("opening_denominations")
   closingAmount       Float?    @map("closing_amount")
   expectedAmount      Float?    @map("expected_amount")
   difference          Float?
@@ -1216,6 +1233,8 @@ model Customer {
   isActive   Boolean  @default(true) @map("is_active")
   /** Límite de cuenta corriente (si null, no tiene cuenta corriente). */
   creditLimit Float?  @map("credit_limit")
+  /** Titular de la cuenta: cliente externo o empleado (cuenta corriente). */
+  accountKind String  @default("client") @map("account_kind")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 

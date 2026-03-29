@@ -69,9 +69,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
               t.includes('ordernumber') ||
               msg.includes('order_number') ||
               msg.includes('orders_order_number');
+            const isShipmentNumberDup =
+              t.includes('shipment_number') ||
+              msg.includes('shipment_number') ||
+              msg.includes('shipments_shipment_number');
             message = isOrderNumberDup
               ? 'Conflicto al numerar el pedido. Reintentá enviar a cocina.'
-              : `Registro duplicado${tRaw ? ` (${tRaw})` : ''}.`;
+              : isShipmentNumberDup
+                ? 'Ese número de envío ya se usó (varias altas a la vez). Volvé a intentar crear el envío.'
+                : `Registro duplicado${tRaw ? ` (${tRaw})` : ''}.`;
             error = 'Conflict';
             break;
           }

@@ -121,8 +121,6 @@ const unitOptions = [
   { value: "unidad", label: "Unidad" },
   { value: "kg", label: "Kilogramo (kg)" },
   { value: "litro", label: "Litro" },
-  { value: "gramo", label: "Gramo" },
-  { value: "ml", label: "Mililitro (ml)" },
 ]
 
 /** Quita prefijos "Tipo:", "Familia:", "Subfamilia:", "Agrupar:" del nombre de categoría para mostrar solo el valor. */

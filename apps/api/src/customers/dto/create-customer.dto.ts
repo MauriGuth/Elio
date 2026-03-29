@@ -1,4 +1,11 @@
-import { IsString, IsOptional, MaxLength, IsNumber, Min } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  MaxLength,
+  IsNumber,
+  Min,
+  IsIn,
+} from 'class-validator';
 
 export class CreateCustomerDto {
   @IsString()
@@ -52,4 +59,9 @@ export class CreateCustomerDto {
   @IsNumber()
   @Min(0)
   creditLimit?: number;
+
+  /** `client` = cliente · `employee` = empleado */
+  @IsOptional()
+  @IsIn(['client', 'employee'])
+  accountKind?: 'client' | 'employee';
 }

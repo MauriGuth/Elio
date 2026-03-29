@@ -2,9 +2,11 @@ import {
   IsString,
   IsOptional,
   IsBoolean,
+  IsNumber,
   MinLength,
   MaxLength,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateSupplierDto {
   @IsString()
@@ -46,6 +48,16 @@ export class CreateSupplierDto {
   @IsString()
   @MaxLength(500)
   address?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  latitude?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  longitude?: number;
 
   @IsOptional()
   @IsString()

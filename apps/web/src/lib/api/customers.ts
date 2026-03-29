@@ -9,11 +9,29 @@ export const customersApi = {
 
   getById: (id: string) => api.get<any>(`/customers/${id}`),
 
-  create: (data: { locationId: string; name: string; cuit: string; email?: string; address?: string; phone?: string; creditLimit?: number }) =>
-    api.post<any>('/customers', data),
+  create: (data: {
+    locationId: string;
+    name: string;
+    cuit: string;
+    email?: string;
+    address?: string;
+    phone?: string;
+    creditLimit?: number;
+    accountKind?: 'client' | 'employee';
+  }) => api.post<any>('/customers', data),
 
-  update: (id: string, data: { name?: string; cuit?: string; email?: string; address?: string; phone?: string; creditLimit?: number }) =>
-    api.patch<any>(`/customers/${id}`, data),
+  update: (
+    id: string,
+    data: {
+      name?: string;
+      cuit?: string;
+      email?: string;
+      address?: string;
+      phone?: string;
+      creditLimit?: number;
+      accountKind?: 'client' | 'employee';
+    }
+  ) => api.patch<any>(`/customers/${id}`, data),
 
   remove: (id: string) => api.delete<any>(`/customers/${id}`),
 };

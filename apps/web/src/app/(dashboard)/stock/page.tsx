@@ -269,8 +269,6 @@ const unitOptions = [
   { value: "unidad", label: "Unidad" },
   { value: "kg", label: "Kilogramo (kg)" },
   { value: "litro", label: "Litro" },
-  { value: "gramo", label: "Gramo" },
-  { value: "ml", label: "Mililitro (ml)" },
 ]
 
 // ---------- main page ----------

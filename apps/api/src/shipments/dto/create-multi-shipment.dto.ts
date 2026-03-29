@@ -15,6 +15,11 @@ export class CreateShipmentStopDto {
   @IsString()
   locationId: string;
 
+  /** Parada en domicilio del proveedor (el backend asocia al local «retiro mercadería»). */
+  @IsOptional()
+  @IsString()
+  pickupSupplierId?: string;
+
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => CreateShipmentItemDto)
@@ -25,6 +30,11 @@ export class CreateShipmentStopDto {
 export class CreateMultiShipmentDto {
   @IsString()
   originId: string;
+
+  /** Obligatorio si el origen es el local «retiro en proveedor». */
+  @IsOptional()
+  @IsString()
+  pickupSupplierId?: string;
 
   @IsOptional()
   @IsDateString()

@@ -9,6 +9,12 @@ export const locationsApi = {
     isProduction?: boolean;
   }) => api.get<any[]>('/locations', params),
 
+  /** Local de sistema para envíos con retiro en proveedor (slug fijo en BD). */
+  getSystemRetiroMercaderiaProveedor: () =>
+    api.get<{ id: string; name: string; slug: string; type: string }>(
+      '/locations/system/retiro-mercaderia-proveedor',
+    ),
+
   getById: (id: string) => api.get<any>(`/locations/${id}`),
 
   getDashboard: (id: string) => api.get<any>(`/locations/${id}/dashboard`),

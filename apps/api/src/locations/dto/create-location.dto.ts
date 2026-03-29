@@ -16,6 +16,7 @@ export enum LocationTypeEnum {
   RESTAURANT = 'RESTAURANT',
   EXPRESS = 'EXPRESS',
   HOTEL = 'HOTEL',
+  SUPPLIER_PICKUP = 'SUPPLIER_PICKUP',
 }
 
 export class CreateLocationDto {

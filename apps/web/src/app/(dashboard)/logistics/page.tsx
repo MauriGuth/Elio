@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo, useCallback } from "react"
+import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { sileo } from "sileo"
 import {
@@ -21,6 +21,7 @@ import {
 import { shipmentsApi } from "@/lib/api/shipments"
 import { locationsApi } from "@/lib/api/locations"
 import { productsApi } from "@/lib/api/products"
+import { suppliersApi } from "@/lib/api/suppliers"
 import { cn, formatDate } from "@/lib/utils"
 import { FormattedNumberInput } from "@/components/ui/formatted-number-input"
 import type { ShipmentStatus } from "@/types"
@@ -145,15 +146,316 @@ function TableSkeleton() {
   )
 }
 
-function routeSegments(shipment: any): string[] {
-  const o = shipment.origin?.name || "—"
+function logisticsAddressOrCoords(ent: any): string | undefined {
+  if (!ent) return undefined
+  const a = String(ent.address ?? "").trim()
+  if (a) return a
+  if (ent.latitude != null && ent.longitude != null) {
+    return `${ent.latitude}, ${ent.longitude}`
+  }
+  return undefined
+}
+
+type RouteSegCell = { line1: string; line2?: string }
+
+function routeSegments(shipment: any): RouteSegCell[] {
+  const out: RouteSegCell[] = []
+  let line1 = shipment.origin?.name || "—"
+  const ps0 = shipment.pickupSupplier
+  if (ps0?.name?.trim()) {
+    line1 = `${line1} — ${ps0.name.trim()}`
+  }
+  const sub0 = logisticsAddressOrCoords(ps0) || logisticsAddressOrCoords(shipment.origin)
+  out.push(sub0 ? { line1, line2: sub0 } : { line1 })
+
   if (shipment.isMultiStop && Array.isArray(shipment.stops) && shipment.stops.length > 0) {
     const ordered = [...shipment.stops].sort(
       (a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0),
     )
-    return [o, ...ordered.map((s: any) => s.location?.name || "—")]
+    for (const s of ordered) {
+      const psn = s.pickupSupplier?.name?.trim()
+      if (psn) {
+        const sub = logisticsAddressOrCoords(s.pickupSupplier)
+        out.push(sub ? { line1: psn, line2: sub } : { line1: psn })
+      } else {
+        const n = s.location?.name || "—"
+        const sub = logisticsAddressOrCoords(s.location)
+        out.push(sub ? { line1: n, line2: sub } : { line1: n })
+      }
+    }
+    return out
   }
-  return [o, shipment.destination?.name || "—"]
+  const d1 = shipment.destination?.name || "—"
+  const d2 = logisticsAddressOrCoords(shipment.destination)
+  out.push(d2 ? { line1: d1, line2: d2 } : { line1: d1 })
+  return out
+}
+
+/** Slug del local creado por migración (retiro en proveedor). */
+const RETIRO_MERCADERIA_SLUG = "retiro-mercaderia-proveedor"
+
+/** Valor de <select> para «ir a / salir de un proveedor» (elige proveedor abajo). */
+const PROVEEDOR_SENTINEL = "__proveedor__"
+
+type LogisticsLocLite = { id: string; name: string; type?: string; slug?: string }
+
+function locationsWithoutRetiroSystem(locs: LogisticsLocLite[], retiroId?: string) {
+  return locs.filter(
+    (l) => l.slug !== RETIRO_MERCADERIA_SLUG && !(retiroId && l.id === retiroId),
+  )
+}
+
+// ---------- producto buscable (envíos) ----------
+
+type LogisticsProductOption = { id: string; name: string; sku: string }
+
+type ShipmentLineDraft = {
+  productId: string
+  /** Texto de búsqueda cuando aún no hay producto elegido */
+  productQuery: string
+  sentQty: number
+}
+
+function emptyShipmentLine(): ShipmentLineDraft {
+  return { productId: "", productQuery: "", sentQty: 1 }
+}
+
+function logisticsProductLabel(p: LogisticsProductOption) {
+  return p.sku ? `${p.sku} - ${p.name}` : p.name
+}
+
+type LogisticsSupplierOption = {
+  id: string
+  name: string
+  address?: string | null
+  taxId?: string | null
+  latitude?: number | null
+  longitude?: number | null
+}
+
+function supplierHasRoutePoint(s: LogisticsSupplierOption) {
+  return Boolean(
+    (s.address && s.address.trim()) ||
+      (s.latitude != null && s.longitude != null),
+  )
+}
+
+function LogisticsSupplierSearchInput({
+  suppliers,
+  supplierId,
+  supplierQuery,
+  onSupplierChange,
+  isOpen,
+  onOpenChange,
+}: {
+  suppliers: LogisticsSupplierOption[]
+  supplierId: string
+  supplierQuery: string
+  onSupplierChange: (next: { id: string; query: string }) => void
+  isOpen: boolean
+  onOpenChange: (open: boolean) => void
+}) {
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const routable = useMemo(
+    () => suppliers.filter(supplierHasRoutePoint),
+    [suppliers],
+  )
+  const selected = useMemo(
+    () => routable.find((s) => s.id === supplierId),
+    [routable, supplierId],
+  )
+  const inputValue = selected ? selected.name : supplierQuery
+
+  const filtered = useMemo(() => {
+    const q = supplierQuery.trim().toLowerCase()
+    if (!q) return routable.slice(0, 100)
+    return routable
+      .filter(
+        (s) =>
+          s.name.toLowerCase().includes(q) ||
+          (s.taxId && s.taxId.toLowerCase().includes(q)),
+      )
+      .slice(0, 100)
+  }, [routable, supplierQuery])
+
+  const clearBlurTimer = () => {
+    if (blurTimer.current) {
+      clearTimeout(blurTimer.current)
+      blurTimer.current = null
+    }
+  }
+
+  return (
+    <div className="relative min-w-0">
+      <input
+        type="text"
+        role="combobox"
+        aria-expanded={isOpen}
+        aria-autocomplete="list"
+        aria-label="Proveedor de retiro"
+        autoComplete="off"
+        value={inputValue}
+        onChange={(e) => {
+          const v = e.target.value
+          onSupplierChange({ id: "", query: v })
+          onOpenChange(true)
+        }}
+        onFocus={() => {
+          clearBlurTimer()
+          onOpenChange(true)
+        }}
+        onBlur={() => {
+          blurTimer.current = setTimeout(() => onOpenChange(false), 150)
+        }}
+        placeholder="Buscar proveedor por nombre o CUIT..."
+        className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 pr-9 text-sm text-gray-700 dark:text-white placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+      />
+      <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+      {isOpen && filtered.length > 0 ? (
+        <ul
+          role="listbox"
+          className="absolute z-40 mt-1 max-h-52 w-full overflow-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800"
+        >
+          {filtered.map((s) => (
+            <li
+              key={s.id}
+              role="option"
+              aria-selected={supplierId === s.id}
+              className="cursor-pointer px-3 py-2 text-sm text-gray-800 hover:bg-gray-100 dark:text-gray-100 dark:hover:bg-gray-700"
+              onMouseDown={(e) => {
+                e.preventDefault()
+                clearBlurTimer()
+                onSupplierChange({ id: s.id, query: "" })
+                onOpenChange(false)
+              }}
+            >
+              <span className="font-medium">{s.name}</span>
+              {s.address?.trim() ? (
+                <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400 truncate">
+                  {s.address.trim()}
+                </span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {isOpen && supplierQuery.trim() && filtered.length === 0 ? (
+        <p className="absolute z-40 mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500 shadow dark:border-gray-600 dark:bg-gray-800 dark:text-gray-400">
+          {routable.length === 0
+            ? "Ningún proveedor tiene dirección ni coordenadas. Cargalas en Proveedores."
+            : "Sin coincidencias"}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+function LogisticsProductSearchInput({
+  products,
+  line,
+  onLineChange,
+  isOpen,
+  onOpenChange,
+  ariaLabel = "Producto",
+}: {
+  products: LogisticsProductOption[]
+  line: ShipmentLineDraft
+  onLineChange: (next: ShipmentLineDraft) => void
+  isOpen: boolean
+  onOpenChange: (open: boolean) => void
+  ariaLabel?: string
+}) {
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const selected = useMemo(
+    () => products.find((p) => p.id === line.productId),
+    [products, line.productId],
+  )
+  const inputValue = selected ? logisticsProductLabel(selected) : line.productQuery
+
+  const filtered = useMemo(() => {
+    const q = line.productQuery.trim().toLowerCase()
+    if (!q) return products.slice(0, 100)
+    return products
+      .filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          (p.sku && p.sku.toLowerCase().includes(q)) ||
+          logisticsProductLabel(p).toLowerCase().includes(q),
+      )
+      .slice(0, 100)
+  }, [products, line.productQuery])
+
+  const clearBlurTimer = () => {
+    if (blurTimer.current) {
+      clearTimeout(blurTimer.current)
+      blurTimer.current = null
+    }
+  }
+
+  return (
+    <div className="relative min-w-0 flex-1">
+      <input
+        type="text"
+        role="combobox"
+        aria-expanded={isOpen}
+        aria-autocomplete="list"
+        aria-label={ariaLabel}
+        autoComplete="off"
+        value={inputValue}
+        onChange={(e) => {
+          const v = e.target.value
+          onLineChange({
+            ...line,
+            productId: "",
+            productQuery: v,
+          })
+          onOpenChange(true)
+        }}
+        onFocus={() => {
+          clearBlurTimer()
+          onOpenChange(true)
+        }}
+        onBlur={() => {
+          blurTimer.current = setTimeout(() => onOpenChange(false), 150)
+        }}
+        placeholder="Escribí para buscar producto..."
+        className="min-w-0 w-full max-w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 pr-9 text-sm text-gray-700 dark:text-white placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+      />
+      <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+      {isOpen && filtered.length > 0 ? (
+        <ul
+          role="listbox"
+          className="absolute z-40 mt-1 max-h-52 w-full overflow-auto rounded-lg border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-600 dark:bg-gray-800"
+        >
+          {filtered.map((p) => (
+            <li
+              key={p.id}
+              role="option"
+              aria-selected={line.productId === p.id}
+              className="cursor-pointer px-3 py-2 text-sm text-gray-800 hover:bg-gray-100 dark:text-gray-100 dark:hover:bg-gray-700"
+              onMouseDown={(e) => {
+                e.preventDefault()
+                clearBlurTimer()
+                onLineChange({
+                  ...line,
+                  productId: p.id,
+                  productQuery: "",
+                })
+                onOpenChange(false)
+              }}
+            >
+              {logisticsProductLabel(p)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {isOpen && line.productQuery.trim() && filtered.length === 0 ? (
+        <p className="absolute z-40 mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500 shadow dark:border-gray-600 dark:bg-gray-800 dark:text-gray-400">
+          Sin coincidencias
+        </p>
+      ) : null}
+    </div>
+  )
 }
 
 // ---------- main page ----------
@@ -174,10 +476,33 @@ export default function LogisticsPage() {
   const [error, setError] = useState<string | null>(null)
 
   // Locations for filter dropdowns and map (incl. type para excluir depósito)
-  const [locations, setLocations] = useState<{ id: string; name: string; type?: string }[]>([])
+  const [locations, setLocations] = useState<LogisticsLocLite[]>([])
+  /** Id del local de sistema «retiro mercadería / proveedor» (GET dedicado; no depende del listado). */
+  const [systemRetiroLocationId, setSystemRetiroLocationId] = useState("")
 
   // Products for create modal
   const [productsList, setProductsList] = useState<{ id: string; name: string; sku: string }[]>([])
+
+  const [suppliersForPickup, setSuppliersForPickup] = useState<LogisticsSupplierOption[]>([])
+  const [originSupplierPick, setOriginSupplierPick] = useState<{ id: string; query: string }>({
+    id: "",
+    query: "",
+  })
+  const [destSupplierPick, setDestSupplierPick] = useState<{ id: string; query: string }>({
+    id: "",
+    query: "",
+  })
+  const [openOriginSupplier, setOpenOriginSupplier] = useState(false)
+  const [openDestSupplier, setOpenDestSupplier] = useState(false)
+  const [openMultiSupplierKey, setOpenMultiSupplierKey] = useState<string | null>(null)
+
+  /** Productos por proveedor (solo ítems vinculados en Proveedores) para paradas/origen/destino tipo proveedor */
+  const [supplierProductsBySupplierId, setSupplierProductsBySupplierId] = useState<
+    Record<string, LogisticsProductOption[]>
+  >({})
+  const supplierProductsLoadingRef = useRef<Set<string>>(new Set())
+  const supplierProductsCacheRef = useRef(supplierProductsBySupplierId)
+  supplierProductsCacheRef.current = supplierProductsBySupplierId
 
   // Create modal state
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -189,17 +514,19 @@ export default function LogisticsPage() {
     estimatedArrival: "",
     notes: "",
   })
-  const [shipmentItems, setShipmentItems] = useState<
-    Array<{ productId: string; sentQty: number }>
-  >([{ productId: "", sentQty: 1 }])
+  const [shipmentItems, setShipmentItems] = useState<ShipmentLineDraft[]>([
+    emptyShipmentLine(),
+  ])
 
   type MultiStopDraft = {
     locationId: string
-    items: Array<{ productId: string; sentQty: number }>
+    supplierPick: { id: string; query: string }
+    items: ShipmentLineDraft[]
   }
   const emptyMultiStop = (): MultiStopDraft => ({
     locationId: "",
-    items: [{ productId: "", sentQty: 1 }],
+    supplierPick: { id: "", query: "" },
+    items: [emptyShipmentLine()],
   })
   const [createMode, setCreateMode] = useState<"multi" | "single">("multi")
   const [multiStops, setMultiStops] = useState<MultiStopDraft[]>([
@@ -207,9 +534,156 @@ export default function LogisticsPage() {
     emptyMultiStop(),
   ])
 
+  /** `s:0` = ítem simple fila 0; `m:parada:ítem` = multi-parada */
+  const [openProductKey, setOpenProductKey] = useState<string | null>(null)
+
   const [estimateDurationMin, setEstimateDurationMin] = useState<number | null>(null)
   const [estimateReason, setEstimateReason] = useState<'no_api_key' | 'no_address' | null>(null)
   const [estimateLoading, setEstimateLoading] = useState(false)
+
+  const retiroLocationId = useMemo(
+    () =>
+      systemRetiroLocationId ||
+      locations.find((l) => l.slug === RETIRO_MERCADERIA_SLUG)?.id ||
+      "",
+    [systemRetiroLocationId, locations],
+  )
+  const selectLocations = useMemo(
+    () => locationsWithoutRetiroSystem(locations, retiroLocationId || undefined),
+    [locations, retiroLocationId],
+  )
+
+  const supplierIdsNeededForModalProducts = useMemo(() => {
+    if (!showCreateModal) return [] as string[]
+    const ids = new Set<string>()
+    if (createMode === "multi") {
+      for (const s of multiStops) {
+        if (s.locationId === PROVEEDOR_SENTINEL && s.supplierPick.id) {
+          ids.add(s.supplierPick.id)
+        }
+      }
+    } else {
+      if (newShipment.destinationId === PROVEEDOR_SENTINEL && destSupplierPick.id) {
+        ids.add(destSupplierPick.id)
+      }
+      if (newShipment.originId === PROVEEDOR_SENTINEL && originSupplierPick.id) {
+        ids.add(originSupplierPick.id)
+      }
+    }
+    return [...ids]
+  }, [
+    showCreateModal,
+    createMode,
+    multiStops,
+    newShipment.destinationId,
+    newShipment.originId,
+    destSupplierPick.id,
+    originSupplierPick.id,
+  ])
+
+  const supplierIdsKeyForProducts = useMemo(
+    () => [...supplierIdsNeededForModalProducts].sort().join("|"),
+    [supplierIdsNeededForModalProducts],
+  )
+
+  useEffect(() => {
+    if (!showCreateModal || supplierIdsNeededForModalProducts.length === 0) return
+    let cancelled = false
+    for (const supplierId of supplierIdsNeededForModalProducts) {
+      if (supplierProductsCacheRef.current[supplierId] !== undefined) continue
+      if (supplierProductsLoadingRef.current.has(supplierId)) continue
+      supplierProductsLoadingRef.current.add(supplierId)
+      suppliersApi
+        .getProducts(supplierId)
+        .then((rows) => {
+          if (cancelled) return
+          const arr = Array.isArray(rows) ? rows : []
+          const products: LogisticsProductOption[] = arr.map((p: Record<string, unknown>) => ({
+            id: String(p.id ?? ""),
+            name: String(p.name ?? ""),
+            sku: String(p.sku ?? ""),
+          }))
+          setSupplierProductsBySupplierId((prev) => ({ ...prev, [supplierId]: products }))
+        })
+        .catch(() => {
+          if (cancelled) return
+          setSupplierProductsBySupplierId((prev) => ({ ...prev, [supplierId]: [] }))
+        })
+        .finally(() => {
+          supplierProductsLoadingRef.current.delete(supplierId)
+        })
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [showCreateModal, supplierIdsKeyForProducts, supplierIdsNeededForModalProducts])
+
+  const singleModeSupplierIdForItems = useMemo(() => {
+    if (createMode !== "single") return null
+    if (newShipment.destinationId === PROVEEDOR_SENTINEL && destSupplierPick.id) {
+      return destSupplierPick.id
+    }
+    if (newShipment.originId === PROVEEDOR_SENTINEL && originSupplierPick.id) {
+      return originSupplierPick.id
+    }
+    return null
+  }, [
+    createMode,
+    newShipment.destinationId,
+    newShipment.originId,
+    destSupplierPick.id,
+    originSupplierPick.id,
+  ])
+
+  const productsForSingleModeItems = useMemo((): LogisticsProductOption[] => {
+    if (!singleModeSupplierIdForItems) return productsList
+    return supplierProductsBySupplierId[singleModeSupplierIdForItems] ?? []
+  }, [singleModeSupplierIdForItems, productsList, supplierProductsBySupplierId])
+
+  const handleOriginSupplierPickChange = useCallback(
+    (next: { id: string; query: string }) => {
+      setOriginSupplierPick((prev) => {
+        if (prev.id && next.id !== prev.id) {
+          setShipmentItems([emptyShipmentLine()])
+        }
+        return next
+      })
+    },
+    [],
+  )
+
+  const handleDestSupplierPickChange = useCallback(
+    (next: { id: string; query: string }) => {
+      setDestSupplierPick((prev) => {
+        if (prev.id && next.id !== prev.id) {
+          setShipmentItems([emptyShipmentLine()])
+        }
+        return next
+      })
+    },
+    [],
+  )
+
+  // Proveedores para retiro en proveedor (modal crear envío)
+  useEffect(() => {
+    if (!showCreateModal) return
+    suppliersApi
+      .getAll({ limit: 500, isActive: true })
+      .then((res) => {
+        const rows = res.data ?? (res as { data?: unknown[] }).data ?? []
+        setSuppliersForPickup(
+          (Array.isArray(rows) ? rows : []).map((s: Record<string, unknown>) => ({
+            id: String(s.id ?? ""),
+            name: String(s.name ?? ""),
+            address: (s.address as string) ?? null,
+            taxId: (s.taxId as string) ?? null,
+            latitude: (s.latitude as number) ?? null,
+            longitude: (s.longitude as number) ?? null,
+          })),
+        )
+      })
+      .catch(() => setSuppliersForPickup([]))
+  }, [showCreateModal])
 
   // Estimate duration when origin/destination change (Google Maps opcional) — solo envío simple
   useEffect(() => {
@@ -223,12 +697,47 @@ export default function LogisticsPage() {
       setEstimateReason(null)
       return
     }
+    if (
+      !retiroLocationId &&
+      (newShipment.originId === PROVEEDOR_SENTINEL ||
+        newShipment.destinationId === PROVEEDOR_SENTINEL)
+    ) {
+      setEstimateDurationMin(null)
+      setEstimateReason(null)
+      return
+    }
+    const originProv = newShipment.originId === PROVEEDOR_SENTINEL
+    const destProv = newShipment.destinationId === PROVEEDOR_SENTINEL
+    if (originProv && !originSupplierPick.id) {
+      setEstimateDurationMin(null)
+      setEstimateReason(null)
+      setEstimateLoading(false)
+      return
+    }
+    if (destProv && !destSupplierPick.id) {
+      setEstimateDurationMin(null)
+      setEstimateReason(null)
+      setEstimateLoading(false)
+      return
+    }
+    const originLocId = originProv ? retiroLocationId : newShipment.originId
+    const destLocId = destProv ? retiroLocationId : newShipment.destinationId
+    if (!originLocId || !destLocId) {
+      setEstimateDurationMin(null)
+      setEstimateReason(null)
+      return
+    }
     let cancelled = false
     setEstimateLoading(true)
     setEstimateDurationMin(null)
     setEstimateReason(null)
     shipmentsApi
-      .getEstimateDuration(newShipment.originId, newShipment.destinationId)
+      .getEstimateDuration(
+        originLocId,
+        destLocId,
+        originProv ? originSupplierPick.id : undefined,
+        destProv ? destSupplierPick.id : undefined,
+      )
       .then((res: any) => {
         if (cancelled) return
         if (res?.durationMin != null) {
@@ -248,7 +757,15 @@ export default function LogisticsPage() {
     return () => {
       cancelled = true
     }
-  }, [showCreateModal, createMode, newShipment.originId, newShipment.destinationId])
+  }, [
+    showCreateModal,
+    createMode,
+    newShipment.originId,
+    newShipment.destinationId,
+    originSupplierPick.id,
+    destSupplierPick.id,
+    retiroLocationId,
+  ])
 
   // Close modal on Escape (el formulario se limpia al volver a abrir con «Nuevo Envío»)
   useEffect(() => {
@@ -267,7 +784,14 @@ export default function LogisticsPage() {
       try {
         const res = await locationsApi.getAll()
         const locs = Array.isArray(res) ? res : (res as any).data || []
-        setLocations(locs.map((l: any) => ({ id: l.id, name: l.name, type: l.type })))
+        setLocations(
+          locs.map((l: any) => ({
+            id: l.id,
+            name: l.name,
+            type: l.type,
+            slug: l.slug,
+          })),
+        )
       } catch {
         // Non-critical
       }
@@ -275,11 +799,26 @@ export default function LogisticsPage() {
     loadLocations()
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    locationsApi
+      .getSystemRetiroMercaderiaProveedor()
+      .then((row) => {
+        if (!cancelled && row?.id) setSystemRetiroLocationId(row.id)
+      })
+      .catch(() => {
+        /* Si falla (p. ej. migración pendiente), retiroLocationId puede salir del getAll por slug */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   // Load products for modal
   useEffect(() => {
     async function loadProducts() {
       try {
-        const res = await productsApi.getAll({ limit: 200 })
+        const res = await productsApi.getAll({ limit: 3000 })
         const data = res.data || []
         setProductsList(data.map((p: any) => ({ id: p.id, name: p.name, sku: p.sku })))
       } catch {
@@ -365,9 +904,17 @@ export default function LogisticsPage() {
 
   const resetCreateForm = () => {
     setNewShipment({ originId: "", destinationId: "", estimatedArrival: "", notes: "" })
+    setOriginSupplierPick({ id: "", query: "" })
+    setDestSupplierPick({ id: "", query: "" })
+    setSupplierProductsBySupplierId({})
+    supplierProductsLoadingRef.current.clear()
+    setOpenOriginSupplier(false)
+    setOpenDestSupplier(false)
+    setOpenMultiSupplierKey(null)
     setEstimateDurationMin(null)
     setEstimateReason(null)
-    setShipmentItems([{ productId: "", sentQty: 1 }])
+    setShipmentItems([emptyShipmentLine()])
+    setOpenProductKey(null)
     setCreateMode("multi")
     setMultiStops([emptyMultiStop(), emptyMultiStop()])
   }
@@ -388,9 +935,39 @@ export default function LogisticsPage() {
       return
     }
 
+    const originProv = newShipment.originId === PROVEEDOR_SENTINEL
+    const destProv = newShipment.destinationId === PROVEEDOR_SENTINEL
+
+    if (originProv && destProv) {
+      setCreateError(
+        "No podés poner proveedor en origen y destino en un solo trayecto. Usá «Varias paradas» o elegí un local en uno de los dos.",
+      )
+      return
+    }
+    /** Multi-parada con proveedor: el backend asigna el local de retiro por slug si mandás pickupSupplierId; no hace falta retiroLocationId en el cliente. */
+    if (
+      !retiroLocationId &&
+      (originProv || (createMode === "single" && destProv))
+    ) {
+      setCreateError(
+        "Falta el local de sistema «Retiro de mercadería o proveedor» (slug en base de datos). Ejecutá las migraciones de Prisma, revisá Locales o reactivá ese local si está inactivo.",
+      )
+      return
+    }
+    if (originProv && !originSupplierPick.id) {
+      setCreateError("Elegí el proveedor de origen (con dirección o coordenadas en Proveedores).")
+      return
+    }
+
     setCreating(true)
     try {
       const estimatedArrival = parseEstimatedArrival()
+      const itemRows = (rows: ShipmentLineDraft[]) =>
+        rows
+          .filter((it) => it.productId && it.sentQty > 0)
+          .map((it) => ({ productId: it.productId, sentQty: it.sentQty }))
+
+      let createdAsMultiFromSingle = false
 
       if (createMode === "multi") {
         if (multiStops.length < 2) {
@@ -398,38 +975,59 @@ export default function LogisticsPage() {
           setCreating(false)
           return
         }
-        const seenLocs = new Set<string>()
+        const dedupKeys: string[] = []
         for (let i = 0; i < multiStops.length; i++) {
           const s = multiStops[i]
+          const isProvStop = s.locationId === PROVEEDOR_SENTINEL
           if (!s.locationId) {
-            setCreateError(`Elegí el local de la parada ${i + 1}.`)
+            setCreateError(`Elegí el local o proveedor de la parada ${i + 1}.`)
             setCreating(false)
             return
           }
-          if (s.locationId === newShipment.originId) {
-            setCreateError(`La parada ${i + 1} no puede ser el mismo local que el origen.`)
+          if (isProvStop && !s.supplierPick.id.trim()) {
+            setCreateError(`Elegí el proveedor de la parada ${i + 1}.`)
             setCreating(false)
             return
           }
-          if (seenLocs.has(s.locationId)) {
-            setCreateError("No repetir el mismo local en dos paradas.")
+          const isLast = i === multiStops.length - 1
+          if (
+            !isLast &&
+            s.locationId === newShipment.originId &&
+            !isProvStop
+          ) {
+            setCreateError(
+              `La parada ${i + 1} no puede ser el mismo local que el origen (solo en la última parada, p. ej. vuelta al depósito).`,
+            )
             setCreating(false)
             return
           }
-          seenLocs.add(s.locationId)
-          const valid = s.items.filter((it) => it.productId && it.sentQty > 0)
+          dedupKeys.push(
+            isProvStop ? `p:${s.supplierPick.id.trim()}` : `l:${s.locationId}`,
+          )
+          const valid = itemRows(s.items)
           if (valid.length === 0) {
-            setCreateError(`Agregá al menos un ítem en la parada ${i + 1} (${locations.find((l) => l.id === s.locationId)?.name || "local"}).`)
+            const label = isProvStop
+              ? "proveedor"
+              : locations.find((l) => l.id === s.locationId)?.name || "local"
+            setCreateError(`Agregá al menos un ítem en la parada ${i + 1} (${label}).`)
             setCreating(false)
             return
           }
         }
-        const stopsPayload = multiStops.map((s) => ({
-          locationId: s.locationId,
-          items: s.items
-            .filter((it) => it.productId && it.sentQty > 0)
-            .map((it) => ({ productId: it.productId, sentQty: it.sentQty })),
-        }))
+        if (new Set(dedupKeys).size !== dedupKeys.length) {
+          setCreateError("No repetir la misma parada (mismo local o mismo proveedor).")
+          setCreating(false)
+          return
+        }
+        const stopsPayload = multiStops.map((s) => {
+          const isProv = s.locationId === PROVEEDOR_SENTINEL
+          const pickId = s.supplierPick.id.trim()
+          return {
+            locationId: (isProv ? retiroLocationId : s.locationId).trim(),
+            ...(isProv && pickId ? { pickupSupplierId: pickId } : {}),
+            items: itemRows(s.items),
+          }
+        })
         await shipmentsApi.createMulti({
           originId: newShipment.originId,
           estimatedArrival,
@@ -442,20 +1040,56 @@ export default function LogisticsPage() {
           setCreating(false)
           return
         }
-        const validItems = shipmentItems.filter((item) => item.productId && item.sentQty > 0)
+        if (destProv && !destSupplierPick.id) {
+          setCreateError("Elegí el proveedor de destino (con dirección o coordenadas en Proveedores).")
+          setCreating(false)
+          return
+        }
+        const validItems = itemRows(shipmentItems)
         if (validItems.length === 0) {
           setCreateError("Debes agregar al menos un ítem al envío")
           setCreating(false)
           return
         }
-        await shipmentsApi.create({
-          originId: newShipment.originId,
-          destinationId: newShipment.destinationId,
-          estimatedArrival,
-          estimatedDurationMin: estimateDurationMin ?? undefined,
-          notes: newShipment.notes || undefined,
-          items: validItems,
-        })
+
+        if (destProv && !originProv) {
+          await shipmentsApi.createMulti({
+            originId: newShipment.originId,
+            estimatedArrival,
+            notes: newShipment.notes || undefined,
+            stops: [
+              {
+                locationId: retiroLocationId,
+                pickupSupplierId: destSupplierPick.id,
+                items: validItems,
+              },
+              {
+                locationId: newShipment.originId,
+                items: validItems,
+              },
+            ],
+          })
+          createdAsMultiFromSingle = true
+        } else if (originProv && !destProv) {
+          await shipmentsApi.create({
+            originId: retiroLocationId,
+            destinationId: newShipment.destinationId,
+            pickupSupplierId: originSupplierPick.id,
+            estimatedArrival,
+            estimatedDurationMin: estimateDurationMin ?? undefined,
+            notes: newShipment.notes || undefined,
+            items: validItems,
+          })
+        } else {
+          await shipmentsApi.create({
+            originId: newShipment.originId,
+            destinationId: newShipment.destinationId,
+            estimatedArrival,
+            estimatedDurationMin: estimateDurationMin ?? undefined,
+            notes: newShipment.notes || undefined,
+            items: validItems,
+          })
+        }
       }
 
       setShowCreateModal(false)
@@ -463,8 +1097,8 @@ export default function LogisticsPage() {
       fetchShipments()
       sileo.success({
         title:
-          createMode === "multi"
-            ? "Envío multi-parada creado correctamente"
+          createMode === "multi" || createdAsMultiFromSingle
+            ? "Tour / envío multi-parada creado correctamente"
             : "Envío creado correctamente",
       })
     } catch (err: any) {
@@ -477,7 +1111,8 @@ export default function LogisticsPage() {
   }
 
   // Items helpers (un solo destino)
-  const addItem = () => setShipmentItems([...shipmentItems, { productId: "", sentQty: 1 }])
+  const addItem = () =>
+    setShipmentItems([...shipmentItems, emptyShipmentLine()])
   const removeItem = (index: number) => {
     if (shipmentItems.length > 1) {
       setShipmentItems(shipmentItems.filter((_, i) => i !== index))
@@ -507,13 +1142,24 @@ export default function LogisticsPage() {
   }
   const setStopLocation = (stopIdx: number, locationId: string) => {
     setMultiStops((prev) =>
-      prev.map((s, i) => (i === stopIdx ? { ...s, locationId } : s)),
+      prev.map((s, i) =>
+        i === stopIdx
+          ? {
+              ...s,
+              locationId,
+              supplierPick:
+                locationId === PROVEEDOR_SENTINEL
+                  ? s.supplierPick
+                  : { id: "", query: "" },
+            }
+          : s,
+      ),
     )
   }
   const addStopItem = (stopIdx: number) => {
     setMultiStops((prev) =>
       prev.map((s, i) =>
-        i === stopIdx ? { ...s, items: [...s.items, { productId: "", sentQty: 1 }] } : s,
+        i === stopIdx ? { ...s, items: [...s.items, emptyShipmentLine()] } : s,
       ),
     )
   }
@@ -706,13 +1352,23 @@ export default function LogisticsPage() {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-                            {segments.map((name, idx) => (
-                              <span key={`${shipment.id}-seg-${idx}`} className="flex items-center gap-2">
+                            {segments.map((seg, idx) => (
+                              <span
+                                key={`${shipment.id}-seg-${idx}`}
+                                className="flex items-start gap-2"
+                              >
                                 {idx > 0 ? (
-                                  <ArrowRight className="h-3.5 w-3.5 shrink-0 text-gray-400" />
+                                  <ArrowRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-400" />
                                 ) : null}
-                                <span className="font-medium text-gray-900 dark:text-white">
-                                  {name}
+                                <span className="flex min-w-0 flex-col gap-0">
+                                  <span className="font-medium text-gray-900 dark:text-white">
+                                    {seg.line1}
+                                  </span>
+                                  {seg.line2 ? (
+                                    <span className="text-[11px] font-normal text-gray-500 dark:text-gray-400">
+                                      {seg.line2}
+                                    </span>
+                                  ) : null}
                                 </span>
                               </span>
                             ))}
@@ -950,7 +1606,7 @@ export default function LogisticsPage() {
           onClick={() => setShowCreateModal(false)}
         >
           <div
-            className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-white dark:bg-gray-800 shadow-2xl border border-gray-200 dark:border-gray-700"
+            className="w-full max-w-2xl max-h-[90vh] overflow-y-auto overflow-x-hidden rounded-xl bg-white dark:bg-gray-800 shadow-2xl border border-gray-200 dark:border-gray-700"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
@@ -973,7 +1629,7 @@ export default function LogisticsPage() {
 
             {/* Form */}
             <form onSubmit={handleCreateShipment}>
-              <div className="space-y-4 px-6 py-5">
+              <div className="min-w-0 space-y-4 px-6 py-5">
                 {createError && (
                   <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/30 px-4 py-3 text-sm text-red-700 dark:text-red-300">
                     {createError}
@@ -1011,7 +1667,9 @@ export default function LogisticsPage() {
 
                 {createMode === "multi" ? (
                   <p className="text-xs text-gray-500 dark:text-gray-400">
-                    Un solo envío con varios locales en orden de visita (alineado con Google Maps en el detalle). Podés reordenar paradas con las flechas antes de crear.
+                    Un solo envío con varias paradas en orden (locales y/o proveedores). En el detalle se
+                    alinea con Google Maps. Podés poner el depósito u origen como última parada para la
+                    recepción al volver del proveedor.
                   </p>
                 ) : null}
 
@@ -1023,18 +1681,41 @@ export default function LogisticsPage() {
                   <select
                     aria-label="Origen"
                     value={newShipment.originId}
-                    onChange={(e) =>
-                      setNewShipment({ ...newShipment, originId: e.target.value })
-                    }
+                    onChange={(e) => {
+                      const id = e.target.value
+                      if (id !== PROVEEDOR_SENTINEL) {
+                        setOriginSupplierPick({ id: "", query: "" })
+                      }
+                      setNewShipment((prev) => ({ ...prev, originId: id }))
+                    }}
                     className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   >
                     <option value="">Seleccionar origen...</option>
-                    {locations.map((loc) => (
+                    <option value={PROVEEDOR_SENTINEL}>Proveedor (retiro en domicilio del proveedor)</option>
+                    {selectLocations.map((loc) => (
                       <option key={loc.id} value={loc.id}>
                         {loc.name}
                       </option>
                     ))}
                   </select>
+                  {newShipment.originId === PROVEEDOR_SENTINEL ? (
+                    <div className="mt-2 space-y-1.5">
+                      <label className="mb-0 block text-sm font-medium text-gray-700 dark:text-white">
+                        Proveedor de origen <span className="text-red-500">*</span>
+                      </label>
+                      <LogisticsSupplierSearchInput
+                        suppliers={suppliersForPickup}
+                        supplierId={originSupplierPick.id}
+                        supplierQuery={originSupplierPick.query}
+                        onSupplierChange={handleOriginSupplierPickChange}
+                        isOpen={openOriginSupplier}
+                        onOpenChange={setOpenOriginSupplier}
+                      />
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        El envío sale del domicilio del proveedor (dirección o coordenadas en Proveedores).
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
 
                 {createMode === "single" ? (
@@ -1046,20 +1727,51 @@ export default function LogisticsPage() {
                       <select
                         aria-label="Destino"
                         value={newShipment.destinationId}
-                        onChange={(e) =>
-                          setNewShipment({ ...newShipment, destinationId: e.target.value })
-                        }
+                        onChange={(e) => {
+                          const id = e.target.value
+                          if (id !== PROVEEDOR_SENTINEL) {
+                            setDestSupplierPick({ id: "", query: "" })
+                          }
+                          setNewShipment({ ...newShipment, destinationId: id })
+                        }}
                         className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                       >
                         <option value="">Seleccionar destino...</option>
-                        {locations
-                          .filter((loc) => loc.id !== newShipment.originId)
+                        <option value={PROVEEDOR_SENTINEL}>
+                          Proveedor (retiro; se agrega vuelta al origen como segunda parada)
+                        </option>
+                        {selectLocations
+                          .filter(
+                            (loc) =>
+                              newShipment.originId !== PROVEEDOR_SENTINEL
+                                ? loc.id !== newShipment.originId
+                                : true,
+                          )
                           .map((loc) => (
                             <option key={loc.id} value={loc.id}>
                               {loc.name}
                             </option>
                           ))}
                       </select>
+                      {newShipment.destinationId === PROVEEDOR_SENTINEL ? (
+                        <div className="mt-2 space-y-1.5">
+                          <label className="mb-0 block text-sm font-medium text-gray-700 dark:text-white">
+                            Proveedor de destino <span className="text-red-500">*</span>
+                          </label>
+                          <LogisticsSupplierSearchInput
+                            suppliers={suppliersForPickup}
+                            supplierId={destSupplierPick.id}
+                            supplierQuery={destSupplierPick.query}
+                            onSupplierChange={handleDestSupplierPickChange}
+                            isOpen={openDestSupplier}
+                            onOpenChange={setOpenDestSupplier}
+                          />
+                          <p className="text-xs text-emerald-800 dark:text-emerald-200/90">
+                            Se crea un solo tour multi-parada: primero retiro en el proveedor (control y
+                            firma allí) y luego recepción en el origen que elegiste arriba.
+                          </p>
+                        </div>
+                      ) : null}
                     </div>
 
                     {newShipment.originId && newShipment.destinationId && (
@@ -1075,63 +1787,91 @@ export default function LogisticsPage() {
                           </span>
                         ) : (
                           <span className="text-gray-500">
-                            {estimateReason === "no_api_key"
-                              ? "Sin estimación: configurá la variable GOOGLE_MAPS_API_KEY en la API (Railway)."
-                              : estimateReason === "no_address"
-                                ? "Sin estimación: cargá la dirección en Origen y Destino (Dashboard → Locales → editar cada local)."
-                                : "Sin estimación (configurá direcciones en los locales y GOOGLE_MAPS_API_KEY en la API)."}
+                            {newShipment.originId === PROVEEDOR_SENTINEL && !originSupplierPick.id
+                              ? "Elegí el proveedor de origen (con dirección o coordenadas) para estimar."
+                              : newShipment.destinationId === PROVEEDOR_SENTINEL &&
+                                  !destSupplierPick.id
+                                ? "Elegí el proveedor de destino (con dirección o coordenadas) para estimar."
+                                : estimateReason === "no_api_key"
+                                  ? "Sin estimación: configurá la variable GOOGLE_MAPS_API_KEY en la API (Railway)."
+                                  : estimateReason === "no_address"
+                                    ? "Sin estimación: cargá dirección o coordenadas en locales y/o en los proveedores elegidos."
+                                    : "Sin estimación (configurá direcciones o coordenadas y GOOGLE_MAPS_API_KEY en la API)."}
                           </span>
                         )}
                       </div>
                     )}
 
-                    <div>
-                      <div className="mb-2 flex items-center justify-between">
+                    <div className="min-w-0">
+                      <div className="mb-2 flex items-center justify-between gap-2">
                         <label className="text-sm font-medium text-gray-700 dark:text-white">
-                          Ítems <span className="text-red-500">*</span>
+                          {singleModeSupplierIdForItems
+                            ? "Ítems (catálogo del proveedor)"
+                            : "Ítems"}{" "}
+                          <span className="text-red-500">*</span>
                         </label>
                         <button
                           type="button"
                           onClick={addItem}
-                          className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-blue-600 dark:text-blue-400 transition-colors hover:bg-blue-50 dark:hover:bg-blue-900/30"
+                          className="inline-flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-medium text-blue-600 dark:text-blue-400 transition-colors hover:bg-blue-50 dark:hover:bg-blue-900/30"
                         >
                           <Plus className="h-3.5 w-3.5" />
                           Agregar ítem
                         </button>
                       </div>
+                      {singleModeSupplierIdForItems &&
+                      supplierProductsBySupplierId[singleModeSupplierIdForItems] === undefined ? (
+                        <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
+                          Cargando productos vinculados al proveedor…
+                        </p>
+                      ) : singleModeSupplierIdForItems &&
+                        (supplierProductsBySupplierId[singleModeSupplierIdForItems]?.length ?? 0) ===
+                          0 ? (
+                        <p className="mb-2 text-xs text-amber-700 dark:text-amber-300">
+                          Este proveedor no tiene productos vinculados. Asocialos en{" "}
+                          <span className="font-medium">Proveedores</span> para poder armar el envío.
+                        </p>
+                      ) : null}
                       <div className="space-y-2">
                         {shipmentItems.map((item, index) => (
-                          <div key={index} className="flex items-center gap-2">
-                            <select
-                              aria-label="Producto"
-                              value={item.productId}
-                              onChange={(e) => updateItem(index, "productId", e.target.value)}
-                              className="flex-1 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            >
-                              <option value="">Producto...</option>
-                              {productsList.map((p) => (
-                                <option key={p.id} value={p.id}>
-                                  {p.sku} - {p.name}
-                                </option>
-                              ))}
-                            </select>
-                            <FormattedNumberInput
-                              value={item.sentQty}
-                              onChange={(n) =>
-                                updateItem(index, "sentQty", n)
-                              }
-                              placeholder="1"
-                              className="w-24 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                            />
-                            <button
-                              type="button"
-                              aria-label="Eliminar ítem"
-                              onClick={() => removeItem(index)}
-                              disabled={shipmentItems.length <= 1}
-                              className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-red-50 dark:hover:bg-red-900/30 hover:text-red-500 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-400"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
+                          <div
+                            key={index}
+                            className="rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50/90 dark:bg-gray-900/40 p-2.5 min-w-0"
+                          >
+                            <div className="flex min-w-0 flex-col gap-2.5 sm:flex-row sm:items-center sm:gap-3">
+                              <LogisticsProductSearchInput
+                                products={productsForSingleModeItems}
+                                line={item}
+                                onLineChange={(next) =>
+                                  setShipmentItems((rows) =>
+                                    rows.map((it, i) => (i === index ? next : it)),
+                                  )
+                                }
+                                isOpen={openProductKey === `s:${index}`}
+                                onOpenChange={(open) =>
+                                  setOpenProductKey(open ? `s:${index}` : null)
+                                }
+                              />
+                              <div className="flex shrink-0 items-center justify-end gap-2 sm:justify-start">
+                                <FormattedNumberInput
+                                  value={item.sentQty}
+                                  onChange={(n) =>
+                                    updateItem(index, "sentQty", n)
+                                  }
+                                  placeholder="1"
+                                  className="w-[5.5rem] rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                />
+                                <button
+                                  type="button"
+                                  aria-label="Eliminar ítem"
+                                  onClick={() => removeItem(index)}
+                                  disabled={shipmentItems.length <= 1}
+                                  className="shrink-0 rounded-lg border border-transparent p-2 text-gray-400 transition-colors hover:border-red-200 hover:bg-red-50 dark:hover:border-red-800 dark:hover:bg-red-900/30 hover:text-red-500 disabled:opacity-30 disabled:hover:border-transparent disabled:hover:bg-transparent disabled:hover:text-gray-400"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </div>
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -1158,9 +1898,25 @@ export default function LogisticsPage() {
 
                     <div className="space-y-4">
                       {multiStops.map((stop, stopIdx) => {
-                        const takenElsewhere = new Set(
+                        const isProveedorParada = stop.locationId === PROVEEDOR_SENTINEL
+                        const supplierStopId = stop.supplierPick.id
+                        const cachedSupplierProducts =
+                          isProveedorParada && supplierStopId
+                            ? supplierProductsBySupplierId[supplierStopId]
+                            : undefined
+                        const productsForMultiStop = isProveedorParada
+                          ? (cachedSupplierProducts ?? [])
+                          : productsList
+                        const isLastStop = stopIdx === multiStops.length - 1
+                        const takenLocalElsewhere = new Set(
                           multiStops
-                            .map((s, i) => (i !== stopIdx ? s.locationId : ""))
+                            .map((s, i) =>
+                              i !== stopIdx &&
+                              s.locationId &&
+                              s.locationId !== PROVEEDOR_SENTINEL
+                                ? s.locationId
+                                : "",
+                            )
                             .filter(Boolean),
                         )
                         return (
@@ -1202,33 +1958,74 @@ export default function LogisticsPage() {
                                 </button>
                               </div>
                             </div>
-                            <div className="mb-3">
+                            <div className="mb-3 space-y-2">
                               <label className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">
-                                Local
+                                Local o proveedor
                               </label>
                               <select
-                                aria-label={`Local parada ${stopIdx + 1}`}
+                                aria-label={`Parada ${stopIdx + 1} — local o proveedor`}
                                 value={stop.locationId}
                                 onChange={(e) => setStopLocation(stopIdx, e.target.value)}
                                 className="w-full rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                               >
-                                <option value="">Seleccionar local...</option>
-                                {locations
-                                  .filter(
-                                    (loc) =>
-                                      loc.id !== newShipment.originId &&
-                                      (!takenElsewhere.has(loc.id) || loc.id === stop.locationId),
-                                  )
+                                <option value="">Seleccionar...</option>
+                                <option value={PROVEEDOR_SENTINEL}>Proveedor (retiro en domicilio)</option>
+                                {selectLocations
+                                  .filter((loc) => {
+                                    if (
+                                      loc.id === newShipment.originId &&
+                                      !isLastStop
+                                    ) {
+                                      return false
+                                    }
+                                    return (
+                                      !takenLocalElsewhere.has(loc.id) ||
+                                      loc.id === stop.locationId
+                                    )
+                                  })
                                   .map((loc) => (
                                     <option key={loc.id} value={loc.id}>
                                       {loc.name}
                                     </option>
                                   ))}
                               </select>
+                              {stop.locationId === PROVEEDOR_SENTINEL ? (
+                                <div className="space-y-1">
+                                  <label className="text-xs font-medium text-gray-600 dark:text-gray-300">
+                                    Proveedor <span className="text-red-500">*</span>
+                                  </label>
+                                  <LogisticsSupplierSearchInput
+                                    suppliers={suppliersForPickup}
+                                    supplierId={stop.supplierPick.id}
+                                    supplierQuery={stop.supplierPick.query}
+                                    onSupplierChange={(next) =>
+                                      setMultiStops((prev) =>
+                                        prev.map((s, i) => {
+                                          if (i !== stopIdx) return s
+                                          const idChanged = next.id !== s.supplierPick.id
+                                          return {
+                                            ...s,
+                                            supplierPick: next,
+                                            items: idChanged ? [emptyShipmentLine()] : s.items,
+                                          }
+                                        }),
+                                      )
+                                    }
+                                    isOpen={openMultiSupplierKey === `m:${stopIdx}`}
+                                    onOpenChange={(open) =>
+                                      setOpenMultiSupplierKey(open ? `m:${stopIdx}` : null)
+                                    }
+                                  />
+                                </div>
+                              ) : null}
                             </div>
                             <div className="mb-2 flex items-center justify-between">
                               <span className="text-xs font-medium text-gray-600 dark:text-gray-300">
-                                Ítems en este local
+                                {stop.locationId === PROVEEDOR_SENTINEL
+                                  ? stop.supplierPick.id
+                                    ? "Ítems (catálogo del proveedor)"
+                                    : "Ítems"
+                                  : "Ítems en este local"}
                               </span>
                               <button
                                 type="button"
@@ -1239,41 +2036,76 @@ export default function LogisticsPage() {
                                 Ítem
                               </button>
                             </div>
-                            <div className="space-y-2">
+                            {stop.locationId === PROVEEDOR_SENTINEL && !stop.supplierPick.id ? (
+                              <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
+                                Elegí un proveedor arriba para listar solo sus productos vinculados.
+                              </p>
+                            ) : stop.locationId === PROVEEDOR_SENTINEL &&
+                              stop.supplierPick.id &&
+                              cachedSupplierProducts === undefined ? (
+                              <p className="mb-2 text-xs text-gray-500 dark:text-gray-400">
+                                Cargando productos del proveedor…
+                              </p>
+                            ) : stop.locationId === PROVEEDOR_SENTINEL &&
+                              stop.supplierPick.id &&
+                              cachedSupplierProducts?.length === 0 ? (
+                              <p className="mb-2 text-xs text-amber-700 dark:text-amber-300">
+                                Sin productos vinculados a este proveedor. Cargalos en{" "}
+                                <span className="font-medium">Proveedores</span>.
+                              </p>
+                            ) : null}
+                            <div className="min-w-0 space-y-2">
                               {stop.items.map((item, itemIdx) => (
-                                <div key={itemIdx} className="flex items-center gap-2">
-                                  <select
-                                    aria-label="Producto"
-                                    value={item.productId}
-                                    onChange={(e) =>
-                                      updateStopItem(stopIdx, itemIdx, "productId", e.target.value)
-                                    }
-                                    className="flex-1 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-700 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                  >
-                                    <option value="">Producto...</option>
-                                    {productsList.map((p) => (
-                                      <option key={p.id} value={p.id}>
-                                        {p.sku} - {p.name}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  <FormattedNumberInput
-                                    value={item.sentQty}
-                                    onChange={(n) =>
-                                      updateStopItem(stopIdx, itemIdx, "sentQty", n)
-                                    }
-                                    placeholder="1"
-                                    className="w-24 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                  />
-                                  <button
-                                    type="button"
-                                    aria-label="Eliminar ítem"
-                                    onClick={() => removeStopItem(stopIdx, itemIdx)}
-                                    disabled={stop.items.length <= 1}
-                                    className="rounded-lg p-2 text-gray-400 transition-colors hover:bg-red-50 dark:hover:bg-red-900/30 hover:text-red-500 disabled:opacity-30"
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </button>
+                                <div
+                                  key={itemIdx}
+                                  className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white/60 dark:bg-gray-800/40 p-2 min-w-0"
+                                >
+                                  <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-2">
+                                    <LogisticsProductSearchInput
+                                      products={productsForMultiStop}
+                                      line={item}
+                                      onLineChange={(next) =>
+                                        setMultiStops((prev) =>
+                                          prev.map((s, i) => {
+                                            if (i !== stopIdx) return s
+                                            return {
+                                              ...s,
+                                              items: s.items.map((it, j) =>
+                                                j === itemIdx ? next : it,
+                                              ),
+                                            }
+                                          }),
+                                        )
+                                      }
+                                      isOpen={
+                                        openProductKey === `m:${stopIdx}:${itemIdx}`
+                                      }
+                                      onOpenChange={(open) =>
+                                        setOpenProductKey(
+                                          open ? `m:${stopIdx}:${itemIdx}` : null,
+                                        )
+                                      }
+                                    />
+                                    <div className="flex shrink-0 items-center justify-end gap-2 sm:justify-start">
+                                      <FormattedNumberInput
+                                        value={item.sentQty}
+                                        onChange={(n) =>
+                                          updateStopItem(stopIdx, itemIdx, "sentQty", n)
+                                        }
+                                        placeholder="1"
+                                        className="w-[5.5rem] rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 px-3 py-2 text-sm text-gray-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                      />
+                                      <button
+                                        type="button"
+                                        aria-label="Eliminar ítem"
+                                        onClick={() => removeStopItem(stopIdx, itemIdx)}
+                                        disabled={stop.items.length <= 1}
+                                        className="shrink-0 rounded-lg border border-transparent p-2 text-gray-400 transition-colors hover:border-red-200 hover:bg-red-50 dark:hover:border-red-800 dark:hover:bg-red-900/30 hover:text-red-500 disabled:opacity-30 disabled:hover:border-transparent disabled:hover:bg-transparent disabled:hover:text-gray-400"
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </button>
+                                    </div>
+                                  </div>
                                 </div>
                               ))}
                             </div>

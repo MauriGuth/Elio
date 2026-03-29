@@ -78,6 +78,7 @@ export class CustomersService {
         address: dto.address,
         phone: dto.phone,
         creditLimit: dto.creditLimit,
+        accountKind: dto.accountKind ?? 'client',
       },
     });
   }
@@ -97,6 +98,7 @@ export class CustomersService {
         ...(dto.address !== undefined && { address: dto.address }),
         ...(dto.phone !== undefined && { phone: dto.phone }),
         ...(dto.creditLimit !== undefined && { creditLimit: dto.creditLimit }),
+        ...(dto.accountKind !== undefined && { accountKind: dto.accountKind }),
       },
     });
   }

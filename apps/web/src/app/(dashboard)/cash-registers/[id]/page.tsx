@@ -22,8 +22,11 @@ import {
   Trash2,
   Clock,
   TrendingUp,
+  X,
+  ExternalLink,
 } from "lucide-react"
 import { cashRegistersApi } from "@/lib/api/cash-registers"
+import { ordersApi } from "@/lib/api/orders"
 import { cn, formatCurrency, formatDate } from "@/lib/utils"
 
 const DIFF_PERCENT_YELLOW = 1
@@ -46,6 +49,12 @@ export default function CashClosureDetailPage() {
   const [shiftMetrics, setShiftMetrics] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  const [orderPeek, setOrderPeek] = useState<{
+    order: any
+    highlightItemId: string | null
+  } | null>(null)
+  const [orderPeekLoading, setOrderPeekLoading] = useState(false)
 
   useEffect(() => {
     if (!id) return
@@ -411,7 +420,13 @@ export default function CashClosureDetailPage() {
                         : "—"}
                     </span>
                     <span>
-                      Ítems con demora &gt;15 min: {shiftMetrics.comandaDelays.countOver15Minutes ?? 0}
+                      Superaron tiempo de elaboración (receta):{" "}
+                      <span className="font-semibold text-red-600 dark:text-red-400">
+                        {shiftMetrics.comandaDelays.countExceededExpected ?? 0}
+                      </span>
+                    </span>
+                    <span>
+                      Demora &gt;15 min: {shiftMetrics.comandaDelays.countOver15Minutes ?? 0}
                     </span>
                     <span className="text-gray-500 dark:text-gray-400">
                       ({shiftMetrics.comandaDelays.itemCount} ítems con tiempo registrado)
@@ -422,15 +437,59 @@ export default function CashClosureDetailPage() {
                       <summary className="cursor-pointer text-xs font-medium text-gray-600 dark:text-gray-400">
                         Ver detalle de demoras
                       </summary>
-                      <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto text-xs text-gray-700 dark:text-gray-300">
-                        {shiftMetrics.comandaDelays.details.slice(0, 20).map((d: any, i: number) => (
-                          <li key={i}>
-                            {d.productName}: {d.delayMinutes} min
-                          </li>
-                        ))}
-                        {shiftMetrics.comandaDelays.details.length > 20 && (
-                          <li className="text-gray-500">… y {shiftMetrics.comandaDelays.details.length - 20} más</li>
-                        )}
+                      <ul className="mt-2 max-h-48 space-y-0.5 overflow-y-auto text-xs">
+                        {shiftMetrics.comandaDelays.details.map((d: any) => {
+                          const over =
+                            d.exceededExpected === true ||
+                            (d.expectedPrepMinutes != null &&
+                              d.expectedPrepMinutes > 0 &&
+                              d.delayMinutes > d.expectedPrepMinutes)
+                          const labelExtra =
+                            d.expectedPrepMinutes != null && d.expectedPrepMinutes > 0
+                              ? ` · objetivo ${d.expectedPrepMinutes} min`
+                              : ""
+                          return (
+                            <li key={`${d.orderId}-${d.itemId}`}>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  setOrderPeekLoading(true)
+                                  setOrderPeek(null)
+                                  try {
+                                    const order = await ordersApi.getById(d.orderId)
+                                    setOrderPeek({
+                                      order,
+                                      highlightItemId: d.itemId,
+                                    })
+                                  } catch (e: any) {
+                                    sileo.error({
+                                      title: e?.message ?? "No se pudo cargar el pedido",
+                                    })
+                                  } finally {
+                                    setOrderPeekLoading(false)
+                                  }
+                                }}
+                                className={cn(
+                                  "w-full rounded-md px-2 py-1.5 text-left transition-colors hover:bg-gray-200/80 dark:hover:bg-gray-700/80",
+                                  over
+                                    ? "font-medium text-red-600 dark:text-red-400"
+                                    : "text-gray-700 dark:text-gray-300",
+                                )}
+                              >
+                                <span className="inline-flex items-center gap-1">
+                                  {d.productName}: {d.delayMinutes} min{labelExtra}
+                                  <ExternalLink className="h-3 w-3 shrink-0 opacity-60" aria-hidden />
+                                </span>
+                                {(d.tableName || d.orderNumber) && (
+                                  <span className="mt-0.5 block text-[10px] font-normal text-gray-500 dark:text-gray-500">
+                                    Pedido #{d.orderNumber}
+                                    {d.tableName ? ` · ${d.tableName}` : ""}
+                                  </span>
+                                )}
+                              </button>
+                            </li>
+                          )
+                        })}
                       </ul>
                     </details>
                   )}
@@ -514,6 +573,101 @@ export default function CashClosureDetailPage() {
           )}
         </div>
       </div>
+
+      {orderPeekLoading && (
+        <div
+          className="fixed inset-0 z-[55] flex items-center justify-center bg-black/25"
+          aria-busy="true"
+          aria-label="Cargando pedido"
+        >
+          <Loader2 className="h-10 w-10 animate-spin text-blue-500" />
+        </div>
+      )}
+
+      {orderPeek && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="order-peek-title"
+            className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-600 dark:bg-gray-900"
+          >
+            <div className="flex items-start justify-between gap-2 border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+              <div>
+                <h2
+                  id="order-peek-title"
+                  className="text-lg font-bold text-gray-900 dark:text-white"
+                >
+                  Pedido #{orderPeek.order.orderNumber ?? orderPeek.order.id}
+                </h2>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  {orderPeek.order.table?.name
+                    ? `Mesa ${orderPeek.order.table.name}`
+                    : "Sin mesa"}
+                  {orderPeek.order.closedAt &&
+                    ` · Cerrado ${formatDate(orderPeek.order.closedAt)} ${new Date(orderPeek.order.closedAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}`}
+                </p>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Tocaste un ítem de la lista de demoras; el resaltado es esa línea en el pedido completo.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOrderPeek(null)}
+                className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-white"
+                aria-label="Cerrar"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                Comanda completa
+              </p>
+              <ul className="space-y-2">
+                {(orderPeek.order.items ?? []).map((it: any) => {
+                  const lineTotal =
+                    typeof it.totalPrice === "number"
+                      ? it.totalPrice
+                      : (it.unitPrice ?? 0) * (it.quantity ?? 1)
+                  const isHi = it.id === orderPeek.highlightItemId
+                  return (
+                    <li
+                      key={it.id}
+                      className={cn(
+                        "rounded-lg border px-3 py-2 text-sm",
+                        isHi
+                          ? "border-amber-500 bg-amber-50 dark:border-amber-500 dark:bg-amber-950/35"
+                          : "border-gray-100 bg-gray-50/80 dark:border-gray-700 dark:bg-gray-800/60",
+                      )}
+                    >
+                      <div className="flex justify-between gap-2">
+                        <span className="font-medium text-gray-900 dark:text-white">
+                          {it.productName ?? it.product?.name ?? "Ítem"} × {it.quantity ?? 1}
+                        </span>
+                        <span className="shrink-0 tabular-nums text-gray-700 dark:text-gray-300">
+                          {formatCurrency(lineTotal)}
+                        </span>
+                      </div>
+                      {it.notes && (
+                        <p className="mt-1 text-xs text-gray-600 dark:text-gray-400">{it.notes}</p>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+            <div className="border-t border-gray-200 px-4 py-3 dark:border-gray-700">
+              <div className="flex justify-between text-sm font-semibold text-gray-900 dark:text-white">
+                <span>Total</span>
+                <span className="tabular-nums">
+                  {formatCurrency(orderPeek.order.total ?? orderPeek.order.subtotal ?? 0)}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
